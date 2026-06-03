@@ -1,0 +1,65 @@
+---
+title: Next.js SaaS Starter
+description: Production-ready Next.js 15 boilerplate with auth, Stripe payments, dashboard, and Postgres database.
+category: templates
+language: typescript
+tags: [nextjs, react, typescript, saas, stripe, auth, postgres]
+repo: https://github.com
+demo: https://demo.example.com
+---
+
+A complete foundation for building SaaS products with Next.js 15. Includes everything you need to go from zero to paying customers.
+
+## What's included
+
+- **Authentication** — Better Auth with email/password, OAuth (GitHub, Google), and session management
+- **Payments** — Stripe integration with webhooks, subscription management, and billing portal
+- **Database** — Drizzle ORM + Neon Postgres with migrations and type-safe queries
+- **Dashboard** — Protected routes with role-based access control (user, admin)
+- **Email** — Transactional emails via Resend with React Email templates
+- **UI** — shadcn/ui components with Tailwind CSS v4
+
+## Stack
+
+```json
+{
+  "framework": "Next.js 15 (App Router)",
+  "language": "TypeScript 5",
+  "styling": "Tailwind CSS v4 + shadcn/ui",
+  "auth": "Better Auth",
+  "payments": "Stripe",
+  "database": "Drizzle ORM + Neon Postgres",
+  "email": "Resend + React Email",
+  "deployment": "Vercel"
+}
+```
+
+## Project structure
+
+```
+app/
+  (auth)/login, register, verify-email
+  (dashboard)/dashboard, settings, billing
+  api/
+    auth/[...all]/
+    stripe/webhook/
+lib/
+  auth.ts          # Better Auth config
+  db/              # Drizzle schema + client
+  stripe.ts        # Stripe client + helpers
+  email/           # React Email templates
+components/
+  ui/              # shadcn/ui components
+  billing/         # Stripe-specific components
+```
+
+## Quick start
+
+```bash
+git clone <repo-url> my-saas
+cd my-saas
+cp .env.example .env.local
+npm install
+npm run db:push
+npm run dev
+```

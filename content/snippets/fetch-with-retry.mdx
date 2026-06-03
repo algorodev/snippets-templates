@@ -1,0 +1,50 @@
+---
+title: fetchWithRetry
+description: Fetch wrapper that retries on failure with exponential backoff. Handles transient network errors gracefully.
+category: snippets
+language: typescript
+tags: [typescript, fetch, async, network, utils]
+---
+
+Retries a fetch request up to `maxRetries` times with exponential backoff. Throws after all attempts fail.
+
+```typescript
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  maxRetries: number = 3,
+  baseDelay: number = 300
+): Promise<Response> {
+  let lastError: Error
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options)
+      if (!response.ok && attempt < maxRetries) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+      return response
+    } catch (error) {
+      lastError = error as Error
+      if (attempt < maxRetries) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, baseDelay * 2 ** attempt)
+        )
+      }
+    }
+  }
+
+  throw lastError!
+}
+
+export default fetchWithRetry
+```
+
+## Usage
+
+```typescript
+const res = await fetchWithRetry('https://api.example.com/data', {
+  headers: { Authorization: `Bearer ${token}` },
+})
+const data = await res.json()
+```

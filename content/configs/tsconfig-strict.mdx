@@ -1,0 +1,58 @@
+---
+title: tsconfig — Strict Next.js
+description: Strict TypeScript configuration for Next.js projects. Enables all safety flags while keeping ergonomics intact.
+category: configs
+language: json
+tags: [typescript, nextjs, tsconfig, strict, config]
+---
+
+A strict TypeScript config that catches the most bugs at compile time without being painful:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+
+    /* Module */
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    /* Output */
+    "noEmit": true,
+    "jsx": "preserve",
+    "incremental": true,
+
+    /* Paths */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    },
+
+    /* Plugins */
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+```
+
+## Key flags explained
+
+| Flag | What it prevents |
+|------|-----------------|
+| `noUncheckedIndexedAccess` | Array `arr[i]` returns `T \| undefined`, not `T` |
+| `exactOptionalPropertyTypes` | `{ a?: string }` rejects `{ a: undefined }` |
+| `noImplicitReturns` | Functions must return in all code paths |

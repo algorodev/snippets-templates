@@ -1,0 +1,54 @@
+---
+title: Git Aliases
+description: Productivity git aliases for your ~/.gitconfig. Shortcuts for the most common workflows.
+category: cli
+language: bash
+tags: [git, aliases, productivity, dotfiles]
+---
+
+Add to your `~/.gitconfig` under `[alias]`:
+
+```bash
+[alias]
+  # Status & log
+  s     = status -sb
+  lg    = log --oneline --graph --decorate --all
+  last  = log -1 HEAD --stat
+
+  # Staging
+  a     = add -p
+  aa    = add -A
+
+  # Commit
+  c     = commit -m
+  amend = commit --amend --no-edit
+  wip   = commit -am "wip"
+
+  # Branches
+  b     = branch -vv
+  co    = checkout
+  cob   = checkout -b
+  gone  = "!git fetch --prune && git branch -vv | grep 'origin/.*: gone]' | awk '{print $1}' | xargs git branch -d"
+
+  # Stash
+  save  = stash push -m
+  pop   = stash pop
+
+  # Undo
+  undo  = reset HEAD~1 --mixed
+  nuke  = reset --hard HEAD
+
+  # Remote
+  fpush = push --force-with-lease
+```
+
+## Quick reference
+
+```bash
+git s           # compact status
+git lg          # visual branch graph
+git cob feat/x  # create and checkout branch
+git wip         # quick save
+git gone        # delete merged branches
+git undo        # undo last commit, keep changes
+```

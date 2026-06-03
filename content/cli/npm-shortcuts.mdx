@@ -1,0 +1,38 @@
+---
+title: package.json Scripts
+description: Standard set of npm scripts for a Next.js / TypeScript project covering dev, build, test, and quality checks.
+category: cli
+language: json
+tags: [npm, scripts, nextjs, typescript, ci]
+---
+
+A well-rounded `scripts` section for a modern Next.js project:
+
+```json
+{
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint && tsc --noEmit",
+    "lint:fix": "next lint --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "prepare": "husky"
+  }
+}
+```
+
+## What each script does
+
+| Script | Purpose |
+|--------|---------|
+| `check` | Full pre-push validation (types → lint → format) |
+| `lint` | ESLint + TypeScript type-check in one pass |
+| `test:coverage` | Vitest with V8 coverage report |
+| `prepare` | Auto-installs Husky git hooks after `npm install` |

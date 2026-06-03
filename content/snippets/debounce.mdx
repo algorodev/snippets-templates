@@ -1,0 +1,37 @@
+---
+title: useDebounce Hook
+description: Delays updating a value until a given time has passed since the last change. Ideal for search inputs.
+category: snippets
+language: typescript
+tags: [react, hooks, typescript, performance, search]
+---
+
+Prevents excessive re-renders or API calls by waiting for the user to stop typing before updating the debounced value.
+
+```typescript
+import { useState, useEffect } from 'react'
+
+function useDebounce<T>(value: T, delay: number = 300): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delay)
+    return () => clearTimeout(timer)
+  }, [value, delay])
+
+  return debouncedValue
+}
+
+export default useDebounce
+```
+
+## Usage
+
+```typescript
+const [query, setQuery] = useState('')
+const debouncedQuery = useDebounce(query, 400)
+
+useEffect(() => {
+  if (debouncedQuery) fetchResults(debouncedQuery)
+}, [debouncedQuery])
+```
