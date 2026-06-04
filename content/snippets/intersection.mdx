@@ -1,0 +1,73 @@
+---
+title: Array Intersection
+description: Returns elements that appear in all provided arrays, using deep equality or a custom comparator. Works with arrays of primitives and objects alike.
+category: snippets
+language: typescript
+tags: [array, utils, set, comparison]
+---
+
+Returns only the elements that appear in every provided array. Works out of the box for primitives using `JSON.stringify` for deep equality, and accepts an optional comparator for precise control over how object identity is determined.
+
+## Usage
+
+```typescript
+type Comparator<T> = (a: T, b: T) => boolean
+
+function intersection<T>(
+  ...arrays: [T[], T[], ...T[][]]
+): T[]
+function intersection<T>(
+  arrays: [T[], T[], ...T[][]],
+  comparator: Comparator<T>
+): T[]
+function intersection<T>(
+  first: T[] | [T[], T[], ...T[][]],
+  ...rest: T[][] | [Comparator<T>]
+): T[] {
+  // Detect overload: comparator form vs spread form
+  const hasComparator =
+    rest.length === 1 && typeof rest[0] === 'function'
+
+  const [arrays, comparator]: [T[][], Comparator<T>] = hasComparator
+    ? [first as T[][], rest[0] as Comparator<T>]
+    : [[first as T[], ...(rest as T[][])], (a, b) => JSON.stringify(a) === JSON.stringify(b)]
+
+  const [head, ...tail] = arrays
+
+  return head.filter((item) =>
+    tail.every((arr) => arr.some((other) => comparator(item, other)))
+  )
+}
+
+export default intersection
+```
+
+## Examples
+
+```typescript
+// Primitives
+intersection([1, 2, 3, 4], [2, 4, 6], [2, 4, 8])
+// [2, 4]
+
+intersection(['a', 'b', 'c'], ['b', 'c', 'd'])
+// ['b', 'c']
+
+// Objects — deep equality via JSON.stringify (default)
+const a = [{ id: 1 }, { id: 2 }, { id: 3 }]
+const b = [{ id: 2 }, { id: 3 }, { id: 4 }]
+intersection(a, b)
+// [{ id: 2 }, { id: 3 }]
+
+// Objects — custom comparator by key
+const users1 = [{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }]
+const users2 = [{ id: 2, name: 'Bobby' }, { id: 3, name: 'Carol' }]
+intersection([users1, users2], (a, b) => a.id === b.id)
+// [{ id: 2, name: 'Bob' }]  — element from the first array is kept
+```
+
+## Notes
+
+- The default comparator uses `JSON.stringify`, which works well for plain objects but is sensitive to key ordering. For stricter structural equality, supply a custom comparator.
+- Elements from the **first** array are returned; duplicates within that array are preserved if they exist in all other arrays.
+- Requires at least two arrays. TypeScript enforces this via the `[T[], T[], ...T[][]]` tuple constraint.
+- Time complexity is O(n × m × k) where n is the length of the first array, m is the average length of remaining arrays, and k is the number of arrays. For large datasets, consider using a `Set`-based approach with a serialization key.
