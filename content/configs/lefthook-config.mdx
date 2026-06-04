@@ -1,0 +1,72 @@
+---
+title: Lefthook Config
+description: A Lefthook configuration for parallel pre-commit hooks running lint and type checks without the Node.js overhead of Husky. Fast and language-agnostic git hooks runner.
+category: configs
+language: yaml
+tags: [lefthook, git-hooks, linting, pre-commit]
+---
+
+A `lefthook.yml` that runs lint and type-check jobs in parallel on pre-commit, keeping your feedback loop fast by only touching staged files and skipping the Node.js startup cost of Husky.
+
+## Usage
+
+```yaml
+# lefthook.yml
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      glob: "*.{js,jsx,ts,tsx}"
+      run: npx eslint --max-warnings=0 {staged_files}
+      stage_fixed: true
+
+    type-check:
+      run: npx tsc --noEmit
+
+    format:
+      glob: "*.{js,jsx,ts,tsx,json,css,md,mdx}"
+      run: npx prettier --check {staged_files}
+      stage_fixed: true
+
+pre-push:
+  commands:
+    tests:
+      run: npm test -- --passWithNoTests
+```
+
+## Options
+
+| Key | Description |
+|-----|-------------|
+| `parallel: true` | Runs all commands in the group concurrently instead of sequentially |
+| `glob` | Restricts the command to files matching the pattern — skipped entirely when no staged files match |
+| `{staged_files}` | Placeholder replaced by Lefthook with the list of staged files matching `glob` |
+| `stage_fixed: true` | Auto-stages files that the command fixes in place (e.g. ESLint `--fix`, Prettier `--write`) |
+| `run` on `type-check` | No `glob` here — `tsc --noEmit` must check the whole project to catch cross-file errors |
+
+## Notes
+
+Install Lefthook and register the hooks once per clone:
+
+```bash
+npm install -D lefthook
+npx lefthook install
+```
+
+`lefthook install` writes the actual git hook scripts into `.git/hooks/`. Team members need to run this after cloning; add it to a `postinstall` npm script so it happens automatically:
+
+```json
+{
+  "scripts": {
+    "postinstall": "lefthook install"
+  }
+}
+```
+
+To skip hooks for a single commit (e.g. a WIP checkpoint), use the standard git flag:
+
+```bash
+git commit --no-verify -m "wip"
+```
+
+Lefthook is available as a standalone binary with no Node.js dependency, making it equally usable in Go, Rust, Python, or any other language project. Install via Homebrew (`brew install lefthook`) or download from the [GitHub releases page](https://github.com/evilmartians/lefthook/releases).
