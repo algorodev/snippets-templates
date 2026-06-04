@@ -1,0 +1,325 @@
+---
+title: Turborepo Monorepo
+description: A full-stack monorepo scaffold using Turborepo with shared packages, a Next.js web app, an Express API, and a shared TypeScript config and UI component library.
+category: templates
+language: TypeScript
+tags: [turborepo, monorepo, next.js, typescript, pnpm]
+repo: https://github.com/vercel/turborepo
+---
+
+Turborepo is a high-performance build system for JavaScript and TypeScript monorepos. It caches build outputs locally and remotely so repeated tasks are near-instant, and it runs independent tasks in parallel across packages to maximize CI throughput.
+
+## Usage
+
+```bash
+# Scaffold with the official starter
+npx create-turbo@latest my-monorepo
+
+# Or with pnpm
+pnpm dlx create-turbo@latest my-monorepo
+```
+
+## How it works
+
+The `turbo.json` pipeline defines task dependencies. Turborepo traces the dependency graph across packages and ensures `build` in downstream packages runs only after their dependencies have built — all with output caching.
+
+```json
+// turbo.json
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^build"]
+    },
+    "type-check": {
+      "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    }
+  }
+}
+```
+
+## Shared UI package
+
+```typescript
+// packages/ui/src/button.tsx
+import * as React from "react";
+
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: "default" | "outline" | "ghost";
+  size?: "sm" | "md" | "lg";
+}
+
+const sizeClasses: Record<NonNullable<ButtonProps["size"]>, string> = {
+  sm: "px-3 py-1 text-sm",
+  md: "px-4 py-2 text-base",
+  lg: "px-6 py-3 text-lg",
+};
+
+const variantClasses: Record<NonNullable<ButtonProps["variant"]>, string> = {
+  default: "bg-blue-600 text-white hover:bg-blue-700",
+  outline: "border border-blue-600 text-blue-600 hover:bg-blue-50",
+  ghost: "text-blue-600 hover:bg-blue-50",
+};
+
+export function Button({
+  variant = "default",
+  size = "md",
+  className = "",
+  children,
+  ...props
+}: ButtonProps) {
+  return (
+    <button
+      className={`rounded font-medium transition-colors ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+```
+
+```typescript
+// packages/ui/package.json
+{
+  "name": "@repo/ui",
+  "version": "0.0.1",
+  "exports": {
+    "./button": {
+      "import": "./src/button.tsx",
+      "types": "./src/button.tsx"
+    }
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "*",
+    "@types/react": "^18",
+    "react": "^18",
+    "typescript": "^5"
+  },
+  "peerDependencies": {
+    "react": "^18"
+  }
+}
+```
+
+## Shared TypeScript config
+
+```json
+// packages/typescript-config/base.json
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Default",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "esModuleInterop": true,
+    "incremental": false,
+    "isolatedModules": true,
+    "lib": ["es2022"],
+    "module": "NodeNext",
+    "moduleDetection": "force",
+    "moduleResolution": "NodeNext",
+    "noUncheckedIndexedAccess": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022"
+  }
+}
+```
+
+```json
+// packages/typescript-config/nextjs.json
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Next.js",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "plugins": [{ "name": "next" }],
+    "jsx": "preserve",
+    "allowJs": true,
+    "target": "ES2017"
+  }
+}
+```
+
+## Next.js app consuming shared packages
+
+```typescript
+// apps/web/app/page.tsx
+import { Button } from "@repo/ui/button";
+
+export default function HomePage() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
+      <h1 className="text-4xl font-bold">Turborepo Monorepo</h1>
+      <p className="text-gray-600">Shared UI components, shared configs.</p>
+      <div className="flex gap-2">
+        <Button variant="default">Get started</Button>
+        <Button variant="outline">Learn more</Button>
+      </div>
+    </main>
+  );
+}
+```
+
+## Express API app
+
+```typescript
+// apps/api/src/index.ts
+import express from "express";
+
+const app = express();
+const port = process.env.PORT ?? 3001;
+
+app.use(express.json());
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+app.get("/api/items", (_req, res) => {
+  res.json({
+    items: [
+      { id: 1, name: "Item one" },
+      { id: 2, name: "Item two" },
+    ],
+  });
+});
+
+app.listen(port, () => {
+  console.log(`API server running on http://localhost:${port}`);
+});
+```
+
+## Root workspace
+
+```json
+// package.json (root)
+{
+  "name": "my-monorepo",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "type-check": "turbo type-check",
+    "test": "turbo test",
+    "clean": "turbo clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
+```
+
+```yaml
+# pnpm-workspace.yaml
+packages:
+  - "apps/*"
+  - "packages/*"
+```
+
+## README
+
+### What this includes
+
+- **Turborepo** — Incremental build system with local and remote caching
+- **pnpm workspaces** — Fast, disk-efficient package manager with workspace linking
+- **`apps/web`** — Next.js 14 app with App Router
+- **`apps/api`** — Express REST API with TypeScript
+- **`packages/ui`** — Shared React component library consumed by apps
+- **`packages/typescript-config`** — Shared `tsconfig` base, Next.js, and Node presets
+- **`packages/eslint-config`** — Shared ESLint rules across all packages
+- **Parallel task execution** — `dev`, `build`, `lint`, and `test` all run across packages in parallel
+- **Remote caching** — Optional Vercel Remote Cache integration for team-wide build sharing
+
+### Prerequisites
+
+- Node.js 18+
+- pnpm 9+ (`npm install -g pnpm`)
+- (Optional) A [Vercel account](https://vercel.com) for remote caching
+
+### Create this template
+
+```bash
+# 1. Scaffold the monorepo
+pnpm dlx create-turbo@latest my-monorepo
+
+# 2. Select "pnpm" as the package manager when prompted
+
+# 3. Enter the project
+cd my-monorepo
+
+# 4. Install dependencies
+pnpm install
+
+# 5. Start all apps and packages in dev mode
+pnpm dev
+
+# 6. Build all packages and apps
+pnpm build
+
+# 7. (Optional) Link to Vercel Remote Cache for shared CI caching
+pnpm dlx turbo login
+pnpm dlx turbo link
+```
+
+### Project structure
+
+```
+my-monorepo/
+├── apps/
+│   ├── web/                        # Next.js app
+│   │   ├── app/
+│   │   │   ├── layout.tsx
+│   │   │   └── page.tsx
+│   │   ├── next.config.ts
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   └── api/                        # Express API
+│       ├── src/
+│       │   └── index.ts
+│       ├── package.json
+│       └── tsconfig.json
+├── packages/
+│   ├── ui/                         # Shared React component library
+│   │   ├── src/
+│   │   │   └── button.tsx
+│   │   └── package.json
+│   ├── typescript-config/          # Shared tsconfig presets
+│   │   ├── base.json
+│   │   ├── nextjs.json
+│   │   └── node.json
+│   └── eslint-config/              # Shared ESLint config
+│       ├── index.js
+│       └── package.json
+├── turbo.json                      # Task pipeline definition
+├── pnpm-workspace.yaml
+└── package.json
+```
+
+### First things to customize
+
+- `turbo.json` — Add tasks for your own scripts (`test`, `e2e`, `storybook`)
+- `apps/web/app/page.tsx` — Replace the placeholder home page
+- `apps/api/src/index.ts` — Add your own API routes and middleware
+- `packages/ui/src/` — Build out your component library
+- `packages/typescript-config/` — Adjust `strict`, `target`, and lib settings
+- `pnpm-workspace.yaml` — Add more workspace globs (e.g., `services/*`) if needed
