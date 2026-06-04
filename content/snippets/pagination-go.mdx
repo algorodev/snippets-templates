@@ -1,0 +1,148 @@
+---
+title: Pagination Helper (Go)
+description: Calculates pagination metadata (total pages, has next/prev, offset) from item count, page, and page-size inputs. Returns a typed Pagination struct for use in API responses.
+category: snippets
+language: go
+tags: [utils, pagination, api]
+---
+
+Derives all the pagination fields an API response needs from three integers — total item count, current page, and page size — without requiring the caller to do any arithmetic.
+
+## Usage
+
+```go
+package pagination
+
+import "math"
+
+// Pagination holds the computed metadata for a single page of results.
+type Pagination struct {
+	// Page is the current (1-based) page number, clamped to valid range.
+	Page int `json:"page"`
+
+	// PageSize is the number of items per page, clamped to [1, MaxPageSize].
+	PageSize int `json:"page_size"`
+
+	// TotalItems is the total number of items across all pages.
+	TotalItems int `json:"total_items"`
+
+	// TotalPages is the number of pages needed to display all items.
+	// Always >= 1.
+	TotalPages int `json:"total_pages"`
+
+	// Offset is the zero-based index of the first item on this page,
+	// ready to pass directly to a SQL OFFSET clause or slice expression.
+	Offset int `json:"offset"`
+
+	// HasPrev is true when there is at least one page before this one.
+	HasPrev bool `json:"has_prev"`
+
+	// HasNext is true when there is at least one page after this one.
+	HasNext bool `json:"has_next"`
+}
+
+const (
+	DefaultPageSize = 20
+	MaxPageSize     = 100
+)
+
+// New computes a Pagination value from the provided inputs.
+//
+//   - totalItems: the total number of records matching the query (>= 0).
+//   - page:       the requested 1-based page number.
+//   - pageSize:   how many items per page; 0 falls back to DefaultPageSize.
+func New(totalItems, page, pageSize int) Pagination {
+	// Clamp page size.
+	if pageSize <= 0 {
+		pageSize = DefaultPageSize
+	}
+	if pageSize > MaxPageSize {
+		pageSize = MaxPageSize
+	}
+
+	// Total pages is at least 1 so callers never need to special-case 0.
+	totalPages := int(math.Ceil(float64(totalItems) / float64(pageSize)))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	// Clamp page into [1, totalPages].
+	if page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+
+	offset := (page - 1) * pageSize
+
+	return Pagination{
+		Page:       page,
+		PageSize:   pageSize,
+		TotalItems: totalItems,
+		TotalPages: totalPages,
+		Offset:     offset,
+		HasPrev:    page > 1,
+		HasNext:    page < totalPages,
+	}
+}
+```
+
+## Examples
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+
+	"yourmodule/pagination"
+)
+
+// ArticleResponse is the shape returned by a list endpoint.
+type ArticleResponse struct {
+	Data       []Article          `json:"data"`
+	Pagination pagination.Pagination `json:"pagination"`
+}
+
+func listArticles(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _     := strconv.Atoi(q.Get("page"))
+	pageSize, _ := strconv.Atoi(q.Get("page_size"))
+
+	totalItems := countArticles() // your DB count query
+	p := pagination.New(totalItems, page, pageSize)
+
+	articles := fetchArticles(p.Offset, p.PageSize) // LIMIT + OFFSET
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ArticleResponse{
+		Data:       articles,
+		Pagination: p,
+	})
+}
+
+// Quick sanity check in main:
+func main() {
+	p := pagination.New(95, 3, 20)
+	fmt.Printf("%+v\n", p)
+	// {Page:3 PageSize:20 TotalItems:95 TotalPages:5 Offset:40 HasPrev:true HasNext:true}
+
+	// Edge cases
+	fmt.Println(pagination.New(0, 1, 20))
+	// {Page:1 PageSize:20 TotalItems:0 TotalPages:1 Offset:0 HasPrev:false HasNext:false}
+
+	fmt.Println(pagination.New(100, 999, 20)) // page clamped to 5
+	// {Page:5 PageSize:20 TotalItems:100 TotalPages:5 Offset:80 HasPrev:true HasNext:false}
+}
+```
+
+## Notes
+
+- `TotalPages` is always at least 1, so response consumers never need to guard against a zero value.
+- `Page` is clamped to `[1, TotalPages]`, making out-of-range query parameters safe to pass directly from URL query strings.
+- `Offset` is zero-based and maps directly to a SQL `OFFSET` clause or a Go slice `[offset : offset+pageSize]`.
+- Adjust `DefaultPageSize` and `MaxPageSize` as package-level constants to match your API contract.
