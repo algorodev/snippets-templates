@@ -1,0 +1,126 @@
+---
+title: Vercel Deploy Helper
+description: Wrap the Vercel CLI to deploy, promote to production, roll back to a previous deployment, and tail build logs with one-word commands.
+category: cli
+language: bash
+tags: [cloud, vercel, deploy, devops]
+---
+
+Add these aliases and functions to your `~/.zshrc` or `~/.bashrc` to manage Vercel deployments with short, memorable commands. Requires the Vercel CLI (`npm i -g vercel`).
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+# ── Aliases ───────────────────────────────────────────────────────
+
+# Deploy current directory to a preview URL
+alias vdeploy='vercel --yes'
+
+# Deploy and promote straight to production
+alias vprod='vercel --prod --yes'
+
+# Open the Vercel dashboard for the current project in the browser
+alias vopen='vercel inspect --open'
+
+# ── Functions ─────────────────────────────────────────────────────
+
+# Tail live build logs for the most recent (or a specific) deployment
+# Usage: vlogs [deployment-url]
+vlogs() {
+  local url="${1:-}"
+
+  if [[ -z "$url" ]]; then
+    # Pull the URL of the latest deployment from project metadata
+    url=$(vercel ls --limit 1 2>/dev/null | awk 'NR==2 {print $2}')
+    if [[ -z "$url" ]]; then
+      echo "Error: could not detect the latest deployment URL." >&2
+      echo "Usage: vlogs [deployment-url]" >&2
+      return 1
+    fi
+    echo "Tailing logs for: $url"
+  fi
+
+  vercel logs "$url" --follow
+}
+
+# Roll back to a previous deployment (interactive fzf picker or direct URL)
+# Usage: vrollback [deployment-url]
+vrollback() {
+  local target="${1:-}"
+
+  if ! command -v fzf &>/dev/null && [[ -z "$target" ]]; then
+    echo "Error: fzf not found and no deployment URL given." >&2
+    echo "Install fzf (brew install fzf) or pass a deployment URL directly." >&2
+    return 1
+  fi
+
+  if [[ -z "$target" ]]; then
+    target=$(
+      vercel ls --limit 20 2>/dev/null \
+        | awk 'NR>1 && NF {print $2, $3, $4}' \
+        | fzf --height=40% --reverse --prompt="Roll back to > " \
+        | awk '{print $1}'
+    )
+  fi
+
+  if [[ -z "$target" ]]; then
+    echo "No deployment selected."
+    return 0
+  fi
+
+  echo "Promoting $target to production..."
+  vercel promote "$target" --yes \
+    && echo "Rolled back to $target" \
+    || echo "Error: rollback failed." >&2
+}
+
+# Alias for quick rollback without typing the function name
+alias vback='vrollback'
+```
+
+After adding the functions, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# Preview deploy
+vdeploy
+# Vercel CLI 34.x.x
+# ? Set up and deploy "~/projects/my-app"? Yes
+# 🔍 Inspect: https://vercel.com/acme/my-app/abc123
+# ✅ Preview: https://my-app-abc123.vercel.app
+
+# Production deploy
+vprod
+# ✅ Production: https://my-app.vercel.app
+
+# Tail logs for the latest deployment
+vlogs
+# Tailing logs for: https://my-app-abc123.vercel.app
+# [build] installing dependencies...
+
+# Tail logs for a specific deployment
+vlogs https://my-app-abc123.vercel.app
+
+# Interactive rollback
+vrollback
+# Opens fzf with the last 20 deployments, promotes the selected one
+
+# Direct rollback
+vrollback https://my-app-xyz789.vercel.app
+# Promoting https://my-app-xyz789.vercel.app to production...
+# Rolled back to https://my-app-xyz789.vercel.app
+```
+
+## Notes
+
+- `vercel --yes` skips the interactive setup prompt, which is useful once the project is already linked. Remove `--yes` the first time you run it in a new directory.
+- `vercel promote` is used for rollbacks because it re-routes production traffic to a previous deployment without a new build.
+- `vlogs` with no argument calls `vercel ls` — this makes an API request and can be slow on large teams. Pass the URL directly when you already have it.
+- These functions assume the Vercel CLI is authenticated (`vercel login`) and the project is linked (`vercel link`).
