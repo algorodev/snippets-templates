@@ -1,0 +1,137 @@
+---
+title: Prisma Schema Starter
+description: A starter Prisma schema with datasource, generator, and common model patterns including soft deletes and timestamps. Supports PostgreSQL with connection pooling via Prisma Accelerate.
+category: configs
+language: toml
+tags: [prisma, orm, database, postgresql, schema]
+---
+
+A production-ready Prisma schema covering datasource configuration, the standard client generator, and reusable model patterns for timestamps, soft deletes, and relations.
+
+## Usage
+
+```prisma
+// schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Uncomment when using Prisma Accelerate for connection pooling
+  // directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // soft delete — filter with `where: { deletedAt: null }`
+
+  posts     Post[]
+  profile   Profile?
+
+  @@index([email])
+  @@map("users")
+}
+
+model Profile {
+  id        String   @id @default(cuid())
+  bio       String?
+  avatarUrl String?
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("profiles")
+}
+
+model Post {
+  id          String    @id @default(cuid())
+  title       String
+  slug        String    @unique
+  content     String?
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  authorId    String
+  author      User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  tags        Tag[]     @relation("PostTags")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([authorId])
+  @@index([slug])
+  @@index([published, publishedAt])
+  @@map("posts")
+}
+
+model Tag {
+  id    String @id @default(cuid())
+  name  String @unique
+  posts Post[] @relation("PostTags")
+
+  @@map("tags")
+}
+```
+
+**Install and initialise:**
+
+```bash
+npm install prisma @prisma/client
+npx prisma init --datasource-provider postgresql
+```
+
+**Apply to database:**
+
+```bash
+# Development — creates and applies a migration file
+npx prisma migrate dev --name init
+
+# Production — applies pending migrations without creating new ones
+npx prisma migrate deploy
+
+# Regenerate the Prisma Client after schema changes
+npx prisma generate
+```
+
+**Set `DATABASE_URL` in `.env`:**
+
+```bash
+DATABASE_URL="postgresql://user:password@localhost:5432/mydb?schema=public"
+```
+
+## Options
+
+| Field | Purpose |
+|-------|---------|
+| `@id @default(cuid())` | Collision-resistant string IDs — swap for `@default(uuid())` if you prefer UUIDs |
+| `@updatedAt` | Prisma automatically sets this on every update |
+| `deletedAt DateTime?` | Soft delete pattern — always add `where: { deletedAt: null }` to queries |
+| `onDelete: Cascade` | Deleting a parent row also deletes child rows |
+| `@@index([...])` | Add composite indexes for your most common query filters |
+| `@@map("table_name")` | Maps the Prisma model name to a snake_case SQL table name |
+| `directUrl` | Required by Prisma Accelerate — set to the direct database URL, not the pooled one |
+
+## Notes
+
+- Soft deletes are not enforced at the database level — wrap queries in a helper or use a Prisma middleware to always append `where: { deletedAt: null }` by default.
+- Use `cuid()` for IDs exposed in URLs (they are non-sequential and URL-safe). Use `uuid()` if interoperability with other systems requires RFC 4122 UUIDs.
+- When using Prisma Accelerate, set `url` to the Accelerate connection string and `directUrl` to your real database URL. Migrations must run against `directUrl`.
+- Run `npx prisma studio` to open a local GUI for browsing and editing data during development.
