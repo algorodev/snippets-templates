@@ -1,0 +1,57 @@
+---
+title: Is Prime Number
+description: Determines whether a positive integer is prime using trial division up to its square root. Handles edge cases for 0, 1, and negative numbers.
+category: snippets
+language: typescript
+tags: [math, utils, number, check]
+---
+
+Returns `true` if a given integer is prime. Uses trial division up to `√n`, giving O(√n) time complexity with no dependencies.
+
+## Usage
+
+```typescript
+/**
+ * Returns true if `n` is a prime number.
+ * Handles edge cases: negatives, 0, and 1 all return false.
+ */
+function isPrime(n: number): boolean {
+  if (!Number.isInteger(n) || n < 2) return false
+  if (n === 2) return true
+  if (n % 2 === 0) return false
+
+  for (let i = 3; i <= Math.sqrt(n); i += 2) {
+    if (n % i === 0) return false
+  }
+
+  return true
+}
+
+export default isPrime
+```
+
+## Examples
+
+```typescript
+isPrime(2)   // => true
+isPrime(3)   // => true
+isPrime(7)   // => true
+isPrime(13)  // => true
+isPrime(97)  // => true
+
+isPrime(1)   // => false
+isPrime(0)   // => false
+isPrime(-5)  // => false
+isPrime(4)   // => false
+isPrime(100) // => false
+```
+
+## How it works
+
+1. Reject anything below 2 (including negatives, 0, and 1) — none are prime by definition.
+2. Return `true` immediately for 2, the only even prime.
+3. Reject all other even numbers with a single modulo check.
+4. Test odd divisors from 3 up to `√n`, stepping by 2. If any divides `n` evenly, `n` is composite.
+5. If no divisor is found, `n` is prime.
+
+Checking only up to `√n` works because if `n = a × b` and both `a` and `b` were greater than `√n`, their product would exceed `n` — so at least one factor must be `≤ √n`.
