@@ -1,0 +1,464 @@
+---
+title: Flutter App
+description: A cross-platform Flutter application template targeting iOS, Android, and web, with Riverpod for state management, GoRouter for navigation, and Freezed for immutable data models.
+category: templates
+language: Dart
+tags: [flutter, dart, mobile, riverpod, cross-platform]
+repo: https://github.com/flutter/flutter
+---
+
+A Flutter application scaffold targeting iOS, Android, and web from a single codebase, wiring Riverpod for reactive state, GoRouter for declarative navigation with redirect-based auth guards, and Freezed for boilerplate-free immutable data models.
+
+## Usage
+
+```dart
+// lib/main.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'router.dart';
+
+void main() {
+  runApp(
+    // ProviderScope is required at the root — all Riverpod providers live here
+    const ProviderScope(child: MyApp()),
+  );
+}
+
+class MyApp extends ConsumerWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final router = ref.watch(routerProvider);
+    return MaterialApp.router(
+      title: 'My Flutter App',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        useMaterial3: true,
+      ),
+      routerConfig: router,
+    );
+  }
+}
+```
+
+```dart
+// lib/models/user.dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'user.freezed.dart';
+part 'user.g.dart';
+
+@freezed
+class User with _$User {
+  const factory User({
+    required String id,
+    required String name,
+    required String email,
+    @Default('user') String role,
+  }) = _User;
+
+  factory User.fromJson(Map<String, dynamic> json) => _$UserFromJson(json);
+}
+```
+
+```dart
+// lib/models/post.dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'post.freezed.dart';
+part 'post.g.dart';
+
+@freezed
+class Post with _$Post {
+  const factory Post({
+    required String id,
+    required String title,
+    required String body,
+    required String authorId,
+    DateTime? publishedAt,
+    required DateTime createdAt,
+  }) = _Post;
+
+  factory Post.fromJson(Map<String, dynamic> json) => _$PostFromJson(json);
+}
+```
+
+```dart
+// lib/providers/auth_provider.dart
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
+import '../models/user.dart';
+
+part 'auth_provider.freezed.dart';
+
+@freezed
+class AuthState with _$AuthState {
+  const factory AuthState.initial()              = _Initial;
+  const factory AuthState.authenticated(User user) = _Authenticated;
+  const factory AuthState.unauthenticated()      = _Unauthenticated;
+  const factory AuthState.loading()              = _Loading;
+}
+
+class AuthNotifier extends AsyncNotifier<AuthState> {
+  @override
+  Future<AuthState> build() async {
+    // Check stored token on startup
+    final token = await _loadStoredToken();
+    if (token != null) {
+      try {
+        final user = await _fetchCurrentUser(token);
+        return AuthState.authenticated(user);
+      } catch (_) {}
+    }
+    return const AuthState.unauthenticated();
+  }
+
+  Future<void> login(String email, String password) async {
+    state = const AsyncData(AuthState.loading());
+    try {
+      final user = await _doLogin(email, password);
+      state = AsyncData(AuthState.authenticated(user));
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
+  }
+
+  Future<void> logout() async {
+    await _clearToken();
+    state = const AsyncData(AuthState.unauthenticated());
+  }
+
+  Future<String?> _loadStoredToken() async => null;     // inject SharedPreferences
+  Future<User> _fetchCurrentUser(String token) async => throw UnimplementedError();
+  Future<User> _doLogin(String email, String pass) async => throw UnimplementedError();
+  Future<void> _clearToken() async {}
+}
+
+final authProvider = AsyncNotifierProvider<AuthNotifier, AuthState>(
+  AuthNotifier.new,
+);
+```
+
+```dart
+// lib/providers/posts_provider.dart
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/post.dart';
+
+// Simple family provider — re-fetches when userId changes
+final postsProvider = FutureProvider.family<List<Post>, String>((ref, userId) async {
+  // Replace with your real API call
+  await Future.delayed(const Duration(milliseconds: 400));
+  return [
+    Post(
+      id: '1',
+      title: 'Hello Flutter',
+      body: 'First post from the scaffold.',
+      authorId: userId,
+      createdAt: DateTime.now(),
+    ),
+  ];
+});
+```
+
+```dart
+// lib/router.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'providers/auth_provider.dart';
+import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/post_detail_screen.dart';
+import 'screens/splash_screen.dart';
+
+final routerProvider = Provider<GoRouter>((ref) {
+  final authState = ref.watch(authProvider);
+
+  return GoRouter(
+    initialLocation: '/splash',
+    redirect: (context, state) {
+      final isLoading = authState.isLoading;
+      if (isLoading) return '/splash';
+
+      final isAuthenticated = authState.valueOrNull is _Authenticated;
+      final onAuth = state.matchedLocation.startsWith('/login');
+
+      if (!isAuthenticated && !onAuth) return '/login';
+      if (isAuthenticated && onAuth)  return '/home';
+      return null;
+    },
+    routes: [
+      GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
+      GoRoute(path: '/login',  builder: (_, __) => const LoginScreen()),
+      GoRoute(
+        path: '/home',
+        builder: (_, __) => const HomeScreen(),
+        routes: [
+          GoRoute(
+            path: 'posts/:id',
+            builder: (_, state) => PostDetailScreen(postId: state.pathParameters['id']!),
+          ),
+        ],
+      ),
+    ],
+  );
+});
+```
+
+```dart
+// lib/screens/home_screen.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../models/post.dart';
+import '../providers/auth_provider.dart';
+import '../providers/posts_provider.dart';
+
+class HomeScreen extends ConsumerWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authProvider);
+    final userId = authState.valueOrNull?.maybeMap(
+      authenticated: (s) => s.user.id,
+      orElse: () => null,
+    );
+
+    final postsAsync = userId != null
+        ? ref.watch(postsProvider(userId))
+        : const AsyncData<List<Post>>([]);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Posts'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => ref.read(authProvider.notifier).logout(),
+          ),
+        ],
+      ),
+      body: postsAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(child: Text('Error: $e')),
+        data: (posts) => ListView.builder(
+          itemCount: posts.length,
+          itemBuilder: (context, i) {
+            final post = posts[i];
+            return ListTile(
+              title: Text(post.title),
+              subtitle: Text(post.body, maxLines: 2, overflow: TextOverflow.ellipsis),
+              onTap: () => context.go('/home/posts/${post.id}'),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+```
+
+```dart
+// lib/screens/login_screen.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/auth_provider.dart';
+
+class LoginScreen extends ConsumerStatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _email    = TextEditingController();
+  final _password = TextEditingController();
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    await ref.read(authProvider.notifier).login(_email.text.trim(), _password.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isLoading = ref.watch(authProvider).isLoading;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sign in')),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TextFormField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Email'),
+                validator: (v) => (v == null || !v.contains('@')) ? 'Enter a valid email' : null,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _password,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Password'),
+                validator: (v) => (v == null || v.length < 8) ? 'Min 8 characters' : null,
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: isLoading ? null : _submit,
+                  child: isLoading
+                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Sign in'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+```yaml
+# pubspec.yaml (dependencies section)
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+  go_router: ^13.2.1
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.9.0
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.4.10
+  freezed: ^2.5.2
+  json_serializable: ^6.8.0
+  riverpod_generator: ^2.4.0
+```
+
+## How it works
+
+Riverpod's `ProviderScope` at the root makes every provider available to the widget tree. `AsyncNotifierProvider` models async auth state as `AsyncData / AsyncError / AsyncLoading`, which GoRouter's `redirect` callback watches — keeping navigation reactive to auth changes without manual `Navigator` calls. Freezed generates `copyWith`, `==`, `hashCode`, and `toJson`/`fromJson` at build time, so models stay immutable with zero boilerplate. `FutureProvider.family` caches API responses per argument and automatically disposes them when no widget is listening.
+
+## Notes
+
+- Run `flutter pub run build_runner build --delete-conflicting-outputs` after adding or modifying any Freezed model or Riverpod generator annotation.
+- Use `flutter_secure_storage` instead of `shared_preferences` for storing auth tokens on mobile.
+- For testing, wrap widgets in `ProviderScope(overrides: [...])` to swap providers with fakes.
+
+## README
+
+### What this includes
+
+- Flutter 3 multi-platform app (iOS, Android, web)
+- Riverpod `AsyncNotifierProvider` for auth state with loading/error/data modeling
+- `FutureProvider.family` for per-user data fetching with automatic caching
+- GoRouter with redirect-based auth guards
+- Freezed immutable models with `fromJson`/`toJson` via `json_serializable`
+- `HomeScreen` with reactive post list, logout, and deep-link navigation
+- `LoginScreen` with `Form` validation and loading state
+- `pubspec.yaml` with all dependency versions pinned
+
+### Prerequisites
+
+- Flutter 3.22+ (`flutter --version`)
+- Dart 3.4+
+- Xcode 15+ for iOS builds
+- Android Studio / Android SDK for Android builds
+- Chrome for web development
+
+### Create this template
+
+```bash
+# 1. Create new Flutter project
+flutter create my_flutter_app --org com.example --platforms ios,android,web
+cd my_flutter_app
+
+# 2. Add dependencies to pubspec.yaml as shown above, then install
+flutter pub get
+
+# 3. Create directory structure
+mkdir -p lib/{models,providers,screens,services,widgets}
+
+# 4. Write Freezed models (user.dart, post.dart)
+# 5. Write providers (auth_provider.dart, posts_provider.dart)
+# 6. Write router (router.dart)
+# 7. Write screens (home_screen.dart, login_screen.dart, post_detail_screen.dart, splash_screen.dart)
+
+# 8. Generate Freezed/Riverpod code
+flutter pub run build_runner build --delete-conflicting-outputs
+
+# 9. Run on preferred platform
+flutter run -d chrome          # web
+flutter run -d ios             # requires Xcode + Simulator
+flutter run -d android         # requires Android emulator or device
+
+# 10. Run tests
+flutter test
+```
+
+### Project structure
+
+```
+my_flutter_app/
+├── lib/
+│   ├── main.dart
+│   ├── router.dart
+│   ├── models/
+│   │   ├── post.dart
+│   │   ├── post.freezed.dart      # generated
+│   │   ├── post.g.dart            # generated
+│   │   ├── user.dart
+│   │   ├── user.freezed.dart      # generated
+│   │   └── user.g.dart            # generated
+│   ├── providers/
+│   │   ├── auth_provider.dart
+│   │   ├── auth_provider.freezed.dart   # generated
+│   │   └── posts_provider.dart
+│   ├── screens/
+│   │   ├── home_screen.dart
+│   │   ├── login_screen.dart
+│   │   ├── post_detail_screen.dart
+│   │   └── splash_screen.dart
+│   ├── services/
+│   │   └── api_service.dart
+│   └── widgets/
+├── test/
+│   ├── providers/
+│   │   └── auth_provider_test.dart
+│   └── screens/
+│       └── login_screen_test.dart
+├── android/
+├── ios/
+├── web/
+└── pubspec.yaml
+```
+
+### First things to customize
+
+- `lib/providers/auth_provider.dart` `_doLogin` / `_fetchCurrentUser` — wire to your real API service
+- `lib/providers/posts_provider.dart` — replace the stub with an actual HTTP call via `dio` or `http`
+- `lib/router.dart` routes — add your own screens and nested routes
+- `lib/models/` — add fields to `User` and `Post`, then re-run `build_runner`
+- `pubspec.yaml` `name` and `description` — update to match your app
+- `android/app/src/main/AndroidManifest.xml` and `ios/Runner/Info.plist` — set app name, bundle ID, and permissions
