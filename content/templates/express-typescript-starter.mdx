@@ -1,0 +1,284 @@
+---
+title: Express TypeScript Starter
+description: A clean Express.js starter with full TypeScript support, ts-node-dev for development, and a structured folder layout for controllers, services, and routes.
+category: templates
+language: TypeScript
+tags: [node.js, express, typescript, starter, rest-api]
+---
+
+A production-ready Express.js foundation with TypeScript configured from scratch — typed request/response objects, a layered folder structure, centralised error handling, and ts-node-dev for zero-friction development.
+
+## Usage
+
+```bash
+# Development (hot reload)
+npm run dev
+
+# Build
+npm run build
+
+# Production
+npm start
+```
+
+## How it works
+
+```typescript
+// src/types/express.d.ts — extend Express types
+import { User } from "../models/user"
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: User
+    }
+  }
+}
+```
+
+```typescript
+// src/middleware/errorHandler.ts
+import { Request, Response, NextFunction } from "express"
+
+export class AppError extends Error {
+  constructor(
+    public statusCode: number,
+    message: string
+  ) {
+    super(message)
+    this.name = "AppError"
+    Error.captureStackTrace(this, this.constructor)
+  }
+}
+
+export function errorHandler(
+  err: Error,
+  _req: Request,
+  res: Response,
+  _next: NextFunction
+): void {
+  if (err instanceof AppError) {
+    res.status(err.statusCode).json({ error: err.message })
+    return
+  }
+
+  console.error(err)
+  res.status(500).json({ error: "Internal Server Error" })
+}
+```
+
+```typescript
+// src/middleware/validate.ts
+import { Request, Response, NextFunction } from "express"
+import { ZodSchema } from "zod"
+import { AppError } from "./errorHandler"
+
+export function validate(schema: ZodSchema) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const result = schema.safeParse(req.body)
+    if (!result.success) {
+      throw new AppError(400, result.error.issues.map((i) => i.message).join(", "))
+    }
+    req.body = result.data
+    next()
+  }
+}
+```
+
+```typescript
+// src/services/user.service.ts
+export interface User {
+  id: number
+  name: string
+  email: string
+}
+
+// In a real app, replace with a database query
+const users: User[] = [
+  { id: 1, name: "Alice", email: "alice@example.com" },
+  { id: 2, name: "Bob", email: "bob@example.com" },
+]
+
+export const UserService = {
+  findAll(): User[] {
+    return users
+  },
+
+  findById(id: number): User | undefined {
+    return users.find((u) => u.id === id)
+  },
+
+  create(data: Omit<User, "id">): User {
+    const user: User = { id: users.length + 1, ...data }
+    users.push(user)
+    return user
+  },
+}
+```
+
+```typescript
+// src/controllers/user.controller.ts
+import { Request, Response, NextFunction } from "express"
+import { z } from "zod"
+import { UserService } from "../services/user.service"
+import { AppError } from "../middleware/errorHandler"
+
+export const createUserSchema = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+})
+
+export const UserController = {
+  getAll(_req: Request, res: Response) {
+    res.json(UserService.findAll())
+  },
+
+  getOne(req: Request, res: Response, next: NextFunction) {
+    const id = Number(req.params.id)
+    const user = UserService.findById(id)
+    if (!user) return next(new AppError(404, `User ${id} not found`))
+    res.json(user)
+  },
+
+  create(req: Request, res: Response) {
+    const user = UserService.create(req.body)
+    res.status(201).json(user)
+  },
+}
+```
+
+```typescript
+// src/routes/user.routes.ts
+import { Router } from "express"
+import { UserController, createUserSchema } from "../controllers/user.controller"
+import { validate } from "../middleware/validate"
+
+const router = Router()
+
+router.get("/", UserController.getAll)
+router.get("/:id", UserController.getOne)
+router.post("/", validate(createUserSchema), UserController.create)
+
+export default router
+```
+
+```typescript
+// src/app.ts
+import express from "express"
+import userRoutes from "./routes/user.routes"
+import { errorHandler } from "./middleware/errorHandler"
+
+const app = express()
+
+app.use(express.json())
+app.use(express.urlencoded({ extended: true }))
+
+app.get("/health", (_req, res) => res.json({ status: "ok" }))
+app.use("/users", userRoutes)
+
+// Must be last
+app.use(errorHandler)
+
+export default app
+```
+
+```typescript
+// src/index.ts
+import app from "./app"
+
+const PORT = process.env.PORT ?? 3000
+
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`)
+})
+```
+
+## Environment variables
+
+```bash
+# .env
+PORT=3000
+NODE_ENV=development
+```
+
+## README
+
+### What this includes
+
+- **Express 4** — battle-tested HTTP framework
+- **TypeScript** — strict mode, path aliases, and module resolution configured
+- **ts-node-dev** — fast dev server with file-watching and automatic restarts
+- **Zod** — runtime schema validation for request bodies
+- **Layered architecture** — routes, controllers, services, and middleware are all separated
+- **Centralised error handling** — typed `AppError` class with a catch-all Express error middleware
+- **Request type augmentation** — `Express.Request` extended for custom properties like `user`
+- **`tsconfig.json`** — `strict`, `esModuleInterop`, and `outDir` pre-configured
+
+### Prerequisites
+
+- Node.js 18+
+- npm / pnpm / yarn
+
+### Create this template
+
+```bash
+# 1. Create and enter the project directory
+mkdir express-ts-starter && cd express-ts-starter
+
+# 2. Initialise a Node project
+npm init -y
+
+# 3. Install runtime dependencies
+npm install express zod dotenv
+
+# 4. Install dev dependencies
+npm install -D typescript ts-node-dev @types/express @types/node
+
+# 5. Generate tsconfig.json
+npx tsc --init --strict --esModuleInterop --rootDir src --outDir dist
+
+# 6. Add scripts to package.json
+#    "dev": "ts-node-dev --respawn --transpile-only src/index.ts"
+#    "build": "tsc"
+#    "start": "node dist/index.js"
+
+# 7. Create the folder structure
+mkdir -p src/routes src/controllers src/services src/middleware src/types
+
+# 8. Create source files and start developing
+touch src/index.ts src/app.ts
+
+# 9. Start the dev server
+npm run dev
+```
+
+### Project structure
+
+```
+express-ts-starter/
+├── src/
+│   ├── controllers/          # Request handlers — call services, return responses
+│   │   └── user.controller.ts
+│   ├── services/             # Business logic — database calls go here
+│   │   └── user.service.ts
+│   ├── routes/               # Router definitions — wire URLs to controllers
+│   │   └── user.routes.ts
+│   ├── middleware/           # Reusable middleware
+│   │   ├── errorHandler.ts
+│   │   └── validate.ts
+│   ├── types/                # TypeScript augmentations and shared types
+│   │   └── express.d.ts
+│   ├── app.ts                # Express app setup (no listen call)
+│   └── index.ts              # Entry point — binds to a port
+├── .env
+├── package.json
+└── tsconfig.json
+```
+
+### First things to customize
+
+- `src/services/` — Replace the in-memory arrays with real database queries (Prisma, Drizzle, or `pg`)
+- `src/middleware/errorHandler.ts` — Add logging (e.g. Pino or Winston) before the JSON response
+- `src/types/express.d.ts` — Add fields to `Request` for your auth strategy (JWT payload, session, etc.)
+- `.env` — Add `DATABASE_URL` and any API keys your service needs
+- `src/routes/` — Add a new route file per resource and register it in `src/app.ts`
