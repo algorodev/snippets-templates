@@ -1,0 +1,382 @@
+---
+title: Go Fiber API
+description: A fast Go REST API built with the Fiber framework, inspired by Express.js. Includes JWT middleware, GORM ORM with PostgreSQL, and structured logging with zerolog.
+category: templates
+language: Go
+tags: [go, fiber, rest-api, gorm, jwt]
+repo: https://github.com/gofiber/fiber
+---
+
+A production-ready Go REST API using Fiber v2 — Express-inspired routing, GORM with PostgreSQL for the data layer, JWT middleware for authentication, and zerolog for structured JSON logging. Everything is wired together in a clean layered structure.
+
+## Usage
+
+```bash
+# Copy environment config
+cp .env.example .env
+
+# Install dependencies
+go mod tidy
+
+# Run with auto-reload (air)
+air
+
+# Or run directly
+go run ./cmd/api
+
+# Open API
+curl http://localhost:3000/health
+```
+
+## How it works
+
+```go
+// cmd/api/main.go
+package main
+
+import (
+	"log"
+
+	"github.com/yourname/fiber-api/internal/config"
+	"github.com/yourname/fiber-api/internal/database"
+	"github.com/yourname/fiber-api/internal/router"
+)
+
+func main() {
+	cfg := config.Load()
+
+	db, err := database.Connect(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("database connection failed: %v", err)
+	}
+
+	app := router.New(cfg, db)
+	log.Fatal(app.Listen(":" + cfg.Port))
+}
+```
+
+```go
+// internal/config/config.go
+package config
+
+import (
+	"os"
+
+	"github.com/joho/godotenv"
+)
+
+type Config struct {
+	Port        string
+	DatabaseURL string
+	JWTSecret   string
+}
+
+func Load() *Config {
+	_ = godotenv.Load()
+	return &Config{
+		Port:        getEnv("PORT", "3000"),
+		DatabaseURL: getEnv("DATABASE_URL", "host=localhost user=postgres password=postgres dbname=fiberdb port=5432 sslmode=disable"),
+		JWTSecret:   getEnv("JWT_SECRET", "change-me-in-production"),
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+```
+
+```go
+// internal/database/database.go
+package database
+
+import (
+	"github.com/yourname/fiber-api/internal/models"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+func Connect(dsn string) (*gorm.DB, error) {
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Auto-migrate models
+	if err := db.AutoMigrate(&models.User{}); err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}
+```
+
+```go
+// internal/models/user.go
+package models
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+type User struct {
+	ID        uint           `gorm:"primarykey"           json:"id"`
+	CreatedAt time.Time      `                            json:"created_at"`
+	UpdatedAt time.Time      `                            json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index"                json:"-"`
+	Email     string         `gorm:"uniqueIndex;not null" json:"email"`
+	Password  string         `gorm:"not null"             json:"-"`
+}
+```
+
+```go
+// internal/router/router.go
+package router
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/yourname/fiber-api/internal/config"
+	"github.com/yourname/fiber-api/internal/handlers"
+	"github.com/yourname/fiber-api/internal/middleware"
+	"gorm.io/gorm"
+)
+
+func New(cfg *config.Config, db *gorm.DB) *fiber.App {
+	app := fiber.New(fiber.Config{
+		ErrorHandler: handlers.ErrorHandler,
+	})
+
+	app.Use(recover.New())
+	app.Use(logger.New(logger.Config{
+		Format: "${time} | ${status} | ${latency} | ${method} ${path}\n",
+	}))
+
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ok"})
+	})
+
+	auth := handlers.NewAuthHandler(db, cfg.JWTSecret)
+	app.Post("/auth/register", auth.Register)
+	app.Post("/auth/login", auth.Login)
+
+	protected := app.Group("/api", middleware.JWTAuth(cfg.JWTSecret))
+	protected.Get("/me", auth.Me)
+
+	return app
+}
+```
+
+```go
+// internal/middleware/jwt.go
+package middleware
+
+import (
+	jwtware "github.com/gofiber/contrib/jwt"
+	"github.com/gofiber/fiber/v2"
+)
+
+func JWTAuth(secret string) fiber.Handler {
+	return jwtware.New(jwtware.Config{
+		SigningKey: jwtware.SigningKey{Key: []byte(secret)},
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "unauthorized",
+			})
+		},
+	})
+}
+```
+
+```go
+// internal/handlers/auth.go
+package handlers
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/yourname/fiber-api/internal/models"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+)
+
+type AuthHandler struct {
+	db        *gorm.DB
+	jwtSecret string
+}
+
+func NewAuthHandler(db *gorm.DB, secret string) *AuthHandler {
+	return &AuthHandler{db: db, jwtSecret: secret}
+}
+
+type registerInput struct {
+	Email    string `json:"email"    validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+func (h *AuthHandler) Register(c *fiber.Ctx) error {
+	var input registerInput
+	if err := c.BodyParser(&input); err != nil {
+		return fiber.ErrBadRequest
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	user := models.User{Email: input.Email, Password: string(hash)}
+	if result := h.db.Create(&user); result.Error != nil {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "email already registered"})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(user)
+}
+
+func (h *AuthHandler) Login(c *fiber.Ctx) error {
+	var input registerInput
+	if err := c.BodyParser(&input); err != nil {
+		return fiber.ErrBadRequest
+	}
+
+	var user models.User
+	if h.db.Where("email = ?", input.Email).First(&user).Error != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid credentials"})
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid credentials"})
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": user.ID,
+		"exp": time.Now().Add(24 * time.Hour).Unix(),
+	})
+	signed, err := token.SignedString([]byte(h.jwtSecret))
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(fiber.Map{"token": signed})
+}
+
+func (h *AuthHandler) Me(c *fiber.Ctx) error {
+	token := c.Locals("user").(*jwt.Token)
+	claims := token.Claims.(jwt.MapClaims)
+	userID := uint(claims["sub"].(float64))
+
+	var user models.User
+	if h.db.First(&user, userID).Error != nil {
+		return fiber.ErrNotFound
+	}
+
+	return c.JSON(user)
+}
+
+func ErrorHandler(c *fiber.Ctx, err error) error {
+	code := fiber.StatusInternalServerError
+	if e, ok := err.(*fiber.Error); ok {
+		code = e.Code
+	}
+	return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+}
+```
+
+## README
+
+### What this includes
+
+- **Fiber v2** — Express-inspired HTTP framework built on fasthttp; significantly faster than `net/http` for high-throughput APIs
+- **GORM** — full-featured ORM with `AutoMigrate`, soft deletes, associations, and hooks
+- **PostgreSQL driver** — `gorm.io/driver/postgres` using `pgx` under the hood
+- **JWT authentication** — `golang-jwt/jwt` for token signing; `gofiber/contrib/jwt` middleware for route protection
+- **bcrypt** — password hashing via `golang.org/x/crypto/bcrypt`
+- **zerolog / Fiber logger** — structured request logging with latency and status code
+- **godotenv** — `.env` file loading for local development
+- **Recover middleware** — catches panics and returns 500 without crashing the server
+- **Air** — live reload for development (optional)
+
+### Prerequisites
+
+- Go 1.21+
+- PostgreSQL 14+ running locally or via Docker
+- (Optional) Air for live reload: `go install github.com/air-verse/air@latest`
+
+### Create this template
+
+```bash
+# 1. Create the project
+mkdir fiber-api && cd fiber-api
+go mod init github.com/yourname/fiber-api
+
+# 2. Install dependencies
+go get github.com/gofiber/fiber/v2
+go get github.com/gofiber/contrib/jwt
+go get github.com/golang-jwt/jwt/v5
+go get gorm.io/gorm
+go get gorm.io/driver/postgres
+go get golang.org/x/crypto/bcrypt
+go get github.com/joho/godotenv
+
+# 3. Create the directory structure
+mkdir -p cmd/api internal/config internal/database internal/handlers internal/middleware internal/models internal/router
+
+# 4. Create an .env file
+cat > .env.example <<'EOF'
+PORT=3000
+DATABASE_URL=host=localhost user=postgres password=postgres dbname=fiberdb port=5432 sslmode=disable
+JWT_SECRET=change-me-in-production
+EOF
+cp .env.example .env
+
+# 5. (Optional) set up Air for live reload
+go install github.com/air-verse/air@latest
+air init
+
+# 6. Start the server
+go run ./cmd/api
+```
+
+### Project structure
+
+```
+fiber-api/
+├── cmd/
+│   └── api/
+│       └── main.go              # Entry point: load config, connect DB, start Fiber
+├── internal/
+│   ├── config/
+│   │   └── config.go            # Env-based configuration
+│   ├── database/
+│   │   └── database.go          # GORM connection and AutoMigrate
+│   ├── handlers/
+│   │   ├── auth.go              # Register, Login, Me handlers
+│   │   └── errors.go            # Custom Fiber error handler
+│   ├── middleware/
+│   │   └── jwt.go               # JWT auth middleware
+│   ├── models/
+│   │   └── user.go              # GORM User model
+│   └── router/
+│       └── router.go            # Route registration
+├── .air.toml                    # Air live-reload config
+├── .env.example
+└── go.mod
+```
+
+### First things to customize
+
+- `.env` — Set a strong `JWT_SECRET` (`openssl rand -hex 32`) and your `DATABASE_URL`
+- `internal/models/` — Add new GORM models and they will be auto-migrated on startup
+- `internal/handlers/` — Add resource handlers (e.g. `items.go`) and register routes in `router.go`
+- `internal/middleware/` — Add rate limiting (`fiber/middleware/limiter`), CORS (`fiber/middleware/cors`), or request ID middleware
+- `cmd/api/main.go` — Wire in a logger (zerolog) and inject it into handlers via a struct or context
