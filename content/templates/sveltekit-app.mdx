@@ -1,0 +1,306 @@
+---
+title: SvelteKit App
+description: A full-stack SvelteKit application template with server-side rendering, form actions, Lucia authentication, and Drizzle ORM for type-safe database access.
+category: templates
+language: TypeScript
+tags: [svelte, sveltekit, typescript, drizzle, full-stack]
+---
+
+A full-stack SvelteKit starter wired up with Drizzle ORM for type-safe SQLite queries, Lucia v3 for session-based authentication, and SvelteKit form actions for progressive-enhancement forms.
+
+## Usage
+
+```typescript
+// src/lib/server/db/schema.ts
+import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
+
+export const users = sqliteTable('users', {
+  id: text('id').primaryKey(),
+  email: text('email').notNull().unique(),
+  hashedPassword: text('hashed_password').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+})
+
+export const sessions = sqliteTable('sessions', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: integer('expires_at').notNull(),
+})
+
+export type User = typeof users.$inferSelect
+export type Session = typeof sessions.$inferSelect
+```
+
+```typescript
+// src/lib/server/db/index.ts
+import { drizzle } from 'drizzle-orm/libsql'
+import { createClient } from '@libsql/client'
+import * as schema from './schema'
+
+const client = createClient({ url: process.env.DATABASE_URL ?? 'file:local.db' })
+export const db = drizzle(client, { schema })
+```
+
+```typescript
+// src/lib/server/auth.ts
+import { Lucia } from 'lucia'
+import { DrizzleSQLiteAdapter } from '@lucia-auth/adapter-drizzle'
+import { db } from './db'
+import { sessions, users } from './db/schema'
+
+const adapter = new DrizzleSQLiteAdapter(db, sessions, users)
+
+export const lucia = new Lucia(adapter, {
+  sessionCookie: {
+    attributes: { secure: process.env.NODE_ENV === 'production' },
+  },
+  getUserAttributes(attrs) {
+    return { email: (attrs as { email: string }).email }
+  },
+})
+
+declare module 'lucia' {
+  interface Register {
+    Lucia: typeof lucia
+    DatabaseUserAttributes: { email: string }
+  }
+}
+```
+
+```typescript
+// src/hooks.server.ts
+import type { Handle } from '@sveltejs/kit'
+import { lucia } from '$lib/server/auth'
+
+export const handle: Handle = async ({ event, resolve }) => {
+  const sessionId = event.cookies.get(lucia.sessionCookieName)
+
+  if (!sessionId) {
+    event.locals.user = null
+    event.locals.session = null
+    return resolve(event)
+  }
+
+  const { session, user } = await lucia.validateSession(sessionId)
+
+  if (session?.fresh) {
+    const cookie = lucia.createSessionCookie(session.id)
+    event.cookies.set(cookie.name, cookie.value, {
+      path: '/',
+      ...cookie.attributes,
+    })
+  }
+
+  if (!session) {
+    const blank = lucia.createBlankSessionCookie()
+    event.cookies.set(blank.name, blank.value, { path: '/', ...blank.attributes })
+  }
+
+  event.locals.user = user
+  event.locals.session = session
+  return resolve(event)
+}
+```
+
+```typescript
+// src/routes/login/+page.server.ts
+import { fail, redirect } from '@sveltejs/kit'
+import { eq } from 'drizzle-orm'
+import { verify } from '@node-rs/argon2'
+import { lucia } from '$lib/server/auth'
+import { db } from '$lib/server/db'
+import { users } from '$lib/server/db/schema'
+import type { Actions } from './$types'
+
+export const actions: Actions = {
+  default: async ({ request, cookies }) => {
+    const data = await request.formData()
+    const email = String(data.get('email') ?? '')
+    const password = String(data.get('password') ?? '')
+
+    if (!email || !password) {
+      return fail(400, { message: 'Email and password are required.' })
+    }
+
+    const [user] = await db.select().from(users).where(eq(users.email, email))
+
+    if (!user) {
+      return fail(400, { message: 'Invalid email or password.' })
+    }
+
+    const valid = await verify(user.hashedPassword, password, {
+      memoryCost: 19456,
+      timeCost: 2,
+      outputLen: 32,
+      parallelism: 1,
+    })
+
+    if (!valid) {
+      return fail(400, { message: 'Invalid email or password.' })
+    }
+
+    const session = await lucia.createSession(user.id, {})
+    const cookie = lucia.createSessionCookie(session.id)
+    cookies.set(cookie.name, cookie.value, { path: '/', ...cookie.attributes })
+
+    redirect(302, '/')
+  },
+}
+```
+
+```svelte
+<!-- src/routes/login/+page.svelte -->
+<script lang="ts">
+  import type { ActionData } from './$types'
+  let { form }: { form: ActionData } = $props()
+</script>
+
+<main class="flex min-h-screen items-center justify-center px-4">
+  <div class="w-full max-w-sm space-y-6">
+    <h1 class="text-2xl font-bold">Sign in</h1>
+
+    {#if form?.message}
+      <p class="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{form.message}</p>
+    {/if}
+
+    <form method="POST" class="space-y-4">
+      <label class="block">
+        <span class="text-sm font-medium">Email</span>
+        <input
+          type="email"
+          name="email"
+          required
+          class="mt-1 block w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </label>
+      <label class="block">
+        <span class="text-sm font-medium">Password</span>
+        <input
+          type="password"
+          name="password"
+          required
+          class="mt-1 block w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </label>
+      <button
+        type="submit"
+        class="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+      >
+        Sign in
+      </button>
+    </form>
+
+    <p class="text-center text-sm text-neutral-500">
+      No account? <a href="/register" class="text-blue-600 hover:underline">Register</a>
+    </p>
+  </div>
+</main>
+```
+
+## Notes
+
+SvelteKit form actions work without JavaScript — the login form above submits as a plain HTML `POST`. When JS is available, SvelteKit enhances it with `use:enhance` for a smoother client-side experience without losing progressive enhancement.
+
+## README
+
+### What this includes
+
+- **SvelteKit** — file-based routing with `+page.svelte`, `+page.server.ts`, `+layout.svelte`, and `+server.ts`
+- **Drizzle ORM** — type-safe SQL queries against a libSQL/SQLite database, with `drizzle-kit` migrations
+- **Lucia v3** — session-based authentication with server-side session validation in a `handle` hook
+- **Argon2 password hashing** — via `@node-rs/argon2` for secure credential storage
+- **Form actions** — progressive-enhancement login/register forms that work without JS
+- **Type-safe locals** — `event.locals.user` and `event.locals.session` typed via `app.d.ts`
+- **Tailwind CSS** — utility-first styling via `@sveltejs/kit` + `tailwindcss`
+
+### Prerequisites
+
+- Node.js 20.9 or later
+- npm, pnpm, or bun
+
+### Create this template
+
+```bash
+# 1. Scaffold a new SvelteKit project
+npm create svelte@latest my-app
+# Choose: Skeleton project, TypeScript, ESLint, Prettier
+
+cd my-app
+npm install
+
+# 2. Add Tailwind CSS
+npx svelte-add@latest tailwindcss
+npm install
+
+# 3. Install Drizzle ORM + libSQL driver
+npm install drizzle-orm @libsql/client
+npm install -D drizzle-kit
+
+# 4. Install Lucia and its Drizzle adapter
+npm install lucia @lucia-auth/adapter-drizzle
+
+# 5. Install Argon2 for password hashing
+npm install @node-rs/argon2
+
+# 6. Create drizzle.config.ts
+cat > drizzle.config.ts << 'EOF'
+import { defineConfig } from 'drizzle-kit'
+export default defineConfig({
+  schema: './src/lib/server/db/schema.ts',
+  out: './drizzle',
+  dialect: 'sqlite',
+  dbCredentials: { url: process.env.DATABASE_URL ?? 'file:local.db' },
+})
+EOF
+
+# 7. Generate and apply the initial migration
+npx drizzle-kit generate
+npx drizzle-kit migrate
+
+# 8. Start the dev server
+npm run dev
+```
+
+### Project structure
+
+```
+my-app/
+  src/
+    app.d.ts                         # Locals type augmentation (user, session)
+    hooks.server.ts                  # Session validation on every request
+    lib/
+      server/
+        auth.ts                      # Lucia instance
+        db/
+          index.ts                   # Drizzle client
+          schema.ts                  # Table definitions
+    routes/
+      +layout.svelte                 # Root layout
+      +layout.server.ts              # Pass user to all pages via load()
+      +page.svelte                   # Homepage (protected)
+      login/
+        +page.svelte                 # Login form
+        +page.server.ts              # Login action
+      register/
+        +page.svelte                 # Register form
+        +page.server.ts              # Register action
+      logout/
+        +page.server.ts              # Logout action
+  drizzle/                           # Generated migration files
+  drizzle.config.ts
+  svelte.config.js
+  tailwind.config.ts
+  tsconfig.json
+```
+
+### First things to customize
+
+- `src/app.d.ts` — extend `Locals` with any extra fields you store on sessions
+- `src/lib/server/db/schema.ts` — add your domain tables (posts, products, etc.)
+- `src/routes/+layout.svelte` — update the nav, header, and site name
+- `.env` — set `DATABASE_URL` for production (e.g. a Turso remote URL)
+- `src/lib/server/auth.ts` — configure session expiry and any OAuth providers via Arctic
