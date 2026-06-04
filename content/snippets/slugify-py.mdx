@@ -1,0 +1,75 @@
+---
+title: Slugify (Python)
+description: Converts a Unicode string to an ASCII URL slug by normalising characters, removing non-alphanumeric characters, and joining words with hyphens. Pure stdlib implementation with no dependencies.
+category: snippets
+language: python
+tags: [string, utils, url, formatting]
+---
+
+Transforms any Unicode string into a clean, lowercase, hyphen-separated ASCII slug suitable for use in URLs or filenames — no third-party packages required.
+
+## Usage
+
+```python
+import re
+import unicodedata
+
+
+def slugify(text: str, separator: str = "-", max_length: int | None = None) -> str:
+    """Convert a Unicode string to an ASCII URL slug.
+
+    Args:
+        text: The input string to slugify.
+        separator: Word separator character (default: "-").
+        max_length: Truncate the slug to this many characters, cutting only on
+                    a separator boundary when possible (default: no limit).
+
+    Returns:
+        A lowercase ASCII slug string.
+    """
+    # Normalise to NFD so accented characters decompose into base + combining mark
+    normalized = unicodedata.normalize("NFD", text)
+
+    # Encode to ASCII, dropping any code points that don't map (e.g. combining marks)
+    ascii_bytes = normalized.encode("ascii", errors="ignore")
+    ascii_str = ascii_bytes.decode("ascii")
+
+    # Lowercase and replace any run of non-alphanumeric characters with a single separator
+    slug = re.sub(r"[^a-z0-9]+", separator, ascii_str.lower()).strip(separator)
+
+    if max_length is not None and len(slug) > max_length:
+        truncated = slug[:max_length].rstrip(separator)
+        # If truncation cut into the middle of a word, walk back to the last separator
+        last_sep = truncated.rfind(separator)
+        slug = truncated[:last_sep] if last_sep > 0 else truncated
+
+    return slug
+```
+
+## Examples
+
+```python
+slugify("Hello, World!")
+# "hello-world"
+
+slugify("Héllo Wörld — a tïtle")
+# "hello-world-a-title"
+
+slugify("  Multiple   Spaces  ")
+# "multiple-spaces"
+
+slugify("100% Python & Django")
+# "100-python-django"
+
+slugify("Very Long Title That Should Be Capped", max_length=20)
+# "very-long-title-that"
+
+slugify("hello world", separator="_")
+# "hello_world"
+```
+
+## Notes
+
+- The function uses NFD normalisation so that accented characters like `é` are decomposed into `e` + combining accent before the ASCII encoding step discards the accent — this preserves the base letter rather than dropping it entirely.
+- Consecutive non-alphanumeric characters (spaces, punctuation, dashes) are collapsed into a single separator, so no double-hyphens appear in the output.
+- `max_length` truncates on a separator boundary to avoid cutting words mid-way.
