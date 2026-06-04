@@ -1,0 +1,348 @@
+---
+title: FastAPI + SQLModel Full-Stack
+description: A full-stack application template using FastAPI on the backend with SQLModel (Pydantic + SQLAlchemy) and a React frontend, all orchestrated via Docker Compose.
+category: templates
+language: python
+tags: [python, fastapi, sqlmodel, react, docker]
+repo: https://github.com/tiangolo/full-stack-fastapi-template
+---
+
+A batteries-included full-stack starter that pairs a FastAPI backend (with SQLModel for type-safe DB access and auto-generated OpenAPI docs) with a React + Vite frontend, all wired together with Docker Compose for a single `docker compose up` local experience.
+
+## Usage
+
+```python
+# backend/app/models.py
+from datetime import datetime
+from typing import Optional
+from sqlmodel import Field, Relationship, SQLModel
+
+
+# ── User ─────────────────────────────────────────────────────────────────────
+
+class UserBase(SQLModel):
+    email: str = Field(unique=True, index=True, max_length=255)
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    is_active: bool = True
+    is_superuser: bool = False
+
+
+class User(UserBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    hashed_password: str
+    items: list["Item"] = Relationship(back_populates="owner")
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class UserPublic(UserBase):
+    id: int
+
+
+# ── Item ──────────────────────────────────────────────────────────────────────
+
+class ItemBase(SQLModel):
+    title: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=2000)
+
+
+class Item(ItemBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_id: int = Field(foreign_key="user.id", nullable=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    owner: Optional[User] = Relationship(back_populates="items")
+
+
+class ItemCreate(ItemBase):
+    pass
+
+
+class ItemPublic(ItemBase):
+    id: int
+    owner_id: int
+    created_at: datetime
+
+
+class ItemsPublic(SQLModel):
+    data: list[ItemPublic]
+    count: int
+```
+
+```python
+# backend/app/database.py
+from sqlmodel import Session, SQLModel, create_engine
+from app.core.config import settings
+
+engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
+
+
+def init_db() -> None:
+    SQLModel.metadata.create_all(engine)
+
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+```
+
+```python
+# backend/app/core/config.py
+from pydantic import PostgresDsn, computed_field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    PROJECT_NAME: str = "My Full-Stack App"
+    API_V1_STR: str = "/api/v1"
+    SECRET_KEY: str = "change-me-in-production"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
+
+    POSTGRES_SERVER: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_DB: str = "app"
+
+    @computed_field
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> PostgresDsn:
+        return PostgresDsn.build(
+            scheme="postgresql+psycopg",
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.POSTGRES_SERVER,
+            port=self.POSTGRES_PORT,
+            path=self.POSTGRES_DB,
+        )
+
+    FIRST_SUPERUSER_EMAIL: str = "admin@example.com"
+    FIRST_SUPERUSER_PASSWORD: str = "changethis"
+
+
+settings = Settings()
+```
+
+```python
+# backend/app/api/routes/items.py
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlmodel import Session, select, func
+from app.database import get_session
+from app.models import Item, ItemCreate, ItemPublic, ItemsPublic, User
+from app.api.deps import get_current_user
+
+router = APIRouter()
+SessionDep = Annotated[Session, Depends(get_session)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+@router.get("/", response_model=ItemsPublic)
+def list_items(
+    session: SessionDep,
+    current_user: CurrentUser,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, le=100),
+):
+    count = session.exec(
+        select(func.count()).where(Item.owner_id == current_user.id)
+    ).one()
+    items = session.exec(
+        select(Item).where(Item.owner_id == current_user.id).offset(skip).limit(limit)
+    ).all()
+    return ItemsPublic(data=items, count=count)
+
+
+@router.post("/", response_model=ItemPublic, status_code=201)
+def create_item(session: SessionDep, current_user: CurrentUser, body: ItemCreate):
+    item = Item.model_validate(body, update={"owner_id": current_user.id})
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item
+
+
+@router.get("/{item_id}", response_model=ItemPublic)
+def get_item(session: SessionDep, current_user: CurrentUser, item_id: int):
+    item = session.get(Item, item_id)
+    if not item or item.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+
+@router.delete("/{item_id}", status_code=204)
+def delete_item(session: SessionDep, current_user: CurrentUser, item_id: int):
+    item = session.get(Item, item_id)
+    if not item or item.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Item not found")
+    session.delete(item)
+    session.commit()
+```
+
+```python
+# backend/app/main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
+from app.api.routes import items, users, login
+from app.database import init_db
+
+app = FastAPI(title=settings.PROJECT_NAME, openapi_url=f"{settings.API_V1_STR}/openapi.json")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(login.router, prefix=settings.API_V1_STR, tags=["login"])
+app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
+app.include_router(items.router, prefix=f"{settings.API_V1_STR}/items", tags=["items"])
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
+```
+
+```yaml
+# docker-compose.yml
+services:
+  db:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: ./backend
+    restart: always
+    env_file: ./backend/.env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build: ./frontend
+    restart: always
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
+```
+
+## Options
+
+| Feature | How to enable |
+|---|---|
+| Alembic migrations | `pip install alembic`, run `alembic init` and configure `env.py` to use `SQLModel.metadata` |
+| Background tasks | Use FastAPI's `BackgroundTasks` or add `arq`/`celery` worker service in Compose |
+| Email sending | Add `fastapi-mail` and configure SMTP settings in `Settings` |
+| Redis cache | Add a `redis` service to Compose and use `redis-py` or `aioredis` in routes |
+| Production deploy | Replace `--reload` with `--workers 4`, add a `traefik` or `nginx` reverse-proxy service |
+
+## How it works
+
+SQLModel classes act as both Pydantic schemas and SQLAlchemy table definitions — a single `Item(SQLModel, table=True)` class handles validation, serialization, and DB persistence. FastAPI's dependency injection (`Depends`) threads the database session and the current user into each route handler without boilerplate. Docker Compose networks the three services (`db`, `backend`, `frontend`) on a private bridge so the backend reaches Postgres via its service name.
+
+## README
+
+### What this includes
+
+- FastAPI backend with auto-generated OpenAPI docs at `/api/v1/docs`
+- SQLModel models that double as Pydantic schemas and SQLAlchemy tables
+- JWT authentication with OAuth2 password flow
+- Full CRUD for `Item` resources scoped to authenticated users
+- Postgres 16 database service
+- React + Vite frontend (TypeScript) with generated API client
+- Docker Compose orchestration for one-command local setup
+- `pydantic-settings` config loaded from `.env` files
+
+### Prerequisites
+
+- Docker Desktop 4.x+ (includes Compose v2)
+- Node.js 20+ (for frontend development outside Docker)
+- Python 3.12+ (for backend development outside Docker)
+
+### Create this template
+
+```bash
+# 1. Clone the official upstream template
+git clone https://github.com/tiangolo/full-stack-fastapi-template my-app
+cd my-app
+
+# 2. Copy and configure environment files
+cp backend/.env.example backend/.env
+# Edit backend/.env: set SECRET_KEY, POSTGRES_PASSWORD, FIRST_SUPERUSER_PASSWORD
+
+# 3. Start all services with Docker Compose
+docker compose up --build
+
+# 4. The API is now at http://localhost:8000/api/v1/docs
+#    The frontend is at http://localhost:5173
+
+# 5. (Optional) run backend tests
+docker compose exec backend pytest
+
+# 6. (Optional) generate a new Alembic migration after changing models
+docker compose exec backend alembic revision --autogenerate -m "add my_table"
+docker compose exec backend alembic upgrade head
+```
+
+### Project structure
+
+```
+my-app/
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── deps.py          # Shared dependencies (auth, session)
+│   │   │   └── routes/
+│   │   │       ├── items.py
+│   │   │       ├── login.py
+│   │   │       └── users.py
+│   │   ├── core/
+│   │   │   └── config.py        # Settings from .env
+│   │   ├── database.py          # Engine, session, init_db
+│   │   ├── models.py            # SQLModel table + schema classes
+│   │   └── main.py              # FastAPI app, CORS, router mounts
+│   ├── .env                     # Backend environment variables
+│   ├── Dockerfile
+│   └── pyproject.toml
+├── frontend/
+│   ├── src/
+│   │   ├── client/              # Auto-generated API client (openapi-ts)
+│   │   └── components/
+│   ├── Dockerfile
+│   └── package.json
+└── docker-compose.yml
+```
+
+### First things to customize
+
+- `backend/.env` — change `SECRET_KEY`, `POSTGRES_PASSWORD`, and `FIRST_SUPERUSER_PASSWORD` before any deployment
+- `backend/app/models.py` — rename `Item` and add your own domain models
+- `backend/app/core/config.py` — update `PROJECT_NAME` and CORS `allow_origins` for production
+- `docker-compose.yml` — add a `traefik` or `nginx` service for TLS termination in production
+- `frontend/src/` — replace the scaffold UI with your application components
