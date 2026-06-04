@@ -1,0 +1,423 @@
+---
+title: VS Code Extension
+description: A VS Code extension starter with a command contribution, status bar item, webview panel, and language server protocol (LSP) stub. Uses @vscode/vsce for packaging.
+category: templates
+language: TypeScript
+tags: [vscode, extension, typescript, lsp, editor]
+---
+
+VS Code extensions are Node.js packages that hook into the editor through a well-defined API. This starter covers the four most common surfaces — commands, status bar items, webview panels, and a Language Server Protocol stub — so you can delete what you don't need rather than wiring things up from scratch.
+
+## Usage
+
+```bash
+# Install dependencies
+npm install
+
+# Compile in watch mode
+npm run watch
+
+# Press F5 in VS Code to launch the Extension Development Host
+```
+
+## How it works
+
+VS Code calls `activate()` in `extension.ts` when the extension is first triggered (based on `activationEvents` in `package.json`). All disposables — commands, status bar items, event listeners — are pushed onto `context.subscriptions` so VS Code cleans them up on deactivate.
+
+## Extension entry point
+
+```typescript
+// src/extension.ts
+import * as vscode from "vscode";
+import { StatusBarController } from "./statusBar";
+import { MyWebviewPanel } from "./webviewPanel";
+import { startLanguageServer } from "./languageServer";
+
+export function activate(context: vscode.ExtensionContext) {
+  console.log("My extension is active.");
+
+  // Register commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand("myExtension.helloWorld", () => {
+      vscode.window.showInformationMessage("Hello from My Extension!");
+    }),
+
+    vscode.commands.registerCommand("myExtension.openPanel", () => {
+      MyWebviewPanel.createOrShow(context.extensionUri);
+    }),
+
+    vscode.commands.registerCommand("myExtension.showWordCount", () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showWarningMessage("Open a file first.");
+        return;
+      }
+      const words = editor.document.getText().split(/\s+/).filter(Boolean).length;
+      vscode.window.showInformationMessage(`Word count: ${words}`);
+    })
+  );
+
+  // Status bar item
+  const statusBar = new StatusBarController();
+  context.subscriptions.push(statusBar);
+
+  // Language server (LSP)
+  const lspDisposable = startLanguageServer(context);
+  context.subscriptions.push(lspDisposable);
+
+  // React to active editor changes
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      statusBar.update(editor);
+    })
+  );
+
+  // Update immediately for the current editor
+  statusBar.update(vscode.window.activeTextEditor);
+}
+
+export function deactivate() {
+  // VS Code disposes context.subscriptions automatically.
+  // Clean up anything not covered by subscriptions here.
+}
+```
+
+## Status bar item
+
+```typescript
+// src/statusBar.ts
+import * as vscode from "vscode";
+
+export class StatusBarController implements vscode.Disposable {
+  private readonly item: vscode.StatusBarItem;
+
+  constructor() {
+    this.item = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      100
+    );
+    this.item.command = "myExtension.showWordCount";
+    this.item.tooltip = "Click to see word count";
+    this.item.show();
+  }
+
+  update(editor: vscode.TextEditor | undefined) {
+    if (!editor) {
+      this.item.text = "$(file) No file";
+      return;
+    }
+    const lines = editor.document.lineCount;
+    const lang = editor.document.languageId;
+    this.item.text = `$(symbol-misc) ${lines} lines  [${lang}]`;
+  }
+
+  dispose() {
+    this.item.dispose();
+  }
+}
+```
+
+## Webview panel
+
+```typescript
+// src/webviewPanel.ts
+import * as vscode from "vscode";
+
+export class MyWebviewPanel {
+  static currentPanel: MyWebviewPanel | undefined;
+  private readonly panel: vscode.WebviewPanel;
+  private readonly disposables: vscode.Disposable[] = [];
+
+  static createOrShow(extensionUri: vscode.Uri) {
+    const column = vscode.window.activeTextEditor
+      ? vscode.window.activeTextEditor.viewColumn
+      : undefined;
+
+    if (MyWebviewPanel.currentPanel) {
+      MyWebviewPanel.currentPanel.panel.reveal(column);
+      return;
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      "myExtension.panel",
+      "My Extension Panel",
+      column ?? vscode.ViewColumn.One,
+      { enableScripts: true, retainContextWhenHidden: true }
+    );
+
+    MyWebviewPanel.currentPanel = new MyWebviewPanel(panel, extensionUri);
+  }
+
+  private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
+    this.panel = panel;
+    this.panel.webview.html = this.getHtml();
+
+    // Handle messages from the webview
+    this.panel.webview.onDidReceiveMessage(
+      (message: { command: string; text?: string }) => {
+        if (message.command === "alert") {
+          vscode.window.showInformationMessage(message.text ?? "");
+        }
+      },
+      null,
+      this.disposables
+    );
+
+    this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+  }
+
+  private getHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Extension</title>
+  <style>
+    body { font-family: var(--vscode-font-family); padding: 1rem; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+    button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: .5rem 1rem; cursor: pointer; border-radius: 3px; }
+    button:hover { background: var(--vscode-button-hoverBackground); }
+  </style>
+</head>
+<body>
+  <h1>My Extension Panel</h1>
+  <p>This webview is rendered inside VS Code.</p>
+  <button id="send">Send message to extension</button>
+  <script>
+    const vscode = acquireVsCodeApi();
+    document.getElementById('send').addEventListener('click', () => {
+      vscode.postMessage({ command: 'alert', text: 'Hello from the webview!' });
+    });
+  </script>
+</body>
+</html>`;
+  }
+
+  dispose() {
+    MyWebviewPanel.currentPanel = undefined;
+    this.panel.dispose();
+    this.disposables.forEach((d) => d.dispose());
+    this.disposables.length = 0;
+  }
+}
+```
+
+## Language server stub
+
+```typescript
+// src/languageServer.ts
+import * as path from "path";
+import * as vscode from "vscode";
+import {
+  LanguageClient,
+  LanguageClientOptions,
+  ServerOptions,
+  TransportKind,
+} from "vscode-languageclient/node";
+
+let client: LanguageClient | undefined;
+
+export function startLanguageServer(
+  context: vscode.ExtensionContext
+): vscode.Disposable {
+  const serverModule = context.asAbsolutePath(path.join("out", "server.js"));
+
+  const serverOptions: ServerOptions = {
+    run: { module: serverModule, transport: TransportKind.ipc },
+    debug: {
+      module: serverModule,
+      transport: TransportKind.ipc,
+      options: { execArgv: ["--nolazy", "--inspect=6009"] },
+    },
+  };
+
+  const clientOptions: LanguageClientOptions = {
+    // Activate for plaintext and markdown files — adjust as needed
+    documentSelector: [
+      { scheme: "file", language: "plaintext" },
+      { scheme: "file", language: "markdown" },
+    ],
+    synchronize: {
+      fileEvents: vscode.workspace.createFileSystemWatcher("**/.clientrc"),
+    },
+  };
+
+  client = new LanguageClient(
+    "myExtensionLanguageServer",
+    "My Extension Language Server",
+    serverOptions,
+    clientOptions
+  );
+
+  client.start();
+  return { dispose: () => client?.stop() };
+}
+```
+
+```typescript
+// src/server.ts  — the LSP server process
+import {
+  createConnection,
+  TextDocuments,
+  ProposedFeatures,
+  InitializeParams,
+  TextDocumentSyncKind,
+  InitializeResult,
+  CompletionItem,
+  CompletionItemKind,
+} from "vscode-languageserver/node";
+import { TextDocument } from "vscode-languageserver-textdocument";
+
+const connection = createConnection(ProposedFeatures.all);
+const documents = new TextDocuments(TextDocument);
+
+connection.onInitialize((_params: InitializeParams): InitializeResult => ({
+  capabilities: {
+    textDocumentSync: TextDocumentSyncKind.Incremental,
+    completionProvider: { resolveProvider: true },
+  },
+}));
+
+connection.onCompletion((): CompletionItem[] => [
+  { label: "TypeScript", kind: CompletionItemKind.Text, data: 1 },
+  { label: "JavaScript", kind: CompletionItemKind.Text, data: 2 },
+]);
+
+connection.onCompletionResolve((item: CompletionItem): CompletionItem => {
+  if (item.data === 1) item.detail = "TypeScript details";
+  else if (item.data === 2) item.detail = "JavaScript details";
+  return item;
+});
+
+documents.listen(connection);
+connection.listen();
+```
+
+## package.json contributions
+
+```json
+// package.json (extension manifest)
+{
+  "name": "my-extension",
+  "displayName": "My Extension",
+  "description": "A VS Code extension starter.",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "myExtension.helloWorld",
+        "title": "My Extension: Hello World"
+      },
+      {
+        "command": "myExtension.openPanel",
+        "title": "My Extension: Open Panel"
+      },
+      {
+        "command": "myExtension.showWordCount",
+        "title": "My Extension: Show Word Count"
+      }
+    ],
+    "configuration": {
+      "title": "My Extension",
+      "properties": {
+        "myExtension.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable My Extension."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9",
+    "vscode-languageserver": "^9",
+    "vscode-languageserver-textdocument": "^1"
+  }
+}
+```
+
+## README
+
+### What this includes
+
+- **Command contributions** — Three registered commands exposed in the Command Palette
+- **Status bar item** — Right-aligned item showing line count and language; clickable
+- **Webview panel** — Full sandboxed HTML/CSS/JS panel that communicates with the extension host via `postMessage`
+- **Language Server Protocol (LSP) stub** — Client/server wired over IPC with completion provider; ready to extend
+- **`@vscode/vsce`** — CLI tool for packaging and publishing to the VS Code Marketplace
+- **TypeScript** — Strict mode with `@types/vscode` for full API coverage
+
+### Prerequisites
+
+- Node.js 18+
+- VS Code 1.90+
+- npm (bundled with Node)
+
+### Create this template
+
+```bash
+# 1. Install the VS Code Extension generator
+npm install -g yo generator-code
+
+# 2. Scaffold the extension
+yo code
+
+# Select: TypeScript, enter name and description, skip git init if preferred
+
+# 3. Enter the project
+cd my-extension
+
+# 4. Install dependencies
+npm install
+
+# 5. Install LSP packages
+npm install vscode-languageclient vscode-languageserver vscode-languageserver-textdocument
+npm install -D @vscode/vsce
+
+# 6. Compile TypeScript
+npm run compile
+
+# 7. Press F5 in VS Code to open the Extension Development Host
+# Run "My Extension: Hello World" from the Command Palette to test
+```
+
+### Project structure
+
+```
+my-extension/
+├── src/
+│   ├── extension.ts            # activate() / deactivate() entry point
+│   ├── statusBar.ts            # Status bar item controller
+│   ├── webviewPanel.ts         # Webview panel with HTML + messaging
+│   ├── languageServer.ts       # LSP client setup
+│   └── server.ts               # LSP server process
+├── out/                        # Compiled JS (gitignored)
+├── .vscodeignore               # Files excluded from the packaged extension
+├── package.json                # Extension manifest + contributes
+└── tsconfig.json
+```
+
+### First things to customize
+
+- `package.json` — Update `name`, `displayName`, `description`, `publisher`, and `engines.vscode`
+- `package.json` `contributes.commands` — Rename commands from `myExtension.*` to your extension's prefix
+- `src/extension.ts` — Remove surfaces you don't need (webview, LSP, or status bar)
+- `src/server.ts` — Replace the placeholder completion items with real language intelligence
+- `src/webviewPanel.ts` — Replace the stub HTML with your panel's actual UI
+- `.vscodeignore` — Exclude `src/`, test files, and dev configs before packaging
