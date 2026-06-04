@@ -1,0 +1,77 @@
+---
+title: Partition Array
+description: Splits an array into two groups based on a predicate: elements that pass and elements that fail. Returns a typed tuple for narrowed type inference on each partition.
+category: snippets
+language: typescript
+tags: [array, utils, filter, split]
+---
+
+Divides an array into two buckets in a single pass — elements satisfying the predicate go into the first bucket, everything else into the second. The overload accepting a type-guard predicate narrows the type of each partition automatically.
+
+```typescript
+function partition<T, U extends T>(
+  array: T[],
+  predicate: (item: T) => item is U
+): [U[], Exclude<T, U>[]]
+function partition<T>(
+  array: T[],
+  predicate: (item: T) => boolean
+): [T[], T[]]
+function partition<T>(
+  array: T[],
+  predicate: (item: T) => boolean
+): [T[], T[]] {
+  const pass: T[] = []
+  const fail: T[] = []
+  for (const item of array) {
+    ;(predicate(item) ? pass : fail).push(item)
+  }
+  return [pass, fail]
+}
+
+export default partition
+```
+
+## Usage
+
+```typescript
+// Basic boolean predicate
+const numbers = [1, 2, 3, 4, 5, 6]
+const [evens, odds] = partition(numbers, (n) => n % 2 === 0)
+// evens → [2, 4, 6]
+// odds  → [1, 3, 5]
+```
+
+## Examples
+
+### With a type-guard predicate
+
+```typescript
+type StringOrNumber = string | number
+const mixed: StringOrNumber[] = [1, 'hello', 2, 'world', 3]
+
+const [strings, numbers] = partition(
+  mixed,
+  (x): x is string => typeof x === 'string'
+)
+// strings → ['hello', 'world']  (typed as string[])
+// numbers → [1, 2, 3]           (typed as number[])
+```
+
+### Splitting objects by status
+
+```typescript
+interface Task { id: number; done: boolean }
+const tasks: Task[] = [
+  { id: 1, done: true },
+  { id: 2, done: false },
+  { id: 3, done: true },
+]
+
+const [completed, pending] = partition(tasks, (t) => t.done)
+```
+
+## Notes
+
+- Iterates the array exactly once, making it more efficient than calling `filter` twice.
+- When passed a type-guard predicate (`item is U`), TypeScript narrows the first tuple member to `U[]` and the second to `Exclude<T, U>[]`.
