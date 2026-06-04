@@ -1,0 +1,140 @@
+---
+title: File Watcher
+description: Watch a file or directory for changes and run an arbitrary command on each change, similar to entr but as a portable shell function.
+category: cli
+language: bash
+tags: [system, files, watching, automation]
+---
+
+`entr` is great when it's available, but it isn't always installed. This portable shell function uses `stat` (available on both macOS and Linux) to poll for modification-time changes and re-runs any command you specify whenever a change is detected.
+
+## Usage
+
+```bash
+# Add to ~/.zshrc or ~/.bashrc, then reload
+source ~/.zshrc
+
+# Recompile a C file on every save
+watch-run src/main.c gcc src/main.c -o out/main
+
+# Restart a Python script when it changes
+watch-run app.py python app.py
+
+# Lint an entire directory of JS files on any change
+watch-run src/ npx eslint src/
+
+# Clear the screen before each run (pipe through a wrapper)
+watch-run --clear index.html open index.html
+```
+
+## Shell function
+
+```bash
+watch-run() {
+  local clear_screen=false
+  local interval=1   # polling interval in seconds
+  local target=""
+  local cmd=()
+
+  # Parse flags
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --clear)    clear_screen=true; shift ;;
+      --interval) interval="$2"; shift 2 ;;
+      --*)        echo "Unknown flag: $1"; return 1 ;;
+      *)          break ;;
+    esac
+  done
+
+  target="$1"
+  shift
+  cmd=("$@")
+
+  if [[ -z "$target" || ${#cmd[@]} -eq 0 ]]; then
+    echo "Usage: watch-run [--clear] [--interval <seconds>] <file|dir> <command...>"
+    return 1
+  fi
+
+  if [[ ! -e "$target" ]]; then
+    echo "Error: '$target' does not exist."
+    return 1
+  fi
+
+  # Portable mtime snapshot
+  _mtime() {
+    if [[ "$(uname)" == "Darwin" ]]; then
+      stat -f '%m' "$1" 2>/dev/null
+    else
+      stat -c '%Y' "$1" 2>/dev/null
+    fi
+  }
+
+  # For directories, take the newest mtime among all contained files
+  _snapshot() {
+    if [[ -d "$1" ]]; then
+      find "$1" -type f -newer /dev/null -exec stat \
+        $([ "$(uname)" = Darwin ] && echo '-f %m' || echo '-c %Y') {} + \
+        2>/dev/null | sort -n | tail -1
+    else
+      _mtime "$1"
+    fi
+  }
+
+  local last_snapshot
+  last_snapshot=$(_snapshot "$target")
+
+  echo "Watching '$target' (Ctrl-C to stop)..."
+  # Run once immediately
+  $clear_screen && clear
+  "${cmd[@]}"
+
+  while true; do
+    sleep "$interval"
+    local current_snapshot
+    current_snapshot=$(_snapshot "$target")
+
+    if [[ "$current_snapshot" != "$last_snapshot" ]]; then
+      last_snapshot="$current_snapshot"
+      $clear_screen && clear
+      echo "[$(date '+%H:%M:%S')] Change detected in '$target'"
+      "${cmd[@]}"
+    fi
+  done
+}
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--clear` | off | Clear the terminal before each command run |
+| `--interval <n>` | `1` | Polling interval in seconds |
+
+## Examples
+
+```bash
+# Regenerate docs whenever a Markdown file changes
+watch-run --clear --interval 2 docs/ mkdocs build
+
+# Run tests on every source change
+watch-run src/ go test ./...
+
+# Reload nginx config after edits (requires sudo)
+watch-run /etc/nginx/nginx.conf sudo nginx -s reload
+
+# Tail-build a LaTeX document
+watch-run thesis.tex pdflatex thesis.tex
+```
+
+## How it works
+
+1. On startup, a snapshot of the target's modification time (or the newest mtime inside a directory) is taken and the command is run once.
+2. Every `--interval` seconds `stat` re-reads the mtime. On macOS `stat -f '%m'` is used; on Linux `stat -c '%Y'` is used — no external dependencies beyond coreutils.
+3. When the snapshot changes the command is re-executed and the snapshot is updated.
+4. `Ctrl-C` exits the loop cleanly via the default `SIGINT` handler.
+
+## Notes
+
+- Polling is intentional: it avoids the `inotify`/`FSEvents` API differences between Linux and macOS and requires no extra packages.
+- For high-frequency saves (e.g. auto-save editors) increase `--interval` to avoid redundant runs.
+- If you *do* have `entr` installed, prefer it: `ls src/**/*.go | entr -c go test ./...` — it reacts instantly and handles file additions automatically.
