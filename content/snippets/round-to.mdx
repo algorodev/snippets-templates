@@ -1,0 +1,49 @@
+---
+title: Round To Decimal Places
+description: Rounds a number to a specified number of decimal places using the multiply-then-divide technique to avoid floating-point drift. Returns a plain number, not a formatted string.
+category: snippets
+language: typescript
+tags: [math, utils, number, formatting]
+---
+
+Rounds `value` to `places` decimal places and returns a `number`. Unlike `toFixed`, the result remains numeric and avoids common floating-point representation issues.
+
+## Usage
+
+```typescript
+function roundTo(value: number, places: number = 2): number {
+  const factor = 10 ** places
+  return Math.round(value * factor) / factor
+}
+
+export default roundTo
+```
+
+## Examples
+
+```typescript
+roundTo(1.005, 2)   // 1.01
+roundTo(1.555, 2)   // 1.56
+roundTo(3.14159, 3) // 3.142
+roundTo(3.14159, 0) // 3
+roundTo(1234.5678)  // 1234.57 — default 2 places
+roundTo(-2.675, 2)  // -2.68
+roundTo(0.1 + 0.2)  // 0.3  — tames the classic 0.30000000000000004
+```
+
+```typescript
+// Keep prices to 2 decimal places
+const price = roundTo(basePrice * taxRate, 2)
+
+// Reduce noise in sensor readings
+const temperature = roundTo(rawSensor.celsius, 1)
+
+// Format a percentage without trailing noise
+const pct = roundTo((passed / total) * 100, 1) // e.g. 66.7
+```
+
+## Notes
+
+- The multiply-then-divide approach (`Math.round(v * f) / f`) is reliable for up to ~15 significant digits — the limits of IEEE 754 double precision. For financial calculations requiring guaranteed decimal accuracy, use a dedicated library such as [decimal.js](https://mikemcl.github.io/decimal.js/) or [big.js](https://mikemcl.github.io/big.js/) instead.
+- `places` must be a non-negative integer. Passing negative values rounds to tens, hundreds, etc. (`roundTo(1234, -2)` → `1200`), which can be useful but is not guarded against.
+- The return value is a `number`, not a string. To display a fixed number of decimal digits (e.g. `"1.50"` instead of `1.5`), call `.toFixed(places)` on the result after rounding.
