@@ -1,0 +1,106 @@
+---
+title: Color Contrast Ratio
+description: Computes the WCAG 2.1 contrast ratio between two hex or RGB colors. Returns the ratio as a number and a helper indicating whether it meets AA or AAA criteria.
+category: snippets
+language: typescript
+tags: [color, utils, accessibility, wcag]
+---
+
+Calculates the WCAG 2.1 contrast ratio between any two colours and reports whether the pair passes the AA (4.5 : 1 for normal text, 3 : 1 for large text) or AAA (7 : 1 / 4.5 : 1) accessibility thresholds. Accepts colours as hex strings or raw RGB tuples.
+
+## Usage
+
+```typescript
+type RGBTuple = [number, number, number]
+
+interface ContrastResult {
+  ratio: number
+  aa: boolean       // normal text (≥ 4.5 : 1)
+  aaLarge: boolean  // large text  (≥ 3 : 1)
+  aaa: boolean      // normal text (≥ 7 : 1)
+  aaaLarge: boolean // large text  (≥ 4.5 : 1)
+}
+
+function hexToRgb(hex: string): RGBTuple {
+  const clean = hex.replace(/^#/, '')
+  const full = clean.length === 3
+    ? clean.split('').map((c) => c + c).join('')
+    : clean
+  const int = parseInt(full, 16)
+  return [(int >> 16) & 255, (int >> 8) & 255, int & 255]
+}
+
+/** Linearise an sRGB channel value (0–255) per WCAG 2.1 §1.4.3. */
+function linearise(channel: number): number {
+  const c = channel / 255
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+}
+
+/** Relative luminance of an RGB colour (WCAG 2.1). */
+function luminance([r, g, b]: RGBTuple): number {
+  return 0.2126 * linearise(r) + 0.7152 * linearise(g) + 0.0722 * linearise(b)
+}
+
+/**
+ * Computes the WCAG 2.1 contrast ratio between two colours.
+ * Each colour can be a hex string ('#fff', '#ffffff') or an RGB tuple.
+ */
+function contrastRatio(
+  colorA: string | RGBTuple,
+  colorB: string | RGBTuple,
+): ContrastResult {
+  const rgbA = typeof colorA === 'string' ? hexToRgb(colorA) : colorA
+  const rgbB = typeof colorB === 'string' ? hexToRgb(colorB) : colorB
+
+  const lumA = luminance(rgbA)
+  const lumB = luminance(rgbB)
+
+  const lighter = Math.max(lumA, lumB)
+  const darker  = Math.min(lumA, lumB)
+  const ratio   = Math.round(((lighter + 0.05) / (darker + 0.05)) * 100) / 100
+
+  return {
+    ratio,
+    aa:       ratio >= 4.5,
+    aaLarge:  ratio >= 3,
+    aaa:      ratio >= 7,
+    aaaLarge: ratio >= 4.5,
+  }
+}
+
+export default contrastRatio
+export type { ContrastResult, RGBTuple }
+```
+
+## Examples
+
+```typescript
+contrastRatio('#ffffff', '#000000')
+// { ratio: 21, aa: true, aaLarge: true, aaa: true, aaaLarge: true }
+
+contrastRatio('#ffffff', '#767676')
+// { ratio: 4.54, aa: true, aaLarge: true, aaa: false, aaaLarge: true }
+
+contrastRatio('#ffffff', '#aaaaaa')
+// { ratio: 2.32, aa: false, aaLarge: false, aaa: false, aaaLarge: false }
+
+// RGB tuples are accepted too
+contrastRatio([255, 255, 255], [30, 30, 30])
+// { ratio: 16.1, aa: true, aaLarge: true, aaa: true, aaaLarge: true }
+
+// Mixed input
+contrastRatio('#1a1a2e', [224, 224, 224])
+// { ratio: 11.07, aa: true, aaLarge: true, aaa: true, aaaLarge: true }
+```
+
+## How it works
+
+1. Each colour is converted to a relative luminance value using the WCAG 2.1 formula. This involves linearising each sRGB channel (reversing the gamma encoding) and then combining the three channels with human-eye weighting (green contributes the most, blue the least).
+2. The contrast ratio is `(L1 + 0.05) / (L2 + 0.05)` where `L1` is the lighter colour. The 0.05 offset prevents division by zero for pure black.
+3. The result is compared against the four WCAG thresholds and the boolean helpers are set accordingly.
+
+## Notes
+
+- WCAG 2.1 defines "large text" as 18 pt (24 px) or 14 pt bold (approximately 19 px). The caller is responsible for knowing which threshold applies to their text.
+- Alpha transparency is not considered — semi-transparent colours should be composited against their background before being passed in.
+- The ratio is rounded to two decimal places, matching how checkers like the WebAIM Contrast Checker display results.
