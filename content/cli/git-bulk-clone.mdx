@@ -1,0 +1,141 @@
+---
+title: Git Bulk Clone
+description: Clone every repository in a GitHub or GitLab organisation into a local directory with a single command using the provider API.
+category: cli
+language: bash
+tags: [git, clone, github, automation]
+---
+
+Clone all repos in a GitHub or GitLab org into a local folder in one shot. Skips repos that are already cloned and supports SSH or HTTPS remotes.
+
+## Usage
+
+```bash
+#!/usr/bin/env bash
+# Usage:
+#   ./git-bulk-clone.sh github <org>        # clone all GitHub org repos (HTTPS)
+#   ./git-bulk-clone.sh github <org> ssh    # clone via SSH
+#   ./git-bulk-clone.sh gitlab <group>      # clone all GitLab group repos (HTTPS)
+#   ./git-bulk-clone.sh gitlab <group> ssh  # clone via SSH
+#
+# Prerequisites:
+#   GitHub: GITHUB_TOKEN env var with repo scope
+#   GitLab: GITLAB_TOKEN env var with read_api scope
+
+set -euo pipefail
+
+PROVIDER="${1:?Usage: $0 <github|gitlab> <org/group> [ssh]}"
+ORG="${2:?Provide an organisation or group name}"
+USE_SSH="${3:-https}"
+PAGE=1
+CLONED=0
+SKIPPED=0
+
+clone_repos() {
+  local urls=("$@")
+  for url in "${urls[@]}"; do
+    local name
+    name=$(basename "$url" .git)
+    if [[ -d "$name/.git" ]]; then
+      echo "  skip  $name (already exists)"
+      ((SKIPPED++)) || true
+    else
+      echo "  clone $name"
+      git clone --quiet "$url" "$name"
+      ((CLONED++)) || true
+    fi
+  done
+}
+
+fetch_github() {
+  : "${GITHUB_TOKEN:?Set GITHUB_TOKEN}"
+  local remote_field
+  [[ "$USE_SSH" == "ssh" ]] && remote_field="ssh_url" || remote_field="clone_url"
+
+  while : ; do
+    local response
+    response=$(curl -fsSL \
+      -H "Authorization: Bearer $GITHUB_TOKEN" \
+      -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/orgs/$ORG/repos?per_page=100&page=$PAGE")
+
+    local urls
+    mapfile -t urls < <(echo "$response" | grep -o "\"$remote_field\": *\"[^\"]*\"" | cut -d'"' -f4)
+    [[ ${#urls[@]} -eq 0 ]] && break
+
+    clone_repos "${urls[@]}"
+    ((PAGE++))
+  done
+}
+
+fetch_gitlab() {
+  : "${GITLAB_TOKEN:?Set GITLAB_TOKEN}"
+  local remote_field
+  [[ "$USE_SSH" == "ssh" ]] && remote_field="ssh_url_to_repo" || remote_field="http_url_to_repo"
+
+  # Resolve numeric group ID from path
+  local group_id
+  group_id=$(curl -fsSL \
+    -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+    "https://gitlab.com/api/v4/groups?search=$ORG" \
+    | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+
+  while : ; do
+    local response
+    response=$(curl -fsSL \
+      -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+      "https://gitlab.com/api/v4/groups/$group_id/projects?per_page=100&page=$PAGE&include_subgroups=true")
+
+    local urls
+    mapfile -t urls < <(echo "$response" | grep -o "\"$remote_field\": *\"[^\"]*\"" | cut -d'"' -f4)
+    [[ ${#urls[@]} -eq 0 ]] && break
+
+    clone_repos "${urls[@]}"
+    ((PAGE++))
+  done
+}
+
+mkdir -p "$ORG" && cd "$ORG"
+echo "Cloning $PROVIDER/$ORG into $(pwd)..."
+
+case "$PROVIDER" in
+  github) fetch_github ;;
+  gitlab) fetch_gitlab ;;
+  *) echo "Unknown provider: $PROVIDER. Use 'github' or 'gitlab'." && exit 1 ;;
+esac
+
+echo ""
+echo "Done. Cloned: $CLONED  Skipped: $SKIPPED"
+```
+
+## Options
+
+| Argument | Description |
+|---|---|
+| `github` / `gitlab` | Provider to query |
+| `<org>` | Organisation name (GitHub) or group path (GitLab) |
+| `ssh` | Use SSH remotes instead of HTTPS (optional, defaults to HTTPS) |
+
+## Examples
+
+```bash
+# Clone all public/accessible repos in a GitHub org
+GITHUB_TOKEN=ghp_... ./git-bulk-clone.sh github my-org
+
+# Clone via SSH (requires SSH key configured)
+GITHUB_TOKEN=ghp_... ./git-bulk-clone.sh github my-org ssh
+
+# Clone a GitLab group
+GITLAB_TOKEN=glpat-... ./git-bulk-clone.sh gitlab my-group
+
+# Pull updates in all already-cloned repos
+find my-org -maxdepth 2 -name ".git" -execdir git pull --ff-only \;
+```
+
+## Notes
+
+- Repos that already exist locally are skipped (not pulled). Run `git pull` separately to update them.
+- Pagination is handled automatically — orgs with hundreds of repos are fully covered.
+- The script creates a subdirectory named after the org/group to keep repos organised.
+- For GitHub, the token needs the `repo` scope for private repos or no scope for public-only.
+- For GitLab, the token needs `read_api`.
