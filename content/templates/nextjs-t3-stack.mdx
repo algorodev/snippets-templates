@@ -1,0 +1,237 @@
+---
+title: T3 Stack (Next.js + tRPC + Prisma)
+description: The create-t3-app starter combining Next.js, tRPC, Prisma, NextAuth, and Tailwind CSS into a type-safe full-stack application. The go-to stack for end-to-end typesafe TypeScript apps.
+category: templates
+language: TypeScript
+tags: [next.js, trpc, prisma, nextauth, tailwind, t3]
+repo: https://github.com/t3-oss/create-t3-app
+demo: https://create.t3.gg
+---
+
+The T3 Stack is an opinionated full-stack setup built around end-to-end type safety — from the database schema through the API layer to the React UI, with zero codegen required. It is the community standard for TypeScript full-stack apps that want to move fast without sacrificing type safety.
+
+## Usage
+
+```bash
+# Scaffold a new T3 app interactively
+npm create t3-app@latest
+
+# Or with flags to skip prompts
+npm create t3-app@latest my-app -- --CI --trpc --prisma --nextAuth --tailwind
+```
+
+## How it works
+
+tRPC exposes typed procedures that the client calls directly — no REST routes, no schema files, no codegen. The server router and client share the same TypeScript types through a single import.
+
+```typescript
+// server/api/routers/post.ts
+import { z } from "zod";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
+
+export const postRouter = createTRPCRouter({
+  getAll: publicProcedure.query(async ({ ctx }) => {
+    return ctx.db.post.findMany({
+      orderBy: { createdAt: "desc" },
+    });
+  }),
+
+  create: protectedProcedure
+    .input(z.object({ title: z.string().min(1).max(255) }))
+    .mutation(async ({ ctx, input }) => {
+      return ctx.db.post.create({
+        data: {
+          title: input.title,
+          createdBy: { connect: { id: ctx.session.user.id } },
+        },
+      });
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      return ctx.db.post.delete({ where: { id: input.id } });
+    }),
+});
+```
+
+```typescript
+// app/_components/posts.tsx  — fully typed, no manual fetch
+"use client";
+import { api } from "~/trpc/react";
+
+export function Posts() {
+  const { data: posts, isLoading } = api.post.getAll.useQuery();
+  const utils = api.useUtils();
+
+  const create = api.post.create.useMutation({
+    onSuccess: () => utils.post.getAll.invalidate(),
+  });
+
+  if (isLoading) return <p>Loading…</p>;
+
+  return (
+    <div>
+      {posts?.map((post) => (
+        <div key={post.id}>
+          <p>{post.title}</p>
+        </div>
+      ))}
+      <button onClick={() => create.mutate({ title: "New post" })}>
+        Add post
+      </button>
+    </div>
+  );
+}
+```
+
+## Prisma schema
+
+```prisma
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Post {
+  id        Int      @id @default(autoincrement())
+  title     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy User     @relation(fields: [createdById], references: [id])
+  createdById String
+
+  @@index([createdById])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  posts         Post[]
+}
+```
+
+## Environment variables
+
+```bash
+# .env
+DATABASE_URL="postgresql://user:password@localhost:5432/mydb"
+NEXTAUTH_SECRET="your-secret-here"
+NEXTAUTH_URL="http://localhost:3000"
+
+# OAuth providers (add the ones you enable)
+DISCORD_CLIENT_ID=""
+DISCORD_CLIENT_SECRET=""
+```
+
+## README
+
+### What this includes
+
+- **Next.js** — App Router with React Server Components
+- **tRPC** — End-to-end typesafe API layer, no REST or GraphQL
+- **Prisma** — Type-safe ORM with auto-generated client from schema
+- **NextAuth.js** — Authentication with OAuth providers and session management
+- **Tailwind CSS** — Utility-first styling
+- **TypeScript** — Strict mode throughout the entire stack
+- **Zod** — Input validation on tRPC procedures
+
+### Prerequisites
+
+- Node.js 18+
+- A PostgreSQL database (local or hosted — [Neon](https://neon.tech) free tier works)
+- npm / pnpm / yarn
+
+### Create this template
+
+```bash
+# 1. Scaffold (interactive — select tRPC, Prisma, NextAuth, Tailwind)
+npm create t3-app@latest my-app
+
+# 2. Enter the project
+cd my-app
+
+# 3. Copy and fill in environment variables
+cp .env.example .env
+
+# 4. Push the Prisma schema to your database
+npx prisma db push
+
+# 5. (Optional) Open Prisma Studio to inspect data
+npx prisma studio
+
+# 6. Start the dev server
+npm run dev
+```
+
+### Project structure
+
+```
+my-app/
+├── prisma/
+│   └── schema.prisma        # Database schema
+├── src/
+│   ├── app/                 # Next.js App Router pages
+│   │   ├── _components/     # Page-level components
+│   │   ├── api/
+│   │   │   ├── auth/[...nextauth]/
+│   │   │   └── trpc/[trpc]/
+│   │   ├── layout.tsx
+│   │   └── page.tsx
+│   ├── server/
+│   │   ├── api/
+│   │   │   ├── routers/     # tRPC routers
+│   │   │   ├── root.ts      # Root router
+│   │   │   └── trpc.ts      # tRPC context + helpers
+│   │   ├── auth.ts          # NextAuth config
+│   │   └── db.ts            # Prisma client
+│   └── trpc/
+│       ├── react.tsx        # Client-side tRPC hooks
+│       └── server.ts        # Server-side tRPC caller
+├── .env
+└── next.config.js
+```
+
+### First things to customize
+
+- `.env` — Set `DATABASE_URL`, `NEXTAUTH_SECRET`, and OAuth provider keys
+- `src/server/auth.ts` — Add or remove OAuth providers (Discord is the default)
+- `prisma/schema.prisma` — Extend the `Post` model or add your own models
+- `src/server/api/routers/` — Replace the example `post` router with your domain logic
+- `src/app/page.tsx` — Replace the T3 landing page with your own home page
