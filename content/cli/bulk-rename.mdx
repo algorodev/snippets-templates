@@ -1,0 +1,155 @@
+---
+title: Bulk Rename
+description: Rename multiple files using a sed-style pattern, a sequential numbering scheme, or a case transformation with a dry-run preview.
+category: cli
+language: bash
+tags: [system, files, rename, automation]
+---
+
+Renaming dozens of files by hand is tedious and error-prone. This shell function supports three modes — regex substitution, sequential numbering, and case conversion — and always shows a dry-run preview before touching anything.
+
+## Usage
+
+```bash
+# Add the function to ~/.zshrc or ~/.bashrc, then reload:
+source ~/.zshrc
+
+# Rename via sed-style pattern (dry-run by default)
+bulk-rename --pattern 's/old/new/g' *.txt
+
+# Apply the rename
+bulk-rename --pattern 's/old/new/g' --apply *.txt
+
+# Sequential numbering: photo_001.jpg, photo_002.jpg, ...
+bulk-rename --seq photo_ --apply *.jpg
+
+# Convert filenames to lowercase
+bulk-rename --case lower --apply *.JPG
+
+# Convert filenames to uppercase
+bulk-rename --case upper --apply *.txt
+```
+
+## Shell function
+
+```bash
+bulk-rename() {
+  local mode=""
+  local pattern=""
+  local prefix=""
+  local case_mode=""
+  local apply=false
+  local files=()
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pattern) mode="pattern"; pattern="$2"; shift 2 ;;
+      --seq)     mode="seq";     prefix="$2";  shift 2 ;;
+      --case)    mode="case";    case_mode="$2"; shift 2 ;;
+      --apply)   apply=true; shift ;;
+      *)         files+=("$1"); shift ;;
+    esac
+  done
+
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "Usage: bulk-rename [--pattern 's/old/new/g'] [--seq PREFIX] [--case lower|upper] [--apply] <files...>"
+    return 1
+  fi
+
+  if [[ -z "$mode" ]]; then
+    echo "Error: specify --pattern, --seq, or --case"
+    return 1
+  fi
+
+  local idx=1
+  local any_change=false
+
+  for src in "${files[@]}"; do
+    [[ -e "$src" ]] || { echo "  skip: $src (not found)"; continue; }
+
+    local base
+    base=$(basename "$src")
+    local dir
+    dir=$(dirname "$src")
+    local dst=""
+
+    case "$mode" in
+      pattern)
+        dst=$(echo "$base" | sed "$pattern")
+        ;;
+      seq)
+        local ext="${base##*.}"
+        [[ "$ext" == "$base" ]] && ext="" || ext=".$ext"
+        dst=$(printf '%s%03d%s' "$prefix" "$idx" "$ext")
+        (( idx++ ))
+        ;;
+      case)
+        if [[ "$case_mode" == "lower" ]]; then
+          dst=$(echo "$base" | tr '[:upper:]' '[:lower:]')
+        elif [[ "$case_mode" == "upper" ]]; then
+          dst=$(echo "$base" | tr '[:lower:]' '[:upper:]')
+        else
+          echo "Error: --case must be 'lower' or 'upper'"
+          return 1
+        fi
+        ;;
+    esac
+
+    if [[ "$base" == "$dst" ]]; then
+      echo "  unchanged: $src"
+      continue
+    fi
+
+    local target="$dir/$dst"
+    any_change=true
+
+    if $apply; then
+      if [[ -e "$target" ]]; then
+        echo "  skip (collision): $src -> $target"
+      else
+        mv -- "$src" "$target"
+        echo "  renamed: $src -> $target"
+      fi
+    else
+      echo "  [dry-run] $src -> $target"
+    fi
+  done
+
+  if ! $apply && $any_change; then
+    echo ""
+    echo "Dry-run complete. Re-run with --apply to rename files."
+  fi
+}
+```
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `--pattern '<expr>'` | `sed` substitution expression applied to each filename |
+| `--seq <prefix>` | Rename files to `<prefix>001.ext`, `<prefix>002.ext`, … |
+| `--case lower\|upper` | Convert the entire filename to lower or upper case |
+| `--apply` | Perform the rename; omit for a dry-run preview |
+
+## Examples
+
+```bash
+# Remove spaces from filenames
+bulk-rename --pattern 's/ /_/g' --apply *.mp4
+
+# Strip a date prefix like "2024-01-15_"
+bulk-rename --pattern 's/^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}_//' --apply *.jpg
+
+# Number a set of slides
+bulk-rename --seq slide_ --apply deck-*.pdf
+
+# Normalise photo uploads to lowercase extensions
+bulk-rename --case lower --apply *.JPEG *.JPG *.PNG
+```
+
+## Notes
+
+- The function always checks for filename collisions before renaming and skips any conflicting targets.
+- Files not matching the glob (or not found on disk) are skipped with a warning rather than aborting the entire run.
+- `sed` patterns follow POSIX BRE syntax on macOS and Linux. For extended regex, use `-E` inside the pattern string: `--pattern 's/-([0-9]+)$/.\1/E'` is not portable; stick to BRE or test on your target platform.
