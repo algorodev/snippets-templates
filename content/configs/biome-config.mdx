@@ -1,0 +1,135 @@
+---
+title: Biome Config
+description: A comprehensive Biome configuration covering linting and formatting for TypeScript and JavaScript projects. Replaces ESLint and Prettier with a single fast tool.
+category: configs
+language: json
+tags: [biome, linting, formatting, typescript]
+---
+
+Drop-in replacement for ESLint + Prettier. Biome is 10–100x faster and requires zero additional plugins for TypeScript and React projects.
+
+## Usage
+
+```json
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": false,
+    "ignore": ["node_modules", ".next", "dist", "build", "coverage"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf",
+    "attributePosition": "auto"
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error",
+        "useExhaustiveDependencies": "warn"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "noConsoleLog": "warn"
+      },
+      "style": {
+        "useConst": "error",
+        "useTemplate": "error",
+        "noParameterAssign": "error",
+        "useImportType": "error"
+      },
+      "complexity": {
+        "noBannedTypes": "error",
+        "noUselessTypeConstraint": "error"
+      },
+      "a11y": {
+        "recommended": true
+      }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "trailingCommas": "all",
+      "semicolons": "asNeeded",
+      "bracketSpacing": true,
+      "bracketSameLine": false,
+      "arrowParentheses": "always"
+    },
+    "globals": ["React"]
+  },
+  "json": {
+    "formatter": {
+      "trailingCommas": "none"
+    }
+  },
+  "css": {
+    "formatter": {
+      "enabled": true
+    },
+    "linter": {
+      "enabled": true
+    }
+  },
+  "overrides": [
+    {
+      "include": ["*.test.ts", "*.test.tsx", "*.spec.ts", "*.spec.tsx"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+**Install:**
+
+```bash
+npm install -D @biomejs/biome
+npx biome init
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "lint": "biome lint --write .",
+    "format": "biome format --write .",
+    "check": "biome check --write ."
+  }
+}
+```
+
+## Options
+
+| Field | Value | Effect |
+|-------|-------|--------|
+| `formatter.indentStyle` | `"space"` \| `"tab"` | Indentation character |
+| `formatter.lineWidth` | number | Max line length before wrapping |
+| `javascript.formatter.quoteStyle` | `"single"` \| `"double"` | String quote character |
+| `javascript.formatter.semicolons` | `"always"` \| `"asNeeded"` | Semicolon insertion |
+| `javascript.formatter.trailingCommas` | `"all"` \| `"es5"` \| `"none"` | Trailing comma placement |
+| `vcs.useIgnoreFile` | `true` | Respects `.gitignore` automatically |
+
+## Notes
+
+- Run `biome check --write .` to lint and format in one pass — the recommended default for CI.
+- The `useImportType` rule enforces `import type` for type-only imports, which improves tree-shaking and aligns with TypeScript's `verbatimModuleSyntax`.
+- The `overrides` block relaxes `noExplicitAny` in test files where it is often unavoidable when mocking.
+- If you are migrating from ESLint + Prettier, run `npx @biomejs/biome migrate eslint --write` and `npx @biomejs/biome migrate prettier --write` to import your existing rules automatically.
