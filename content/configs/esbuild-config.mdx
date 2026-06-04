@@ -1,0 +1,95 @@
+---
+title: esbuild Config
+description: A programmatic esbuild configuration script for fast TypeScript bundling with code splitting. Covers both development and production build modes.
+category: configs
+language: javascript
+tags: [esbuild, build-tool, typescript, bundler]
+---
+
+Programmatic esbuild setup that handles TypeScript, code splitting, and separate dev/prod build modes — all in a single script you can run directly with Node.
+
+## Usage
+
+```javascript
+// build.mjs
+import * as esbuild from 'esbuild'
+
+const isDev = process.argv.includes('--dev')
+const isWatch = process.argv.includes('--watch')
+
+/** @type {import('esbuild').BuildOptions} */
+const baseConfig = {
+  entryPoints: ['src/index.ts'],
+  bundle: true,
+  platform: 'browser',
+  target: ['es2020', 'chrome90', 'firefox90', 'safari14'],
+  format: 'esm',
+  splitting: true,
+  outdir: 'dist',
+  sourcemap: isDev,
+  minify: !isDev,
+  treeShaking: true,
+  metafile: true,
+  define: {
+    'process.env.NODE_ENV': isDev ? '"development"' : '"production"',
+  },
+  loader: {
+    '.png': 'file',
+    '.svg': 'file',
+    '.woff2': 'file',
+  },
+}
+
+if (isWatch) {
+  const ctx = await esbuild.context(baseConfig)
+  await ctx.watch()
+  console.log('Watching for changes...')
+} else {
+  const result = await esbuild.build(baseConfig)
+
+  if (result.metafile) {
+    const text = await esbuild.analyzeMetafile(result.metafile, { verbose: false })
+    console.log(text)
+  }
+
+  console.log(isDev ? 'Dev build complete.' : 'Production build complete.')
+}
+```
+
+**Install:**
+
+```bash
+npm install -D esbuild
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "build": "node build.mjs",
+    "build:dev": "node build.mjs --dev",
+    "dev": "node build.mjs --dev --watch"
+  }
+}
+```
+
+## Options
+
+| Field | Value | Effect |
+|-------|-------|--------|
+| `splitting` | `true` | Enables code splitting (requires `format: "esm"`) |
+| `sourcemap` | `true` \| `"inline"` \| `"external"` | Source map generation |
+| `minify` | `true` | Minifies output for production |
+| `target` | string[] | Sets JS/CSS syntax target for down-leveling |
+| `platform` | `"browser"` \| `"node"` \| `"neutral"` | Adjusts defaults for the runtime |
+| `loader` | object | Maps file extensions to esbuild loaders |
+| `metafile` | `true` | Emits bundle metadata for analysis |
+
+## Notes
+
+- esbuild does not perform TypeScript type checking — run `tsc --noEmit` separately in CI or as a pre-build step.
+- Code splitting requires `format: "esm"` and `outdir` (not `outfile`).
+- For Node.js libraries, switch `platform` to `"node"`, `format` to `"cjs"` or `"esm"`, and set `external` to avoid bundling `node_modules`.
+- The `metafile` + `analyzeMetafile` output shows per-module sizes, which helps identify unexpectedly large dependencies.
+- To also serve a local dev server, replace `ctx.watch()` with `ctx.serve({ servedir: 'dist', port: 3000 })`.
