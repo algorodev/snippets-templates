@@ -1,0 +1,149 @@
+---
+title: Rollup Config
+description: A Rollup configuration for bundling TypeScript libraries with multiple output formats. Includes plugins for TypeScript, CommonJS interop, and tree-shaking.
+category: configs
+language: javascript
+tags: [rollup, build-tool, library, typescript, bundler]
+---
+
+A complete Rollup setup for TypeScript libraries that produces ESM, CJS, and UMD bundles in one pass. TypeScript compilation, CommonJS interop, and node_modules resolution are all handled by dedicated plugins.
+
+## Usage
+
+```javascript
+// rollup.config.js
+import resolve from '@rollup/plugin-node-resolve'
+import commonjs from '@rollup/plugin-commonjs'
+import typescript from '@rollup/plugin-typescript'
+import terser from '@rollup/plugin-terser'
+import dts from 'rollup-plugin-dts'
+import { readFileSync } from 'fs'
+
+const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
+
+const external = [
+  ...Object.keys(pkg.peerDependencies ?? {}),
+  ...Object.keys(pkg.dependencies ?? {}),
+]
+
+const input = 'src/index.ts'
+
+/** @type {import('rollup').RollupOptions[]} */
+export default [
+  // ESM + CJS bundles
+  {
+    input,
+    external,
+    plugins: [
+      resolve({ extensions: ['.ts', '.tsx', '.js', '.jsx'] }),
+      commonjs(),
+      typescript({
+        tsconfig: './tsconfig.json',
+        declaration: false,
+      }),
+      terser(),
+    ],
+    output: [
+      {
+        file: pkg.module ?? 'dist/index.mjs',
+        format: 'es',
+        sourcemap: true,
+        exports: 'named',
+      },
+      {
+        file: pkg.main ?? 'dist/index.cjs',
+        format: 'cjs',
+        sourcemap: true,
+        exports: 'named',
+      },
+    ],
+  },
+
+  // UMD bundle (browser-friendly, dependencies inlined)
+  {
+    input,
+    plugins: [
+      resolve({ extensions: ['.ts', '.tsx', '.js', '.jsx'] }),
+      commonjs(),
+      typescript({
+        tsconfig: './tsconfig.json',
+        declaration: false,
+      }),
+      terser(),
+    ],
+    output: {
+      file: 'dist/index.umd.js',
+      format: 'umd',
+      name: 'MyLibrary',
+      sourcemap: true,
+      globals: {
+        react: 'React',
+        'react-dom': 'ReactDOM',
+      },
+    },
+  },
+
+  // Type declarations
+  {
+    input,
+    plugins: [dts()],
+    output: {
+      file: pkg.types ?? 'dist/index.d.ts',
+      format: 'es',
+    },
+  },
+]
+```
+
+**`package.json`:**
+
+```json
+{
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "rollup -c",
+    "build:watch": "rollup -c --watch"
+  },
+  "devDependencies": {
+    "rollup": "^4.0.0",
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-commonjs": "^25.0.0",
+    "@rollup/plugin-typescript": "^11.0.0",
+    "@rollup/plugin-terser": "^0.4.0",
+    "rollup-plugin-dts": "^6.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+```
+
+**Install:**
+
+```bash
+npm install -D rollup @rollup/plugin-node-resolve @rollup/plugin-commonjs @rollup/plugin-typescript @rollup/plugin-terser rollup-plugin-dts typescript
+```
+
+## Options
+
+| Plugin | Purpose |
+|--------|---------|
+| `@rollup/plugin-node-resolve` | Resolves bare imports from `node_modules` |
+| `@rollup/plugin-commonjs` | Converts CJS modules so Rollup can tree-shake them |
+| `@rollup/plugin-typescript` | Compiles TypeScript using the project's `tsconfig.json` |
+| `@rollup/plugin-terser` | Minifies output with Terser |
+| `rollup-plugin-dts` | Bundles `.d.ts` files into a single declaration file |
+
+## Notes
+
+- The config uses three separate Rollup configs in a single array: JS bundles, UMD bundle, and type declarations. The `dts` plugin run must be separate because it does not emit JavaScript.
+- The UMD build does not externalize peer dependencies so it can be loaded directly in a browser via a `<script>` tag without a bundler.
+- Pass `declaration: false` to `@rollup/plugin-typescript` in JS configs — let `rollup-plugin-dts` handle declarations in its own pass to avoid file conflicts.
+- For projects without React, remove the `globals` block from the UMD output config and the UMD config's peer dependency entries.
