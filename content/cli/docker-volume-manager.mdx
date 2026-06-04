@@ -1,0 +1,132 @@
+---
+title: Docker Volume Manager
+description: List volumes with their mount points and sizes, remove unused volumes, and back up a volume to a tar archive.
+category: cli
+language: bash
+tags: [docker, volumes, storage, devops]
+---
+
+Docker volumes accumulate silently and can eat significant disk space. These functions give you visibility into what exists, make pruning safe and explicit, and let you snapshot any volume to a portable tar archive.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# List all volumes with their driver, mount point, and disk usage
+dvols() {
+  echo "VOLUME NAME | DRIVER | MOUNTPOINT | SIZE"
+  echo "------------|--------|------------|-----"
+  docker volume ls --format '{{.Name}} {{.Driver}}' | while read -r name driver; do
+    mountpoint=$(docker volume inspect "$name" --format '{{.Mountpoint}}')
+    if [ -d "$mountpoint" ]; then
+      size=$(du -sh "$mountpoint" 2>/dev/null | cut -f1)
+    else
+      size="N/A"
+    fi
+    echo "$name | $driver | $mountpoint | $size"
+  done
+}
+
+# Remove volumes that are not referenced by any container
+dvolprune() {
+  echo "Volumes not attached to any container:"
+  docker volume ls -qf dangling=true
+  echo ""
+  read -rp "Remove all of the above? [y/N] " confirm
+  if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    docker volume prune -f
+    echo "Done."
+  else
+    echo "Aborted."
+  fi
+}
+
+# Back up a named volume to a tar archive in the current directory
+# Usage: dvolbackup <volume-name> [output-file.tar.gz]
+dvolbackup() {
+  local volume="$1"
+  local output="${2:-${volume}-$(date +%Y%m%d%H%M%S).tar.gz}"
+
+  if [ -z "$volume" ]; then
+    echo "Usage: dvolbackup <volume-name> [output-file.tar.gz]"
+    return 1
+  fi
+
+  if ! docker volume inspect "$volume" > /dev/null 2>&1; then
+    echo "Error: volume '$volume' does not exist."
+    return 1
+  fi
+
+  echo "Backing up volume '$volume' to '$output'..."
+  docker run --rm \
+    -v "${volume}:/data:ro" \
+    -v "$(pwd):/backup" \
+    busybox \
+    tar czf "/backup/${output}" -C /data .
+
+  echo "Backup complete: $(pwd)/${output}"
+}
+
+# Restore a tar archive back into a named volume
+# Usage: dvolrestore <archive.tar.gz> <volume-name>
+dvolrestore() {
+  local archive="$1"
+  local volume="$2"
+
+  if [ -z "$archive" ] || [ -z "$volume" ]; then
+    echo "Usage: dvolrestore <archive.tar.gz> <volume-name>"
+    return 1
+  fi
+
+  if [ ! -f "$archive" ]; then
+    echo "Error: archive '$archive' not found."
+    return 1
+  fi
+
+  echo "Restoring '$archive' into volume '$volume'..."
+  docker volume create "$volume" > /dev/null
+  docker run --rm \
+    -v "${volume}:/data" \
+    -v "$(pwd):/backup:ro" \
+    busybox \
+    tar xzf "/backup/${archive}" -C /data
+
+  echo "Restore complete."
+}
+```
+
+## Options
+
+| Function | Arguments | Description |
+|----------|-----------|-------------|
+| `dvols` | _(none)_ | List all volumes with driver, mount path, and size |
+| `dvolprune` | _(none)_ | Interactively remove dangling (unused) volumes |
+| `dvolbackup` | `<volume> [file.tar.gz]` | Archive a volume to the current directory |
+| `dvolrestore` | `<file.tar.gz> <volume>` | Restore an archive into a (new or existing) volume |
+
+## Examples
+
+```bash
+# See all volumes and how much space they are using
+dvols
+
+# Remove volumes not attached to any container (prompts for confirmation)
+dvolprune
+
+# Back up the postgres_data volume with an auto-generated timestamp filename
+dvolbackup postgres_data
+
+# Back up with a specific output name
+dvolbackup postgres_data pg-prod-backup.tar.gz
+
+# Restore into a new volume on a different host
+dvolrestore pg-prod-backup.tar.gz postgres_data
+```
+
+## Notes
+
+- `dvols` calls `du` on the host mount path, which requires the Docker daemon to be running locally (not a remote context). Sizes show `N/A` for remote or overlay-backed volumes where the path is inaccessible.
+- `dvolbackup` uses a throwaway `busybox` container so no extra tooling is needed on the host.
+- Always stop or pause containers that are actively writing to a volume before taking a backup to avoid a torn snapshot.
+- The restore function creates the target volume if it does not already exist, making it safe to use on a fresh host.
