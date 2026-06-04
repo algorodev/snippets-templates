@@ -1,0 +1,73 @@
+---
+title: Build URL
+description: Constructs a full URL from a base, pathname, and query-params object, automatically encoding values. Handles leading slashes and existing query strings on the base.
+category: snippets
+language: typescript
+tags: [url, utils, build]
+---
+
+Takes a base URL, an optional pathname, and an optional params object, then assembles and returns the full URL string with all query parameters properly encoded. Handles edge cases like trailing slashes, leading slashes on the pathname, and query strings already present on the base.
+
+## Usage
+
+```typescript
+function buildUrl(
+  base: string,
+  pathname?: string,
+  params?: Record<string, string | number | boolean | null | undefined>
+): string {
+  const url = new URL(base)
+
+  if (pathname) {
+    const cleanBase = url.pathname.replace(/\/$/, '')
+    const cleanPath = pathname.startsWith('/') ? pathname : `/${pathname}`
+    url.pathname = cleanBase + cleanPath
+  }
+
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== null && value !== undefined) {
+        url.searchParams.set(key, String(value))
+      }
+    }
+  }
+
+  return url.toString()
+}
+
+export default buildUrl
+```
+
+## Examples
+
+```typescript
+buildUrl('https://api.example.com', '/users', { page: 1, limit: 20 })
+// 'https://api.example.com/users?page=1&limit=20'
+
+buildUrl('https://api.example.com/v2/', 'search', { q: 'hello world', active: true })
+// 'https://api.example.com/v2/search?q=hello+world&active=true'
+
+buildUrl('https://api.example.com?version=2', '/items', { sort: 'desc' })
+// 'https://api.example.com/items?version=2&sort=desc'
+
+buildUrl('https://api.example.com', '/profile')
+// 'https://api.example.com/profile'
+
+buildUrl('https://api.example.com', undefined, { token: 'abc123' })
+// 'https://api.example.com/?token=abc123'
+```
+
+## Options
+
+| Parameter  | Type | Description |
+|------------|------|-------------|
+| `base`     | `string` | A fully-qualified URL including protocol, e.g. `https://api.example.com`. May include an existing path or query string. |
+| `pathname` | `string` (optional) | Path segment to append. Leading slash is optional — the function normalises it. |
+| `params`   | `Record<string, string \| number \| boolean \| null \| undefined>` (optional) | Key-value pairs to append as query parameters. `null` and `undefined` values are silently omitted. |
+
+## Notes
+
+- Built on the native `URL` API — no dependencies, works in all modern browsers and Node.js 10+.
+- Existing query parameters on `base` are preserved; new params are merged in via `searchParams.set`.
+- Values are automatically percent-encoded by the `URL` API, so spaces become `+` in query strings and special characters are escaped correctly.
+- `null` and `undefined` param values are skipped, making it easy to pass optional filters without pre-filtering the object.
