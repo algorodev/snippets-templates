@@ -1,0 +1,51 @@
+---
+title: useIsomorphicLayoutEffect Hook
+description: Returns useLayoutEffect in browser environments and useEffect during SSR, preventing the server-side warning. A drop-in replacement for safe isomorphic code.
+category: snippets
+language: typescript
+tags: [react, hooks, ssr, layout]
+---
+
+Replaces `useLayoutEffect` with `useEffect` on the server to silence the React SSR warning, while still using the synchronous layout effect in the browser where it matters.
+
+## Usage
+
+```typescript
+import { useEffect, useLayoutEffect } from 'react'
+
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? useLayoutEffect : useEffect
+
+export default useIsomorphicLayoutEffect
+```
+
+## Examples
+
+```typescript
+import { useRef } from 'react'
+import useIsomorphicLayoutEffect from './useIsomorphicLayoutEffect'
+
+function Tooltip({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Runs synchronously after DOM paint in the browser, safely falls back to
+  // useEffect on the server — no SSR warning.
+  useIsomorphicLayoutEffect(() => {
+    if (!ref.current) return
+    const { height } = ref.current.getBoundingClientRect()
+    console.log('Tooltip height:', height)
+  }, [])
+
+  return <div ref={ref}>{children}</div>
+}
+```
+
+## How it works
+
+React warns when `useLayoutEffect` is called during server-side rendering because there is no DOM — the effect never actually runs — but the warning still appears in the console. The fix is a simple conditional export: on the server (`typeof window === 'undefined'`) the hook resolves to `useEffect`, which React is happy to ignore during SSR. In the browser the hook resolves to `useLayoutEffect`, preserving the synchronous, paint-blocking behaviour that makes it useful for measuring or mutating the DOM before the browser repaints.
+
+## Notes
+
+- This is a common pattern used by libraries such as `framer-motion`, `react-spring`, and `@radix-ui/react-use-layout-effect`.
+- The server check uses `typeof window !== 'undefined'` rather than a `try/catch` or `process.browser` so it works in both Node and Edge runtimes without bundler-specific globals.
+- If you are already inside a component that only mounts in the browser (e.g. behind a dynamic import with `{ ssr: false }`), you can use `useLayoutEffect` directly without this wrapper.
