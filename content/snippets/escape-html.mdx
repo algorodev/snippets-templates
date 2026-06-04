@@ -1,0 +1,56 @@
+---
+title: Escape HTML
+description: Escapes special HTML characters in a string to their entity equivalents, preventing XSS when inserting user-supplied content into the DOM. Covers the five standard unsafe characters.
+category: snippets
+language: typescript
+tags: [string, utils, html, security, sanitize]
+---
+
+Converts the five characters that have special meaning in HTML (`&`, `<`, `>`, `"`, `'`) into their safe entity equivalents so user-supplied strings can be inserted into the DOM without creating injection vectors.
+
+## Usage
+
+```typescript
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+export default escapeHtml
+```
+
+## Examples
+
+```typescript
+escapeHtml('<script>alert("xss")</script>')
+// => "&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;"
+
+escapeHtml("It's a <b>beautiful</b> day & night")
+// => "It&#39;s a &lt;b&gt;beautiful&lt;/b&gt; day &amp; night"
+
+// Safe interpolation into an HTML template
+const name = '<img src=x onerror=alert(1)>'
+const html = `<p>Hello, ${escapeHtml(name)}!</p>`
+// => "<p>Hello, &lt;img src=x onerror=alert(1)&gt;!</p>"
+```
+
+## How it works
+
+The replacements must happen in order: `&` is always replaced first. If it came later, the `&` introduced by earlier replacements (e.g. `&lt;`) would itself be double-escaped into `&amp;lt;`.
+
+| Character | Entity    | Why it matters                                   |
+|-----------|-----------|--------------------------------------------------|
+| `&`       | `&amp;`   | Starts all entities — must be escaped first       |
+| `<`       | `&lt;`    | Opens tags                                        |
+| `>`       | `&gt;`    | Closes tags                                       |
+| `"`       | `&quot;`  | Breaks out of double-quoted attribute values      |
+| `'`       | `&#39;`   | Breaks out of single-quoted attribute values      |
+
+## Notes
+
+- Use this when injecting text into HTML via `innerHTML` or server-rendered templates. For `textContent` assignments the browser escapes automatically — no manual escaping needed.
+- This does not make HTML _safe to render_ as markup (it strips no tags). For rendering untrusted HTML, combine with a sanitiser like DOMPurify.
