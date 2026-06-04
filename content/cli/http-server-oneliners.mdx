@@ -1,0 +1,68 @@
+---
+title: HTTP Server One-liners
+description: Serve any local directory over HTTP using Python, Node, or Caddy with a single alias, choosing the best available runtime automatically.
+category: cli
+language: bash
+tags: [misc, http, server, productivity]
+---
+
+Add a single `serve` alias to your shell profile that detects which runtime is available and starts an HTTP server in the current directory. No global packages required beyond what you already have installed.
+
+## Usage
+
+```bash
+# ── Smart serve alias ────────────────────────────────────────────────────────
+# Paste into ~/.bashrc or ~/.zshrc
+
+function serve() {
+  local port="${1:-8080}"
+  local dir="${2:-.}"
+
+  echo "Serving $dir on http://localhost:$port"
+
+  if command -v python3 &>/dev/null; then
+    python3 -m http.server "$port" --directory "$dir"
+  elif command -v python &>/dev/null; then
+    # Python 2 fallback — does not support --directory, so cd first
+    ( cd "$dir" && python -m SimpleHTTPServer "$port" )
+  elif command -v npx &>/dev/null; then
+    npx --yes serve -l "$port" "$dir"
+  elif command -v caddy &>/dev/null; then
+    caddy file-server --listen ":$port" --root "$dir"
+  else
+    echo "Error: no supported runtime found (python3, python, npx, or caddy)." >&2
+    return 1
+  fi
+}
+```
+
+## Examples
+
+```bash
+# Serve current directory on the default port (8080)
+serve
+
+# Serve on a custom port
+serve 3000
+
+# Serve a specific directory on a custom port
+serve 4000 ./dist
+
+# Serve the build output of a front-end project
+cd my-app && npm run build && serve 5000 ./build
+```
+
+## Options
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `port`   | `8080`  | TCP port to listen on |
+| `dir`    | `.`     | Directory to serve |
+
+## Notes
+
+- **Python 3** (`python3 -m http.server`) is preferred — it is available on macOS and most Linux distros with no extra setup.
+- **npx serve** downloads Vercel's `serve` package on first run and caches it; subsequent runs are instant.
+- **Caddy** delivers the best developer experience (HTTPS, compression, clean error pages) but must be installed separately: `brew install caddy` / `apt install caddy`.
+- None of these servers are intended for production use. They have no authentication, rate limiting, or security hardening.
+- To allow connections from other devices on your local network, replace `localhost` with `0.0.0.0` — for Python 3: `python3 -m http.server "$port" --bind 0.0.0.0 --directory "$dir"`.
