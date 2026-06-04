@@ -1,0 +1,45 @@
+---
+title: Is Today
+description: Returns true if a given date falls on the current calendar day in local time. Accounts for timezone offsets without requiring an external library.
+category: snippets
+language: typescript
+tags: [date, utils, check]
+---
+
+Compares year, month, and day components in local time so the check respects the user's timezone — no UTC drift, no external dependencies.
+
+## Usage
+
+```typescript
+function isToday(date: Date): boolean {
+  const now = new Date()
+  return (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  )
+}
+
+export default isToday
+```
+
+## Examples
+
+```typescript
+isToday(new Date())
+// → true
+
+isToday(new Date('2000-01-01'))
+// → false
+
+// Works with any Date object
+const userCreatedAt = new Date(user.createdAt)
+if (isToday(userCreatedAt)) {
+  console.log('Account created today')
+}
+```
+
+## Notes
+
+- Uses local time getters (`getFullYear`, `getMonth`, `getDate`) rather than their UTC equivalents, so the result matches what the user sees on their calendar.
+- Passing a non-`Date` value (e.g. a raw timestamp number) will cause incorrect results — convert with `new Date(ts)` first.
