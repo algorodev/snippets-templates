@@ -1,0 +1,100 @@
+---
+title: commitlint Config
+description: A commitlint configuration enforcing the Conventional Commits specification on every commit message. Works with Husky commit-msg hook to block non-conforming messages.
+category: configs
+language: javascript
+tags: [commitlint, conventional-commits, git-hooks, commit-validation]
+---
+
+commitlint parses each commit message against a ruleset and exits non-zero if the message violates any rule. Combined with Husky's `commit-msg` hook, it stops bad messages before they reach the repository.
+
+## Usage
+
+```javascript
+// commitlint.config.mjs
+export default {
+  extends: ['@commitlint/config-conventional'],
+
+  rules: {
+    // Enforce a limited, explicit set of types
+    'type-enum': [
+      2,
+      'always',
+      [
+        'feat',     // new feature
+        'fix',      // bug fix
+        'docs',     // documentation only
+        'style',    // formatting, no logic change
+        'refactor', // code change that is neither a fix nor a feature
+        'perf',     // performance improvement
+        'test',     // adding or correcting tests
+        'build',    // build system or external dependency changes
+        'ci',       // CI configuration changes
+        'chore',    // maintenance tasks
+        'revert',   // reverts a previous commit
+      ],
+    ],
+
+    // Subject line: sentence-case is fine, but ban a trailing period
+    'subject-case': [1, 'never', ['start-case', 'pascal-case', 'upper-case']],
+    'subject-full-stop': [2, 'never', '.'],
+
+    // Keep the header short enough to display in one line on GitHub
+    'header-max-length': [2, 'always', 100],
+
+    // Scope is optional but must be lower-case when provided
+    'scope-case': [2, 'always', 'lower-case'],
+
+    // Body and footer: blank line required before each
+    'body-leading-blank': [2, 'always'],
+    'footer-leading-blank': [1, 'always'],
+  },
+}
+```
+
+**Install dependencies:**
+
+```bash
+npm install -D @commitlint/cli @commitlint/config-conventional
+```
+
+**Wire it into Husky** (`.husky/commit-msg`):
+
+```bash
+npx --no -- commitlint --edit "$1"
+```
+
+## Examples
+
+Valid commit messages:
+
+```
+feat(auth): add OAuth2 login with Google
+fix: prevent crash when user list is empty
+docs(readme): update installation steps
+refactor(api): extract fetch helper into shared utility
+chore: upgrade dependencies to latest patch versions
+```
+
+Invalid commit messages (commitlint will block these):
+
+```
+# missing type
+update the login page
+
+# unknown type
+update(auth): add Google login
+
+# header too long (over 100 chars)
+feat(user-profile): add a really long description that goes well past the hundred character limit set
+
+# trailing period in subject
+fix: prevent crash when user list is empty.
+```
+
+## Notes
+
+- Rule severity levels: `0` = disabled, `1` = warning, `2` = error. Only errors block the commit.
+- `@commitlint/config-conventional` implements the full [Conventional Commits v1.0.0](https://www.conventionalcommits.org/) specification. The custom `rules` block above overrides or extends it selectively.
+- To test a message without committing: `echo "feat: my message" | npx commitlint`.
+- Pair with Commitizen (`cz-conventional-changelog`) to give developers an interactive prompt that generates conforming messages automatically, eliminating the need to memorize the format.
