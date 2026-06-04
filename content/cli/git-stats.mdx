@@ -1,0 +1,89 @@
+---
+title: Git Stats
+description: Print per-author commit counts, lines changed, and file touch frequency for a repo or a date range.
+category: cli
+language: bash
+tags: [git, statistics, reporting, productivity]
+---
+
+Quickly audit who contributed what in a repo — commit counts, lines added and removed per author, and which files have been touched most often. All output comes from built-in git plumbing so there are no extra dependencies.
+
+## Usage
+
+```bash
+# Per-author commit counts (all time)
+git shortlog -sn --no-merges
+
+# Per-author commit counts for a date range
+git shortlog -sn --no-merges --after="2024-01-01" --before="2025-01-01"
+
+# Lines added/removed per author
+git log --no-merges --pretty="%aN" | sort -u | while read author; do
+  printf "%-30s" "$author"
+  git log --no-merges --author="$author" --pretty=tformat: --numstat \
+    | awk '{added += $1; removed += $2} END {printf "+%d / -%d\n", added, removed}'
+done
+
+# Files touched most often (top 20)
+git log --no-merges --name-only --pretty=format: \
+  | grep -v '^$' \
+  | sort \
+  | uniq -c \
+  | sort -rn \
+  | head -20
+```
+
+## Shell function version
+
+Add to `~/.zshrc` or `~/.bashrc` for a combined report:
+
+```bash
+git-stats() {
+  local after="${1:-}"
+  local before="${2:-}"
+  local date_flags=""
+  [ -n "$after"  ] && date_flags="$date_flags --after=$after"
+  [ -n "$before" ] && date_flags="$date_flags --before=$before"
+
+  echo "=== Commit counts per author ==="
+  git shortlog -sn --no-merges $date_flags
+
+  echo ""
+  echo "=== Lines changed per author ==="
+  git log --no-merges $date_flags --pretty="%aN" | sort -u | while read author; do
+    printf "  %-30s" "$author"
+    git log --no-merges $date_flags --author="$author" --pretty=tformat: --numstat \
+      | awk '{a += $1; r += $2} END {printf "+%d / -%d lines\n", a, r}'
+  done
+
+  echo ""
+  echo "=== Top 20 most-changed files ==="
+  git log --no-merges $date_flags --name-only --pretty=format: \
+    | grep -v '^$' \
+    | sort \
+    | uniq -c \
+    | sort -rn \
+    | head -20 \
+    | awk '{printf "  %4d  %s\n", $1, $2}'
+}
+```
+
+## Examples
+
+```bash
+# Full repo summary
+git-stats
+
+# Q1 2025 only
+git-stats 2025-01-01 2025-04-01
+
+# Last 90 days
+git-stats "$(date -v-90d +%Y-%m-%d)"
+```
+
+## Notes
+
+- Merge commits are excluded with `--no-merges` to avoid inflating counts.
+- `git shortlog -sn` sorts by commit count descending; drop `-n` to sort alphabetically.
+- Line counts from `--numstat` reflect raw insertions/deletions, not net changes. Binary files report `-` and are ignored by the `awk` sum.
+- On macOS, `date -v-90d` requires BSD date. On Linux use `date -d '90 days ago'`.
