@@ -1,0 +1,257 @@
+---
+title: Next.js Documentation Site
+description: A full-featured documentation site template using Next.js App Router and Contentlayer for MDX content management. Features sidebar navigation, search, and versioning support.
+category: templates
+language: TypeScript
+tags: [next.js, docs, contentlayer, mdx, app-router]
+---
+
+A production-ready docs site built on Next.js App Router with Contentlayer powering MDX content, giving you type-safe frontmatter, a collapsible sidebar, full-text search, and optional versioning out of the box.
+
+## Usage
+
+```typescript
+// contentlayer.config.ts
+import { defineDocumentType, makeSource } from 'contentlayer2/source-files'
+import rehypeHighlight from 'rehype-highlight'
+import remarkGfm from 'remark-gfm'
+
+export const Doc = defineDocumentType(() => ({
+  name: 'Doc',
+  filePathPattern: 'docs/**/*.mdx',
+  contentType: 'mdx',
+  fields: {
+    title:       { type: 'string', required: true },
+    description: { type: 'string', required: true },
+    nav_title:   { type: 'string' },
+    version:     { type: 'string' },
+  },
+  computedFields: {
+    slug: {
+      type: 'string',
+      resolve: (doc) => doc._raw.flattenedPath.replace(/^docs\//, ''),
+    },
+    url: {
+      type: 'string',
+      resolve: (doc) => `/docs/${doc._raw.flattenedPath.replace(/^docs\//, '')}`,
+    },
+  },
+}))
+
+export default makeSource({
+  contentDirPath: 'content',
+  documentTypes: [Doc],
+  mdx: {
+    remarkPlugins: [remarkGfm],
+    rehypePlugins: [rehypeHighlight],
+  },
+})
+```
+
+```typescript
+// app/docs/[[...slug]]/page.tsx
+import { notFound } from 'next/navigation'
+import { allDocs } from 'contentlayer/generated'
+import { useMDXComponent } from 'next-contentlayer2/hooks'
+import { mdxComponents } from '@/components/mdx-components'
+
+interface PageProps {
+  params: Promise<{ slug?: string[] }>
+}
+
+export async function generateStaticParams() {
+  return allDocs.map((doc) => ({
+    slug: doc.slug.split('/'),
+  }))
+}
+
+export async function generateMetadata({ params }: PageProps) {
+  const { slug } = await params
+  const doc = allDocs.find((d) => d.slug === (slug?.join('/') ?? ''))
+  if (!doc) return {}
+  return { title: doc.title, description: doc.description }
+}
+
+export default async function DocPage({ params }: PageProps) {
+  const { slug } = await params
+  const doc = allDocs.find((d) => d.slug === (slug?.join('/') ?? 'index'))
+
+  if (!doc) notFound()
+
+  const MDXContent = useMDXComponent(doc.body.code)
+
+  return (
+    <article className="prose prose-slate max-w-none dark:prose-invert">
+      <h1>{doc.title}</h1>
+      <p className="lead">{doc.description}</p>
+      <MDXContent components={mdxComponents} />
+    </article>
+  )
+}
+```
+
+```typescript
+// components/sidebar.tsx
+'use client'
+
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { allDocs } from 'contentlayer/generated'
+
+function buildTree(docs: typeof allDocs) {
+  const tree: Record<string, { title: string; url: string }[]> = {}
+  for (const doc of docs) {
+    const parts = doc.slug.split('/')
+    const section = parts.length > 1 ? parts[0] : 'Overview'
+    tree[section] ??= []
+    tree[section].push({ title: doc.nav_title ?? doc.title, url: doc.url })
+  }
+  return tree
+}
+
+export function Sidebar() {
+  const pathname = usePathname()
+  const tree = buildTree(allDocs)
+
+  return (
+    <nav className="w-64 shrink-0 pr-8">
+      {Object.entries(tree).map(([section, pages]) => (
+        <div key={section} className="mb-6">
+          <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            {section}
+          </h4>
+          <ul className="space-y-1">
+            {pages.map((page) => (
+              <li key={page.url}>
+                <Link
+                  href={page.url}
+                  className={`block rounded px-3 py-1.5 text-sm transition-colors ${
+                    pathname === page.url
+                      ? 'bg-blue-50 text-blue-700 font-medium dark:bg-blue-900/30 dark:text-blue-300'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  {page.title}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  )
+}
+```
+
+```typescript
+// app/docs/layout.tsx
+import { Sidebar } from '@/components/sidebar'
+
+export default function DocsLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-12">
+      <div className="flex gap-8">
+        <Sidebar />
+        <main className="min-w-0 flex-1">{children}</main>
+      </div>
+    </div>
+  )
+}
+```
+
+## Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `contentDirPath` | Root folder scanned by Contentlayer | `content` |
+| `filePathPattern` | Glob for MDX doc files | `docs/**/*.mdx` |
+| `rehypePlugins` | Syntax highlighting plugins | `rehype-highlight` |
+| `remarkPlugins` | Markdown extension plugins | `remark-gfm` |
+
+## Notes
+
+Contentlayer 2 (`contentlayer2`) is the actively maintained fork — use it instead of the original `contentlayer` package which is no longer maintained. The generated types live in `.contentlayer/generated` and are re-exported via the `contentlayer/generated` alias configured automatically.
+
+For search, integrate [Algolia DocSearch](https://docsearch.algolia.com/) (free for open-source docs) or the lighter-weight [Pagefind](https://pagefind.app/) for fully static, zero-cost search.
+
+## README
+
+### What this includes
+- Next.js App Router with `[[...slug]]` catch-all route for docs
+- Contentlayer 2 for type-safe MDX frontmatter and body compilation
+- Auto-generated static params for all doc pages (`generateStaticParams`)
+- Collapsible sidebar with active-link highlighting built from the content tree
+- `remark-gfm` (tables, strikethrough, task lists) and `rehype-highlight` (code blocks)
+- `prose` typography via `@tailwindcss/typography`
+- Dark mode support via Tailwind CSS `dark:` variants
+
+### Prerequisites
+- Node.js 20.9+
+- pnpm / npm / yarn / bun
+
+### Create this template
+
+```bash
+npx create-next-app@latest my-docs --typescript --tailwind --eslint --app --yes
+cd my-docs
+npm install contentlayer2 next-contentlayer2 @mdx-js/loader @mdx-js/react @types/mdx
+npm install remark-gfm rehype-highlight
+npm install @tailwindcss/typography
+```
+
+Update `next.config.mjs`:
+
+```bash
+# Replace next.config.mjs with the withContentlayer wrapper
+cat > next.config.mjs << 'EOF'
+import { withContentlayer } from 'next-contentlayer2'
+
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  pageExtensions: ['js', 'jsx', 'ts', 'tsx', 'md', 'mdx'],
+}
+
+export default withContentlayer(nextConfig)
+EOF
+```
+
+```bash
+mkdir -p content/docs
+# Add contentlayer.config.ts (see Usage section above)
+# Add app/docs/[[...slug]]/page.tsx (see Usage section above)
+# Add app/docs/layout.tsx (see Usage section above)
+# Add components/sidebar.tsx (see Usage section above)
+npm run dev
+```
+
+### Project structure
+
+```
+my-docs/
+├── app/
+│   ├── layout.tsx              # Root layout (header, theme provider)
+│   └── docs/
+│       ├── layout.tsx          # Docs shell with sidebar
+│       └── [[...slug]]/
+│           └── page.tsx        # Dynamic doc page
+├── components/
+│   ├── sidebar.tsx             # Auto-built nav tree
+│   └── mdx-components.tsx      # Custom MDX component overrides
+├── content/
+│   └── docs/
+│       ├── index.mdx           # /docs landing page
+│       ├── getting-started/
+│       │   └── installation.mdx
+│       └── guides/
+│           └── configuration.mdx
+├── contentlayer.config.ts      # Document type + plugin config
+├── next.config.mjs             # withContentlayer wrapper
+└── tailwind.config.ts          # typography plugin enabled
+```
+
+### First things to customize
+- `content/docs/` — replace sample pages with your actual documentation
+- `contentlayer.config.ts` — add or remove frontmatter fields, adjust the glob pattern
+- `components/mdx-components.tsx` — map HTML elements to your own styled components
+- `app/layout.tsx` — add your site name, logo, and top-level navigation links
+- `tailwind.config.ts` — enable `@tailwindcss/typography` and configure your color theme
