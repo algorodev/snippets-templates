@@ -1,0 +1,58 @@
+---
+title: Flatten Array
+description: Recursively flattens a nested array to a specified depth, defaulting to full flattening. Returns a typed flat array using TypeScript's built-in recursive utility types.
+category: snippets
+language: typescript
+tags: [array, utils, nested]
+---
+
+Flattens a deeply nested array down to a given depth. Defaults to `Infinity` for full flattening and leans on TypeScript's built-in `FlatArray` utility type so the return type accurately reflects the requested depth.
+
+## Usage
+
+```typescript
+function flatten<T, D extends number = -1>(
+  array: T[],
+  depth?: D
+): FlatArray<T[], D>[] {
+  return array.flat(depth === undefined ? (Infinity as D) : depth) as FlatArray<T[], D>[]
+}
+
+export default flatten
+```
+
+## Examples
+
+```typescript
+// Full flatten (default)
+flatten([1, [2, [3, [4]]]])
+// → [1, 2, 3, 4]
+
+// Flatten one level deep
+flatten([1, [2, [3, [4]]]], 1)
+// → [1, 2, [3, [4]]]
+
+// Flatten two levels deep
+flatten([1, [2, [3, [4]]]], 2)
+// → [1, 2, 3, [4]]
+
+// Arrays of strings
+flatten([['a', 'b'], ['c', ['d', 'e']]])
+// → ['a', 'b', 'c', 'd', 'e']
+
+// Already flat — no-op
+flatten([1, 2, 3])
+// → [1, 2, 3]
+```
+
+## How it works
+
+The function is a thin, typed wrapper around the native `Array.prototype.flat`. The native method is highly optimised in every modern JavaScript engine, so this wrapper adds nothing to the runtime cost while giving callers:
+
+1. A consistent API with a sensible default (`Infinity`) so you never have to remember to pass `Infinity` manually.
+2. Accurate TypeScript inference — the return type narrows based on the `depth` generic parameter using the built-in `FlatArray<A, D>` conditional type.
+
+## Notes
+
+- `Array.prototype.flat` was standardised in ES2019 (ES10). All modern browsers and Node.js 11+ support it without a polyfill.
+- For very large, deeply nested structures consider an iterative approach to avoid call-stack limits, though in practice the native `flat` implementation handles this correctly.
