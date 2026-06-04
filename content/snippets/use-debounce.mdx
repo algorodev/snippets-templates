@@ -1,0 +1,78 @@
+---
+title: useDebounce Hook
+description: Delays updating a value until after a specified wait period has elapsed since the last change. Ideal for limiting API calls triggered by user input.
+category: snippets
+language: typescript
+tags: [react, hooks, debounce, performance]
+---
+
+Returns a debounced copy of a value that only updates after the specified delay has passed without another change. Drop it into any component that reacts to fast-changing input — search fields, filters, or form fields — to avoid hammering an API on every keystroke.
+
+## Usage
+
+```typescript
+import { useState, useEffect } from 'react'
+
+function useDebounce<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value)
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedValue(value)
+    }, delayMs)
+
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [value, delayMs])
+
+  return debouncedValue
+}
+
+export default useDebounce
+```
+
+## Examples
+
+```typescript
+import { useState, useEffect } from 'react'
+import useDebounce from './useDebounce'
+
+function SearchInput() {
+  const [query, setQuery] = useState('')
+  const debouncedQuery = useDebounce(query, 400)
+
+  useEffect(() => {
+    if (!debouncedQuery) return
+
+    fetch(`/api/search?q=${encodeURIComponent(debouncedQuery)}`)
+      .then((res) => res.json())
+      .then((data) => console.log('results:', data))
+  }, [debouncedQuery])
+
+  return (
+    <input
+      value={query}
+      onChange={(e) => setQuery(e.target.value)}
+      placeholder="Search…"
+    />
+  )
+}
+```
+
+## Options
+
+| Parameter | Type   | Description                                                 |
+|-----------|--------|-------------------------------------------------------------|
+| `value`   | `T`    | The value to debounce. Any type is accepted.               |
+| `delayMs` | number | Milliseconds to wait after the last change before updating. |
+
+## How it works
+
+Each time `value` or `delayMs` changes, the effect clears any previously scheduled timer and starts a new one. If `value` stops changing for `delayMs` milliseconds the timer fires and `debouncedValue` is updated, triggering a single re-render. The cleanup function returned from the effect ensures the timer is cancelled when the component unmounts or before the next effect run.
+
+## Notes
+
+- Increase `delayMs` (300–500 ms is typical for search) to reduce request frequency; decrease it for snappier feel on less expensive operations.
+- If you need a debounced **callback** rather than a debounced value, combine this hook with `useCallback` or use a ref-based implementation instead.
+- The returned value always reflects the last committed state — it will briefly lag behind `value` by up to `delayMs`.
