@@ -1,0 +1,87 @@
+---
+title: Throttle Function
+description: Limits how often a function can be called by enforcing a minimum interval between invocations. Returns a throttled version that preserves the original function's signature.
+category: snippets
+language: typescript
+tags: [async, utils, performance, rate-limiting]
+---
+
+Ensures a function fires at most once per interval, discarding any calls that arrive while the interval is still active. Unlike debounce, the first call fires immediately.
+
+## Usage
+
+```typescript
+function throttle<T extends (...args: unknown[]) => unknown>(
+  fn: T,
+  intervalMs: number
+): (...args: Parameters<T>) => void {
+  let lastCalled = 0
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+  return function throttled(...args: Parameters<T>): void {
+    const now = Date.now()
+    const remaining = intervalMs - (now - lastCalled)
+
+    if (remaining <= 0) {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+        timeoutId = null
+      }
+      lastCalled = now
+      fn(...args)
+    } else if (timeoutId === null) {
+      // Schedule a trailing call so the last invocation always executes
+      timeoutId = setTimeout(() => {
+        lastCalled = Date.now()
+        timeoutId = null
+        fn(...args)
+      }, remaining)
+    }
+  }
+}
+
+export default throttle
+```
+
+## Examples
+
+```typescript
+// Throttle a scroll handler to fire at most every 200 ms
+const onScroll = throttle((event: Event) => {
+  console.log('scroll position:', window.scrollY)
+}, 200)
+
+window.addEventListener('scroll', onScroll)
+
+// Throttle an API call triggered by mouse movement
+const trackCursor = throttle((x: number, y: number) => {
+  fetch('/api/track', {
+    method: 'POST',
+    body: JSON.stringify({ x, y }),
+  })
+}, 500)
+
+document.addEventListener('mousemove', (e) => trackCursor(e.clientX, e.clientY))
+```
+
+## Options
+
+| Parameter    | Type     | Description                                      |
+|--------------|----------|--------------------------------------------------|
+| `fn`         | function | The function to throttle.                        |
+| `intervalMs` | number   | Minimum milliseconds between consecutive calls.  |
+
+## How it works
+
+The implementation records the timestamp of the last real invocation. On each call it computes how much of the interval remains:
+
+- If the interval has elapsed (or this is the first call), the function fires immediately and `lastCalled` is updated.
+- If the interval has not elapsed and no trailing call is pending, a `setTimeout` is scheduled for the remainder of the interval so the most recent arguments are always delivered.
+
+This gives the standard **leading + trailing** behaviour: the first call fires right away and the last call within a burst is never silently dropped.
+
+## Notes
+
+- To get **leading-only** behaviour (drop trailing calls), remove the `else if` branch that schedules the timeout.
+- The returned function does not return a value — if you need the return value, adapt the signature and store it via a callback or `ref`.
+- Call `clearTimeout` on the pending `timeoutId` and set `lastCalled = 0` to fully reset a throttled function.
