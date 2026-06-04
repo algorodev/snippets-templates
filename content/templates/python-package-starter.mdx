@@ -1,0 +1,254 @@
+---
+title: Python Package Starter
+description: A modern Python package template with Hatch for build and environment management, Ruff for linting, pytest for testing, and automated PyPI publishing via GitHub Actions.
+category: templates
+language: Python
+tags: [python, package, hatch, ruff, pytest]
+---
+
+A batteries-included scaffold for publishing a Python package to PyPI — with Hatch managing environments and builds, Ruff enforcing style, pytest wiring up tests, and a GitHub Actions workflow that publishes on every tagged release.
+
+## Usage
+
+```bash
+# Install Hatch, then run your package
+pip install hatch
+hatch run python -m mypackage
+
+# Run tests
+hatch run test
+
+# Lint and format
+hatch run lint:check
+hatch run lint:fmt
+
+# Build distribution artifacts
+hatch build
+
+# Publish to PyPI (requires PYPI_TOKEN secret in CI or ~/.pypirc locally)
+hatch publish
+```
+
+## How it works
+
+```toml
+# pyproject.toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mypackage"
+version = "0.1.0"
+description = "A short description of your package."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Your Name", email = "you@example.com" }]
+keywords = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/yourname/mypackage"
+Repository = "https://github.com/yourname/mypackage"
+Issues = "https://github.com/yourname/mypackage/issues"
+
+# Optional: expose a CLI entry point
+[project.scripts]
+mypackage = "mypackage.cli:main"
+
+# --- Hatch environments ---
+
+[tool.hatch.envs.default]
+dependencies = ["pytest", "pytest-cov"]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "pytest --cov=mypackage --cov-report=term-missing {args:tests}"
+
+[tool.hatch.envs.lint]
+detached = true
+dependencies = ["ruff"]
+
+[tool.hatch.envs.lint.scripts]
+check = ["ruff check .", "ruff format --check ."]
+fmt   = ["ruff check --fix .", "ruff format ."]
+
+# --- Ruff ---
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mypackage"]
+
+# --- pytest ---
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+```
+
+```python
+# src/mypackage/__init__.py
+"""mypackage — a short description."""
+
+__version__ = "0.1.0"
+```
+
+```python
+# src/mypackage/core.py
+"""Core functionality."""
+
+
+def greet(name: str) -> str:
+    """Return a greeting string."""
+    return f"Hello, {name}!"
+```
+
+```python
+# src/mypackage/cli.py
+"""Optional CLI entry point."""
+import sys
+
+
+def main() -> None:
+    name = sys.argv[1] if len(sys.argv) > 1 else "world"
+    from mypackage.core import greet
+    print(greet(name))
+```
+
+```python
+# tests/test_core.py
+from mypackage.core import greet
+
+
+def test_greet_default():
+    assert greet("world") == "Hello, world!"
+
+
+def test_greet_name():
+    assert greet("Alice") == "Hello, Alice!"
+```
+
+```yaml
+# .github/workflows/publish.yml
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # required for trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Hatch
+        run: pip install hatch
+
+      - name: Run tests
+        run: hatch run test
+
+      - name: Build
+        run: hatch build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+```
+
+## README
+
+### What this includes
+
+- **Hatch** — single tool for virtual envs, builds, scripts, and publishing
+- **Hatchling** — PEP 517 build backend with zero config
+- **Ruff** — fast linter and formatter replacing Flake8, isort, and Black
+- **pytest + pytest-cov** — test runner with coverage reporting
+- **GitHub Actions** — CI workflow that publishes to PyPI on every `v*` tag using trusted publishing (no API token stored as a secret)
+- **`src/` layout** — prevents accidental imports of the uninstalled package during development
+
+### Prerequisites
+
+- Python 3.11+
+- `pip install hatch`
+
+### Create this template
+
+```bash
+# 1. Create project directory
+mkdir mypackage && cd mypackage
+
+# 2. Initialise with Hatch (creates pyproject.toml and src layout)
+hatch new mypackage --init
+
+# 3. Create the src package and tests directory
+mkdir -p src/mypackage tests
+
+# 4. Create source files
+touch src/mypackage/__init__.py src/mypackage/core.py src/mypackage/cli.py
+touch tests/__init__.py tests/test_core.py
+
+# 5. Create the GitHub Actions workflow directory
+mkdir -p .github/workflows
+touch .github/workflows/publish.yml
+
+# 6. Copy pyproject.toml content from above, then verify the setup
+hatch env create
+
+# 7. Run tests to confirm everything works
+hatch run test
+
+# 8. Lint the code
+hatch run lint:check
+```
+
+### Project structure
+
+```
+mypackage/
+├── .github/
+│   └── workflows/
+│       └── publish.yml       # CI: test + publish on tag push
+├── src/
+│   └── mypackage/
+│       ├── __init__.py       # Package version
+│       ├── core.py           # Core logic
+│       └── cli.py            # Optional CLI entry point
+├── tests/
+│   ├── __init__.py
+│   └── test_core.py
+├── pyproject.toml            # All config: build, deps, Ruff, pytest
+├── README.md
+└── LICENSE
+```
+
+### First things to customize
+
+- `pyproject.toml` `[project]` — update `name`, `description`, `authors`, and `requires-python`
+- `pyproject.toml` `[project.urls]` — replace placeholder GitHub URLs with your repo
+- `pyproject.toml` `[project.scripts]` — remove or rename the CLI entry point
+- `src/mypackage/` — rename the directory to match your actual package name
+- `.github/workflows/publish.yml` — enable PyPI Trusted Publishing in your PyPI project settings to match the workflow's OIDC flow
