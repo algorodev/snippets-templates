@@ -1,0 +1,214 @@
+---
+title: Fresh Deno App
+description: A server-rendered web application built with Deno's Fresh framework, leveraging islands architecture for partial hydration and zero build step development.
+category: templates
+language: TypeScript
+tags: [deno, fresh, typescript, ssr, islands]
+repo: https://github.com/denoland/fresh
+---
+
+A Fresh project running on Deno with server-side rendering by default, selective client-side hydration through islands, and a zero-config development experience — no bundler, no build step, just `deno task start`.
+
+## Usage
+
+```bash
+# Start the development server
+deno task start
+
+# Open the app
+open http://localhost:8000
+```
+
+## How it works
+
+```typescript
+// routes/index.tsx — server-rendered page
+import { PageProps } from "$fresh/server.ts";
+import Counter from "../islands/Counter.tsx";
+
+export default function Home({ url }: PageProps) {
+  const greeting = `Hello from ${url.hostname}`;
+
+  return (
+    <main class="p-8 max-w-xl mx-auto">
+      <h1 class="text-3xl font-bold mb-4">{greeting}</h1>
+      <p class="mb-6 text-gray-600">
+        This content is server-rendered. The counter below is an island —
+        it hydrates on the client and runs interactively.
+      </p>
+      <Counter start={0} />
+    </main>
+  );
+}
+```
+
+```typescript
+// islands/Counter.tsx — interactive island (hydrated on client)
+import { useSignal } from "@preact/signals";
+
+interface Props {
+  start: number;
+}
+
+export default function Counter({ start }: Props) {
+  const count = useSignal(start);
+
+  return (
+    <div class="flex items-center gap-4">
+      <button
+        class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
+        onClick={() => count.value--}
+      >
+        -
+      </button>
+      <span class="text-xl font-mono w-8 text-center">{count}</span>
+      <button
+        class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+        onClick={() => count.value++}
+      >
+        +
+      </button>
+    </div>
+  );
+}
+```
+
+```typescript
+// routes/api/joke.ts — JSON API route
+import { FreshContext } from "$fresh/server.ts";
+
+const JOKES = [
+  "Why do Java developers wear glasses? Because they don't C#.",
+  "A SQL query walks into a bar, walks up to two tables and asks: Can I join you?",
+  "Why do programmers prefer dark mode? Because light attracts bugs.",
+];
+
+export const handler = (_req: Request, _ctx: FreshContext): Response => {
+  const joke = JOKES[Math.floor(Math.random() * JOKES.length)];
+  return Response.json({ joke });
+};
+```
+
+```typescript
+// routes/greet/[name].tsx — dynamic route with server-side data
+import { PageProps } from "$fresh/server.ts";
+import { Handlers } from "$fresh/server.ts";
+
+interface Data {
+  name: string;
+  visitedAt: string;
+}
+
+export const handler: Handlers<Data> = {
+  GET(_req, ctx) {
+    return ctx.render({
+      name: ctx.params.name,
+      visitedAt: new Date().toISOString(),
+    });
+  },
+};
+
+export default function Greet({ data }: PageProps<Data>) {
+  return (
+    <div class="p-8">
+      <h1 class="text-2xl font-bold">Hello, {data.name}!</h1>
+      <p class="text-gray-500 text-sm mt-2">Visited at: {data.visitedAt}</p>
+    </div>
+  );
+}
+```
+
+```typescript
+// routes/_layout.tsx — shared layout wrapping all pages
+import { PageProps } from "$fresh/server.ts";
+
+export default function Layout({ Component }: PageProps) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Fresh App</title>
+        <link rel="stylesheet" href="/styles.css" />
+      </head>
+      <body class="bg-white text-gray-900">
+        <nav class="border-b px-8 py-3 flex items-center gap-6">
+          <a href="/" class="font-semibold">Home</a>
+          <a href="/greet/world">Greet</a>
+        </nav>
+        <Component />
+      </body>
+    </html>
+  );
+}
+```
+
+```typescript
+// fresh.config.ts — Tailwind CSS plugin
+import { defineConfig } from "$fresh/server.ts";
+import tailwind from "$fresh/plugins/tailwind.ts";
+
+export default defineConfig({
+  plugins: [tailwind()],
+});
+```
+
+## README
+
+### What this includes
+
+- **Fresh** — Deno-native full-stack framework with file-based routing
+- **Islands architecture** — only components placed in `islands/` are hydrated on the client; all other routes are pure SSR with zero JavaScript shipped
+- **Preact + Signals** — lightweight UI library with reactive state via `@preact/signals`
+- **Tailwind CSS** — utility-first styling with the official Fresh Tailwind plugin
+- **File-based routing** — `routes/` maps directly to URL paths; dynamic segments via `[param].tsx`
+- **API routes** — plain TypeScript handler functions alongside page routes
+- **Zero build step** — Deno handles transpilation and module resolution natively; no webpack, vite, or tsc required
+- **TypeScript by default** — no configuration needed
+
+### Prerequisites
+
+- Deno 1.41+ (`curl -fsSL https://deno.land/install.sh | sh`)
+
+### Create this template
+
+```bash
+# 1. Scaffold a new Fresh project
+deno run -A -r https://fresh.deno.dev my-fresh-app
+
+# 2. Enter the project directory
+cd my-fresh-app
+
+# 3. Start the development server (live reload included)
+deno task start
+```
+
+### Project structure
+
+```
+my-fresh-app/
+├── islands/
+│   └── Counter.tsx        # Interactive components (client-hydrated)
+├── routes/
+│   ├── _layout.tsx        # Shared HTML shell
+│   ├── _404.tsx           # Custom not-found page
+│   ├── index.tsx          # Home page (/)
+│   ├── greet/
+│   │   └── [name].tsx     # Dynamic route (/greet/:name)
+│   └── api/
+│       └── joke.ts        # JSON API endpoint
+├── static/
+│   ├── styles.css         # Global styles
+│   └── logo.svg
+├── deno.json              # Deno tasks and import map
+├── fresh.config.ts        # Plugin configuration
+└── tailwind.config.ts     # Tailwind configuration
+```
+
+### First things to customize
+
+- `routes/_layout.tsx` — Update the `<title>`, meta tags, and navigation links
+- `routes/index.tsx` — Replace the home page content
+- `islands/` — Add interactive UI components here; everything else stays server-rendered
+- `static/styles.css` — Add global CSS or swap in your own design tokens
+- `deno.json` — Add `DENO_DEPLOYMENT_ID` and any environment variable defaults for Deno Deploy
