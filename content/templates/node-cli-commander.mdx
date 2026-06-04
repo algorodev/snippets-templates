@@ -1,0 +1,313 @@
+---
+title: Node.js CLI with Commander
+description: A Node.js CLI application template using Commander.js for argument parsing, Inquirer for interactive prompts, and ora for spinners. Publishable to npm with a bin entry.
+category: templates
+language: TypeScript
+tags: [node.js, cli, commander, typescript, npm]
+---
+
+A production-ready Node.js CLI template that wires together Commander.js for subcommands and flags, Inquirer for interactive prompts, and ora for elegant spinners — packaged as a proper npm binary with a `bin` entry in `package.json`.
+
+## Usage
+
+```bash
+# After installing globally or linking locally:
+mycli --help
+mycli greet --name Alice
+mycli init               # triggers interactive prompts
+mycli fetch-data --url https://api.example.com --output result.json
+```
+
+## How it works
+
+```json
+// package.json
+{
+  "name": "mycli",
+  "version": "1.0.0",
+  "description": "My awesome CLI tool",
+  "type": "module",
+  "bin": {
+    "mycli": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "inquirer": "^10.0.0",
+    "ora": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": ["dist"]
+}
+```
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+```typescript
+// src/index.ts
+#!/usr/bin/env node
+import { Command } from "commander"
+import { greetCommand } from "./commands/greet.js"
+import { initCommand } from "./commands/init.js"
+import { fetchDataCommand } from "./commands/fetch-data.js"
+import { readFileSync } from "fs"
+import { fileURLToPath } from "url"
+import { dirname, join } from "path"
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const pkg = JSON.parse(
+  readFileSync(join(__dirname, "../package.json"), "utf-8")
+)
+
+const program = new Command()
+
+program
+  .name("mycli")
+  .description("My awesome CLI tool")
+  .version(pkg.version, "-v, --version", "Print the current version")
+
+program.addCommand(greetCommand)
+program.addCommand(initCommand)
+program.addCommand(fetchDataCommand)
+
+program.parse()
+```
+
+```typescript
+// src/commands/greet.ts
+import { Command } from "commander"
+
+export const greetCommand = new Command("greet")
+  .description("Print a greeting")
+  .requiredOption("-n, --name <name>", "Name to greet")
+  .option("-l, --loud", "Uppercase the greeting", false)
+  .action((options: { name: string; loud: boolean }) => {
+    const msg = `Hello, ${options.name}!`
+    console.log(options.loud ? msg.toUpperCase() : msg)
+  })
+```
+
+```typescript
+// src/commands/init.ts
+import { Command } from "commander"
+import inquirer from "inquirer"
+import ora from "ora"
+import { writeFileSync } from "fs"
+
+interface InitAnswers {
+  projectName: string
+  language: "typescript" | "javascript"
+  includeTests: boolean
+}
+
+export const initCommand = new Command("init")
+  .description("Interactively scaffold a new project config")
+  .action(async () => {
+    const answers = await inquirer.prompt<InitAnswers>([
+      {
+        type: "input",
+        name: "projectName",
+        message: "Project name:",
+        validate: (v: string) => (v.trim().length > 0 ? true : "Name cannot be empty"),
+      },
+      {
+        type: "list",
+        name: "language",
+        message: "Language:",
+        choices: ["typescript", "javascript"],
+        default: "typescript",
+      },
+      {
+        type: "confirm",
+        name: "includeTests",
+        message: "Include a tests directory?",
+        default: true,
+      },
+    ])
+
+    const spinner = ora("Creating project config...").start()
+
+    await new Promise((r) => setTimeout(r, 800)) // simulate async work
+
+    const config = {
+      name: answers.projectName,
+      language: answers.language,
+      tests: answers.includeTests,
+      createdAt: new Date().toISOString(),
+    }
+
+    writeFileSync("mycli.config.json", JSON.stringify(config, null, 2))
+    spinner.succeed(`Config written to mycli.config.json`)
+    console.log(JSON.stringify(config, null, 2))
+  })
+```
+
+```typescript
+// src/commands/fetch-data.ts
+import { Command } from "commander"
+import ora from "ora"
+import { writeFileSync } from "fs"
+
+export const fetchDataCommand = new Command("fetch-data")
+  .description("Fetch JSON from a URL and optionally save to a file")
+  .requiredOption("-u, --url <url>", "URL to fetch")
+  .option("-o, --output <file>", "Write response to a file instead of stdout")
+  .action(async (options: { url: string; output?: string }) => {
+    const spinner = ora(`Fetching ${options.url}`).start()
+
+    try {
+      const res = await fetch(options.url)
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
+      const data = await res.json()
+      spinner.succeed(`Fetched ${res.status}`)
+
+      const output = JSON.stringify(data, null, 2)
+      if (options.output) {
+        writeFileSync(options.output, output)
+        console.log(`Saved to ${options.output}`)
+      } else {
+        console.log(output)
+      }
+    } catch (err) {
+      spinner.fail(`Failed: ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+```
+
+## Options
+
+| Flag | Command | Description |
+|------|---------|-------------|
+| `-n, --name <name>` | `greet` | Name to greet (required) |
+| `-l, --loud` | `greet` | Uppercase the output |
+| `-u, --url <url>` | `fetch-data` | URL to fetch (required) |
+| `-o, --output <file>` | `fetch-data` | Save output to file |
+| `-v, --version` | global | Print version |
+
+## Examples
+
+```bash
+# Development (no build step required)
+npm run dev -- greet --name Bob --loud
+
+# Build and link for local testing
+npm run build
+npm link
+mycli greet --name Alice
+
+# Interactive scaffold
+mycli init
+
+# Fetch and save
+mycli fetch-data --url https://jsonplaceholder.typicode.com/todos/1 --output todo.json
+
+# Publish to npm
+npm publish
+```
+
+## README
+
+### What this includes
+
+- **Commander.js** — subcommand routing, option parsing, auto-generated `--help`
+- **Inquirer** — interactive prompt types: `input`, `list`, `confirm`, and more
+- **ora** — promise-friendly terminal spinners with succeed/fail states
+- **TypeScript + tsx** — typed source with `tsx` for zero-build development
+- **ESM-native** — `"type": "module"` with `NodeNext` module resolution
+- **`bin` entry** — package installs as a global command via `npm install -g` or `npm link`
+- **`prepublishOnly` script** — automatically builds before `npm publish`
+
+### Prerequisites
+
+- Node.js 18+
+- npm 9+ (or pnpm / yarn)
+
+### Create this template
+
+```bash
+# 1. Create and enter project directory
+mkdir mycli && cd mycli
+
+# 2. Initialise npm package
+npm init -y
+
+# 3. Install runtime dependencies
+npm install commander inquirer ora
+
+# 4. Install dev dependencies
+npm install -D typescript tsx @types/node
+
+# 5. Generate tsconfig
+npx tsc --init
+
+# 6. Create source directories
+mkdir -p src/commands
+
+# 7. Create entry point and command files
+touch src/index.ts
+touch src/commands/greet.ts src/commands/init.ts src/commands/fetch-data.ts
+
+# 8. Update package.json: add "type": "module", "bin", and scripts (see above)
+
+# 9. Build
+npm run build
+
+# 10. Link for local testing
+npm link
+mycli --help
+```
+
+### Project structure
+
+```
+mycli/
+├── src/
+│   ├── index.ts                # CLI entry — registers all subcommands
+│   └── commands/
+│       ├── greet.ts            # Simple flag-based command
+│       ├── init.ts             # Interactive prompt command
+│       └── fetch-data.ts       # Async command with spinner
+├── dist/                       # Compiled output (git-ignored)
+├── package.json                # bin entry, scripts, deps
+└── tsconfig.json
+```
+
+### First things to customize
+
+- `package.json` — change `name`, `description`, and the `bin` key to your CLI name
+- `src/index.ts` — update the `.name()` and `.description()` strings
+- `src/commands/` — add new files here; import and register each with `program.addCommand()`
+- `tsconfig.json` `target` — bump to `ES2023` if targeting Node 20+
+- `package.json` `engines.node` — tighten the minimum Node.js version to match your deployment
