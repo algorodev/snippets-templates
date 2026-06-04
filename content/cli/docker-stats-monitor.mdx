@@ -1,0 +1,136 @@
+---
+title: Docker Stats Monitor
+description: Display a live-refreshing table of CPU, memory, and network usage for all running containers in a readable format.
+category: cli
+language: bash
+tags: [docker, stats, monitoring, devops]
+---
+
+A wrapper around `docker stats` that formats output into a clean, human-readable table with fixed-width columns, refreshing every few seconds so you can keep an eye on resource usage at a glance.
+
+## Usage
+
+```bash
+#!/usr/bin/env bash
+# docker-stats-monitor.sh — live resource table for all running containers
+# Usage: ./docker-stats-monitor.sh [OPTIONS]
+# Options:
+#   -i <seconds>  Refresh interval (default: 2)
+#   -f <pattern>  Filter containers by name pattern
+#   -s <field>    Sort by field: cpu | mem | name (default: cpu)
+#   -n <count>    Exit after <count> refreshes (default: run forever)
+
+set -euo pipefail
+
+INTERVAL=2
+FILTER=""
+SORT_BY="cpu"
+MAX_RUNS=0
+RUN_COUNT=0
+
+usage() {
+  echo "Usage: $0 [-i seconds] [-f pattern] [-s cpu|mem|name] [-n count]" >&2
+  exit 1
+}
+
+while getopts ":i:f:s:n:" opt; do
+  case $opt in
+    i) INTERVAL="$OPTARG" ;;
+    f) FILTER="$OPTARG" ;;
+    s) SORT_BY="$OPTARG" ;;
+    n) MAX_RUNS="$OPTARG" ;;
+    *) usage ;;
+  esac
+done
+
+# Requires docker and awk
+command -v docker &>/dev/null || { echo "docker not found" >&2; exit 1; }
+command -v awk    &>/dev/null || { echo "awk not found"    >&2; exit 1; }
+
+print_table() {
+  local raw
+  # Pull one snapshot (--no-stream) with a stable format string
+  raw=$(docker stats --no-stream \
+    --format "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}")
+
+  # Optional name filter
+  if [[ -n "$FILTER" ]]; then
+    raw=$(echo "$raw" | grep "$FILTER" || true)
+  fi
+
+  if [[ -z "$raw" ]]; then
+    echo "  (no matching containers running)"
+    return
+  fi
+
+  # Sort: strip % for numeric sort on cpu/mem columns
+  case "$SORT_BY" in
+    cpu)  raw=$(echo "$raw" | sort -t$'\t' -k2 -rn) ;;
+    mem)  raw=$(echo "$raw" | sort -t$'\t' -k4 -rn) ;;
+    name) raw=$(echo "$raw" | sort -t$'\t' -k1)     ;;
+  esac
+
+  # Pretty-print with awk column alignment
+  printf "%-30s %8s %28s %8s %22s %22s %6s\n" \
+    "CONTAINER" "CPU %" "MEM USAGE / LIMIT" "MEM %" "NET I/O" "BLOCK I/O" "PIDs"
+  printf "%-30s %8s %28s %8s %22s %22s %6s\n" \
+    "$(printf '%0.s-' {1..30})" "--------" "$(printf '%0.s-' {1..28})" \
+    "--------" "$(printf '%0.s-' {1..22})" "$(printf '%0.s-' {1..22})" "------"
+
+  echo "$raw" | awk -F'\t' '{
+    printf "%-30s %8s %28s %8s %22s %22s %6s\n",
+      substr($1,1,30), $2, $3, $4, $5, $6, $7
+  }'
+}
+
+clear_screen() { tput clear 2>/dev/null || printf '\033[2J\033[H'; }
+
+on_exit() { tput cnorm 2>/dev/null || true; echo ""; }
+trap on_exit EXIT INT TERM
+tput civis 2>/dev/null || true   # hide cursor while running
+
+while true; do
+  clear_screen
+  printf "\033[1mDocker Stats Monitor\033[0m  —  %s  (sort: %s, interval: %ss)  Ctrl-C to quit\n\n" \
+    "$(date '+%Y-%m-%d %H:%M:%S')" "$SORT_BY" "$INTERVAL"
+
+  print_table
+
+  RUN_COUNT=$((RUN_COUNT + 1))
+  [[ "$MAX_RUNS" -gt 0 && "$RUN_COUNT" -ge "$MAX_RUNS" ]] && break
+
+  sleep "$INTERVAL"
+done
+```
+
+## Examples
+
+```bash
+# Monitor all containers, refresh every 2 seconds
+./docker-stats-monitor.sh
+
+# Faster refresh, filter to containers whose name contains "api"
+./docker-stats-monitor.sh -i 1 -f api
+
+# Sort by memory usage
+./docker-stats-monitor.sh -s mem
+
+# Take 5 snapshots and exit (useful in scripts)
+./docker-stats-monitor.sh -n 5 -i 1
+
+# Redirect a single snapshot to a file for later review
+./docker-stats-monitor.sh -n 1 > stats-$(date +%F).txt
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i <seconds>` | `2` | Seconds between refreshes |
+| `-f <pattern>` | _(none)_ | Substring filter on container name |
+| `-s <field>` | `cpu` | Sort column: `cpu`, `mem`, or `name` |
+| `-n <count>` | `0` (forever) | Stop after this many snapshots |
+
+## How it works
+
+Each iteration calls `docker stats --no-stream` to capture one point-in-time snapshot for all containers, formats the tab-separated output with `awk`, optionally filters and sorts it, then clears the terminal and redraws the table. The cursor is hidden during execution and restored on exit via a `trap`.
