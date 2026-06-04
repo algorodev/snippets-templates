@@ -1,0 +1,49 @@
+---
+title: Is External Link
+description: Determines whether a URL points to an external domain relative to a given base URL. Handles protocol-relative URLs and various edge cases.
+category: snippets
+language: typescript
+tags: [url, utils, check, links]
+---
+
+Returns `true` when the link's hostname differs from the base hostname. Useful for conditionally adding `target="_blank"` and `rel="noopener noreferrer"` to anchor elements.
+
+```typescript
+function isExternalLink(url: string, base: string): boolean {
+  // Treat empty strings and anchor-only links as internal
+  if (!url || url.startsWith('#')) return false
+
+  // Normalise protocol-relative URLs so the URL constructor can parse them
+  const normalised = url.startsWith('//') ? `https:${url}` : url
+
+  try {
+    const target = new URL(normalised, base)
+    const origin = new URL(base)
+    return target.hostname !== origin.hostname
+  } catch {
+    // Relative paths and mailto:/tel: links are treated as internal
+    return false
+  }
+}
+
+export default isExternalLink
+```
+
+## Usage
+
+```typescript
+const base = 'https://example.com'
+
+isExternalLink('https://github.com/user/repo', base) // true
+isExternalLink('https://example.com/about', base)    // false
+isExternalLink('//cdn.example.net/image.png', base)  // true
+isExternalLink('/contact', base)                     // false
+isExternalLink('#section', base)                     // false
+isExternalLink('mailto:hello@example.com', base)     // false
+```
+
+## Notes
+
+- Protocol-relative URLs (`//cdn.example.net/...`) are normalised to `https:` before parsing so they resolve correctly.
+- `mailto:`, `tel:`, and other non-HTTP schemes throw inside `new URL()` when combined with a base, making them fall through to `return false` (treated as internal). Override this if needed.
+- Only `hostname` is compared — scheme and port differences alone do not make a link external.
