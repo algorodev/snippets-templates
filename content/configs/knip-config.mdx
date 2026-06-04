@@ -1,0 +1,94 @@
+---
+title: Knip Config
+description: A Knip configuration for detecting unused files, exports, and dependencies in TypeScript projects. Includes ignore patterns for common false positives like config files and test utilities.
+category: configs
+language: json
+tags: [knip, dead-code, typescript, tooling, dx]
+---
+
+Knip statically analyses your TypeScript project and reports files, exports, and `package.json` dependencies that nothing in your codebase actually uses. This config covers the most common project shapes and suppresses known false positives.
+
+## Usage
+
+```json
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/main.ts",
+    "src/app.ts",
+    "src/app/**/{page,layout,route,loading,error,not-found}.{ts,tsx}",
+    "src/pages/**/*.{ts,tsx}"
+  ],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": [
+    "src/**/*.d.ts",
+    "src/**/*.stories.{ts,tsx}",
+    "src/**/*.test.{ts,tsx}",
+    "src/**/*.spec.{ts,tsx}",
+    "src/test/**",
+    "src/tests/**",
+    "src/mocks/**",
+    "src/__mocks__/**"
+  ],
+  "ignoreDependencies": [
+    "@types/*",
+    "typescript",
+    "prettier",
+    "husky",
+    "lint-staged"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "ignoreBinaries": ["dotenv-cli", "cross-env"],
+  "rules": {
+    "classMembers": "off",
+    "enumMembers": "off"
+  }
+}
+```
+
+**Install:**
+
+```bash
+npm install -D knip
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "knip": "knip",
+    "knip:fix": "knip --fix"
+  }
+}
+```
+
+**Run:**
+
+```bash
+# Report all unused code and dependencies
+npm run knip
+
+# Auto-remove unused exports and dependencies (review changes before committing)
+npm run knip:fix
+```
+
+## Options
+
+| Field | Purpose |
+|-------|---------|
+| `entry` | Entry point files Knip traces from — everything reachable from here is considered used |
+| `project` | Files Knip should include in its analysis |
+| `ignore` | Glob patterns for files to skip entirely (stories, tests, type declarations) |
+| `ignoreDependencies` | `package.json` dependencies that are always flagged but actually needed (type packages, CLI tools) |
+| `ignoreExportsUsedInFile` | Treats exports used within the same file as used — avoids false positives on internal helpers |
+| `ignoreBinaries` | CLI binaries invoked in scripts that Knip cannot resolve to a package |
+| `rules` | Set individual rules to `"warn"` or `"off"` — `classMembers` and `enumMembers` are noisy on large codebases |
+
+## Notes
+
+- Start with `knip --reporter compact` for a concise one-line-per-issue output, then switch to the default reporter for full detail.
+- Add `knip` as a step in CI to prevent dead code accumulating over time: `npx knip --no-exit-code` in PR checks, `npx knip` (exits non-zero on findings) on the main branch.
+- If Knip reports too many false positives initially, set a rule to `"warn"` rather than removing it — this keeps the signal visible without failing the build.
+- For monorepos, replace the flat `entry`/`project` config with a `workspaces` map keyed by workspace path.
