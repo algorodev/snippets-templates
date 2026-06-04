@@ -1,0 +1,111 @@
+---
+title: Validate Email
+description: Validates an email address against RFC 5322-compliant pattern without being overly strict. Returns a boolean and an optional reason string for failed validations.
+category: snippets
+language: typescript
+tags: [validation, utils, email]
+---
+
+Checks whether a string is a plausible email address using a pragmatic RFC 5322-aligned regex, and surfaces a human-readable `reason` when validation fails — handy for inline form error messages.
+
+## Usage
+
+```typescript
+interface EmailValidationResult {
+  valid: boolean
+  reason?: string
+}
+
+function isEmail(value: string): EmailValidationResult {
+  if (!value || typeof value !== 'string') {
+    return { valid: false, reason: 'Value must be a non-empty string.' }
+  }
+
+  const trimmed = value.trim()
+
+  if (trimmed.length > 254) {
+    return { valid: false, reason: 'Email address must not exceed 254 characters.' }
+  }
+
+  const atIndex = trimmed.lastIndexOf('@')
+
+  if (atIndex === -1) {
+    return { valid: false, reason: 'Missing "@" symbol.' }
+  }
+
+  const local = trimmed.slice(0, atIndex)
+  const domain = trimmed.slice(atIndex + 1)
+
+  if (local.length === 0) {
+    return { valid: false, reason: 'Local part (before "@") must not be empty.' }
+  }
+
+  if (local.length > 64) {
+    return { valid: false, reason: 'Local part must not exceed 64 characters.' }
+  }
+
+  if (domain.length === 0) {
+    return { valid: false, reason: 'Domain (after "@") must not be empty.' }
+  }
+
+  // Reject IP-literal addresses and ensure at least one dot in the domain
+  if (!domain.includes('.')) {
+    return { valid: false, reason: 'Domain must contain at least one dot.' }
+  }
+
+  const emailRegex =
+    /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/
+
+  if (!emailRegex.test(trimmed)) {
+    return { valid: false, reason: 'Email address format is invalid.' }
+  }
+
+  return { valid: true }
+}
+
+export default isEmail
+```
+
+## Examples
+
+```typescript
+isEmail('user@example.com')
+// { valid: true }
+
+isEmail('user+tag@sub.domain.io')
+// { valid: true }
+
+isEmail('not-an-email')
+// { valid: false, reason: 'Missing "@" symbol.' }
+
+isEmail('@example.com')
+// { valid: false, reason: 'Local part (before "@") must not be empty.' }
+
+isEmail('user@nodot')
+// { valid: false, reason: 'Domain must contain at least one dot.' }
+
+isEmail('a'.repeat(65) + '@example.com')
+// { valid: false, reason: 'Local part must not exceed 64 characters.' }
+
+isEmail('')
+// { valid: false, reason: 'Value must be a non-empty string.' }
+```
+
+## Options
+
+The result object shape makes it easy to adapt to different consumers:
+
+```typescript
+// Boolean check only
+if (!isEmail(input).valid) throw new Error('Invalid email')
+
+// With user-facing error message
+const { valid, reason } = isEmail(formValue)
+if (!valid) setError(reason ?? 'Invalid email address.')
+```
+
+## Notes
+
+- The regex intentionally avoids being an exact RFC 5322 implementation — full compliance produces expressions that are impractical in production code. This version rejects the most common invalid forms while accepting all realistic real-world addresses.
+- Quoted local parts (`"user name"@example.com`) are not accepted; they are technically valid per RFC 5321 but vanishingly rare and rarely supported by mail servers.
+- This function only validates format. It does not verify that the domain has MX records or that the mailbox exists — use a mail-sending probe or an external verification API for that.
