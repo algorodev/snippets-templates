@@ -1,0 +1,127 @@
+---
+title: "GitHub Actions: Test Matrix"
+description: A GitHub Actions workflow that runs tests across multiple Node.js versions and operating systems using a strategy matrix. Ideal for libraries targeting broad compatibility.
+category: configs
+language: yaml
+tags: [github-actions, testing, matrix, nodejs, compatibility]
+---
+
+Runs your test suite across every combination of Node.js LTS versions and the three major operating systems. A single failing cell marks the whole workflow red, giving you instant visibility into platform-specific regressions.
+
+## Usage
+
+```yaml
+# .github/workflows/test-matrix.yml
+name: Test Matrix
+
+on:
+  push:
+    branches: [main, next]
+  pull_request:
+    branches: [main, next]
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # Run all combinations even if one fails, so you see the full picture
+      fail-fast: false
+      matrix:
+        node: ['18', '20', '22']
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Optional: exclude combinations that are not relevant
+        exclude:
+          - os: windows-latest
+            node: '18'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Upload coverage
+        # Only upload once to avoid redundant reports
+        if: matrix.node == '20' && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  # Optional summary job that downstream branch-protection rules can require
+  # instead of requiring each individual matrix cell
+  test-matrix-complete:
+    name: Test Matrix Complete
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check matrix result
+        run: |
+          if [[ "${{ needs.test.result }}" != "success" ]]; then
+            echo "One or more matrix jobs failed."
+            exit 1
+          fi
+          echo "All matrix jobs passed."
+```
+
+## Options
+
+### Changing the Node.js versions
+
+Replace the `node` array with whichever versions matter for your library:
+
+```yaml
+matrix:
+  node: ['20', '22', '23']   # drop LTS 18, add current
+```
+
+Use `'lts/*'` to always resolve to the latest LTS without hardcoding a version number.
+
+### Changing the OS targets
+
+```yaml
+matrix:
+  os: [ubuntu-latest]   # CI-only, skip macOS / Windows
+```
+
+Dropping macOS and Windows cuts your billable minutes significantly for server-only packages.
+
+### Adding environment variables per cell
+
+```yaml
+matrix:
+  include:
+    - os: ubuntu-latest
+      node: '20'
+      experimental: false
+    - os: ubuntu-latest
+      node: '23'
+      experimental: true
+```
+
+```yaml
+    - name: Run tests
+      continue-on-error: ${{ matrix.experimental }}
+      run: npm test
+```
+
+## Notes
+
+- `fail-fast: false` is intentional — you want to see all failures across the matrix, not just the first one.
+- The `test-matrix-complete` sentinel job is useful for branch protection rules: requiring a single status check (`Test Matrix Complete`) instead of every individual `Node X / OS Y` combination means you can add or remove matrix cells without updating branch-protection settings.
+- Coverage upload is gated to one specific cell (`node == '20' && os == 'ubuntu-latest'`) to avoid overwriting the same artifact multiple times.
+- On Windows runners, prefer `npm ci` over `yarn` unless you have confirmed CRLF handling in your toolchain.
