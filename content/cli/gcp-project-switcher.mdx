@@ -1,0 +1,128 @@
+---
+title: GCP Project Switcher
+description: Fuzzy-select a GCP project and switch the active gcloud config, updating kubectl context if a matching GKE cluster is found.
+category: cli
+language: bash
+tags: [cloud, gcp, gcloud, devops]
+---
+
+Add this function to your `~/.zshrc` or `~/.bashrc` to fuzzy-pick any GCP project and switch both `gcloud` and `kubectl` in one step. Requires `fzf` and the Google Cloud SDK.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+gcpswitch() {
+  # Verify dependencies
+  if ! command -v gcloud &>/dev/null; then
+    echo "Error: gcloud not found. Install the Google Cloud SDK first." >&2
+    return 1
+  fi
+  if ! command -v fzf &>/dev/null; then
+    echo "Error: fzf not found. Install it with: brew install fzf" >&2
+    return 1
+  fi
+
+  # List all projects and fuzzy-select one
+  local project
+  project=$(
+    gcloud projects list --format="value(projectId)" 2>/dev/null \
+      | fzf --height=40% --reverse --prompt="GCP project > "
+  )
+
+  if [[ -z "$project" ]]; then
+    echo "No project selected."
+    return 0
+  fi
+
+  # Switch the active gcloud project
+  gcloud config set project "$project"
+  echo "Switched gcloud project → $project"
+
+  # Try to find a GKE cluster in this project and update kubectl context
+  local cluster zone
+  local cluster_info
+  cluster_info=$(
+    gcloud container clusters list \
+      --project="$project" \
+      --format="value(name,location)" 2>/dev/null \
+      | fzf --height=40% --reverse --prompt="GKE cluster (optional) > " \
+            --header="Press ESC to skip kubectl context update"
+  )
+
+  if [[ -n "$cluster_info" ]]; then
+    cluster=$(echo "$cluster_info" | awk '{print $1}')
+    zone=$(echo "$cluster_info"   | awk '{print $2}')
+
+    gcloud container clusters get-credentials "$cluster" \
+      --project="$project" \
+      --zone="$zone" 2>/dev/null \
+    && echo "kubectl context → gke_${project}_${zone}_${cluster}" \
+    || echo "Warning: could not update kubectl context."
+  else
+    echo "kubectl context unchanged."
+  fi
+}
+```
+
+After adding the function, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+Then use it:
+
+```bash
+gcpswitch
+# Opens an fzf list of all GCP projects
+# After selection → switches gcloud config
+# Opens a second fzf list of GKE clusters in that project (ESC to skip)
+```
+
+## Examples
+
+```bash
+gcpswitch
+# GCP project > my-prod-project-123
+# Updated property [core/project].
+# Switched gcloud project → my-prod-project-123
+# GKE cluster (optional) > my-cluster  us-central1-a
+# Fetching cluster endpoint and auth data.
+# kubectl context → gke_my-prod-project-123_us-central1-a_my-cluster
+```
+
+## Options
+
+To add a non-interactive mode (useful in scripts), extend the function with a positional argument:
+
+```bash
+gcpswitch() {
+  local project="${1:-}"
+
+  if [[ -z "$project" ]]; then
+    project=$(
+      gcloud projects list --format="value(projectId)" 2>/dev/null \
+        | fzf --height=40% --reverse --prompt="GCP project > "
+    )
+  fi
+
+  [[ -z "$project" ]] && { echo "No project selected."; return 0; }
+
+  gcloud config set project "$project"
+  echo "Switched gcloud project → $project"
+}
+```
+
+```bash
+gcpswitch my-prod-project-123   # skip fzf, set directly
+gcpswitch                       # interactive fzf picker
+```
+
+## Notes
+
+- `gcloud projects list` only shows projects the authenticated account has access to. Run `gcloud auth login` if the list is empty.
+- Zonal and regional clusters both work — the `location` field handles both.
+- If you have many projects, consider narrowing the list: `gcloud projects list --filter="labels.env=prod"`.
+- The kubectl context name follows the GKE convention `gke_{project}_{location}_{cluster}`.
