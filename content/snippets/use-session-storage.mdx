@@ -1,0 +1,111 @@
+---
+title: useSessionStorage Hook
+description: Reads and writes a value to sessionStorage with the same API as useState. Handles JSON serialisation, SSR, and quota errors gracefully.
+category: snippets
+language: typescript
+tags: [react, hooks, storage, state]
+---
+
+A `useState`-compatible hook that persists its value to `sessionStorage` for the lifetime of the browser tab. Unlike `localStorage`, the value is cleared when the tab is closed and is never shared with other tabs.
+
+## Usage
+
+```typescript
+import { useState, useCallback } from 'react'
+
+type SetValue<T> = (value: T | ((prev: T) => T)) => void
+
+function useSessionStorage<T>(key: string, initialValue: T): [T, SetValue<T>] {
+  const readValue = (): T => {
+    if (typeof window === 'undefined') return initialValue
+    try {
+      const raw = window.sessionStorage.getItem(key)
+      return raw !== null ? (JSON.parse(raw) as T) : initialValue
+    } catch {
+      return initialValue
+    }
+  }
+
+  const [storedValue, setStoredValue] = useState<T>(readValue)
+
+  const setValue: SetValue<T> = useCallback(
+    (value) => {
+      if (typeof window === 'undefined') {
+        console.warn(`[useSessionStorage] Cannot set "${key}" during SSR.`)
+        return
+      }
+
+      setStoredValue((prev) => {
+        const next = value instanceof Function ? value(prev) : value
+
+        try {
+          window.sessionStorage.setItem(key, JSON.stringify(next))
+        } catch (error) {
+          if (
+            error instanceof DOMException &&
+            (error.name === 'QuotaExceededError' ||
+              error.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+          ) {
+            console.warn(
+              `[useSessionStorage] Quota exceeded for key "${key}". ` +
+                'State updated in memory only.'
+            )
+          }
+        }
+
+        return next
+      })
+    },
+    [key]
+  )
+
+  return [storedValue, setValue]
+}
+
+export default useSessionStorage
+```
+
+## Options
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `key` | `string` | The `sessionStorage` key to read/write |
+| `initialValue` | `T` | Fallback value when the key is absent, unreadable, or running on the server |
+
+## Examples
+
+```typescript
+// Persist the active wizard step across re-renders without surviving tab close
+const [step, setStep] = useSessionStorage('onboarding-step', 1)
+
+return (
+  <button onClick={() => setStep((s) => s + 1)}>
+    Next (step {step})
+  </button>
+)
+```
+
+```typescript
+// Store a complex object
+interface SearchFilters {
+  query: string
+  page: number
+  sort: 'asc' | 'desc'
+}
+
+const [filters, setFilters] = useSessionStorage<SearchFilters>('search-filters', {
+  query: '',
+  page: 1,
+  sort: 'asc',
+})
+
+// Partial update via functional form
+setFilters((prev) => ({ ...prev, page: prev.page + 1 }))
+```
+
+## Notes
+
+- `sessionStorage` is scoped to the current tab and origin. Opening the same URL in a new tab starts with a fresh session.
+- The hook is SSR-safe: all `window.sessionStorage` access is guarded with `typeof window === 'undefined'`.
+- Quota errors are caught and logged without breaking the in-memory React state, so the UI stays functional even if storage writes fail.
+- For values that need to survive tab closure or sync across tabs, use `useLocalStorageState` instead.
