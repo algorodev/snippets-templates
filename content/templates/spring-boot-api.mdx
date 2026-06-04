@@ -1,0 +1,489 @@
+---
+title: Spring Boot REST API
+description: A Spring Boot 3 REST API with Spring Security for JWT-based auth, Spring Data JPA with PostgreSQL, Bean Validation, and OpenAPI 3 documentation via springdoc.
+category: templates
+language: Java
+tags: [spring-boot, java, rest-api, security, jpa]
+---
+
+A Spring Boot 3 application combining Spring Security's JWT filter chain, Spring Data JPA repositories backed by PostgreSQL, Jakarta Bean Validation on request DTOs, and springdoc-openapi for live OpenAPI 3 docs at `/swagger-ui.html`.
+
+## Usage
+
+```java
+// src/main/java/com/example/api/ApiApplication.java
+package com.example.api;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class ApiApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(ApiApplication.class, args);
+    }
+}
+```
+
+```java
+// src/main/java/com/example/api/model/User.java
+package com.example.api.model;
+
+import jakarta.persistence.*;
+import java.time.Instant;
+import java.util.List;
+
+@Entity
+@Table(name = "users")
+public class User {
+
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    @Column(nullable = false)
+    private String name;
+
+    @Column(nullable = false)
+    private String password;
+
+    @Column(nullable = false)
+    private String role = "USER";
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt = Instant.now();
+
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<Post> posts;
+
+    // getters and setters omitted for brevity — use Lombok @Data or generate via IDE
+    public Long getId()            { return id; }
+    public String getEmail()       { return email; }
+    public void setEmail(String e) { this.email = e; }
+    public String getName()        { return name; }
+    public void setName(String n)  { this.name = n; }
+    public String getPassword()    { return password; }
+    public void setPassword(String p) { this.password = p; }
+    public String getRole()        { return role; }
+    public void setRole(String r)  { this.role = r; }
+    public Instant getCreatedAt()  { return createdAt; }
+}
+```
+
+```java
+// src/main/java/com/example/api/model/Post.java
+package com.example.api.model;
+
+import jakarta.persistence.*;
+import java.time.Instant;
+
+@Entity
+@Table(name = "posts")
+public class Post {
+
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String title;
+
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String body;
+
+    @Column(name = "published_at")
+    private Instant publishedAt;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt = Instant.now();
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    public Long getId()                 { return id; }
+    public String getTitle()            { return title; }
+    public void setTitle(String t)      { this.title = t; }
+    public String getBody()             { return body; }
+    public void setBody(String b)       { this.body = b; }
+    public Instant getPublishedAt()     { return publishedAt; }
+    public void setPublishedAt(Instant p) { this.publishedAt = p; }
+    public Instant getCreatedAt()       { return createdAt; }
+    public User getUser()               { return user; }
+    public void setUser(User u)         { this.user = u; }
+}
+```
+
+```java
+// src/main/java/com/example/api/repository/PostRepository.java
+package com.example.api.repository;
+
+import com.example.api.model.Post;
+import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.List;
+
+public interface PostRepository extends JpaRepository<Post, Long> {
+    List<Post> findByUserIdOrderByCreatedAtDesc(Long userId);
+}
+```
+
+```java
+// src/main/java/com/example/api/dto/CreatePostRequest.java
+package com.example.api.dto;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import java.time.Instant;
+
+public record CreatePostRequest(
+    @NotBlank @Size(max = 255) String title,
+    @NotBlank String body,
+    Instant publishedAt
+) {}
+```
+
+```java
+// src/main/java/com/example/api/dto/PostResponse.java
+package com.example.api.dto;
+
+import com.example.api.model.Post;
+import java.time.Instant;
+
+public record PostResponse(Long id, String title, String body, Instant publishedAt, Instant createdAt, Long userId) {
+    public static PostResponse from(Post p) {
+        return new PostResponse(p.getId(), p.getTitle(), p.getBody(), p.getPublishedAt(), p.getCreatedAt(), p.getUser().getId());
+    }
+}
+```
+
+```java
+// src/main/java/com/example/api/controller/PostController.java
+package com.example.api.controller;
+
+import com.example.api.dto.CreatePostRequest;
+import com.example.api.dto.PostResponse;
+import com.example.api.model.Post;
+import com.example.api.model.User;
+import com.example.api.repository.PostRepository;
+import com.example.api.repository.UserRepository;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/posts")
+@SecurityRequirement(name = "bearerAuth")
+@Tag(name = "Posts")
+public class PostController {
+
+    private final PostRepository postRepo;
+    private final UserRepository userRepo;
+
+    public PostController(PostRepository postRepo, UserRepository userRepo) {
+        this.postRepo = postRepo;
+        this.userRepo = userRepo;
+    }
+
+    @GetMapping
+    @Operation(summary = "List authenticated user's posts")
+    public List<PostResponse> list(@AuthenticationPrincipal UserDetails principal) {
+        User user = resolveUser(principal.getUsername());
+        return postRepo.findByUserIdOrderByCreatedAtDesc(user.getId())
+                       .stream().map(PostResponse::from).toList();
+    }
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Create a post")
+    public PostResponse create(@Valid @RequestBody CreatePostRequest req,
+                               @AuthenticationPrincipal UserDetails principal) {
+        User user = resolveUser(principal.getUsername());
+        Post post = new Post();
+        post.setTitle(req.title());
+        post.setBody(req.body());
+        post.setPublishedAt(req.publishedAt());
+        post.setUser(user);
+        return PostResponse.from(postRepo.save(post));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Get a post by ID")
+    public PostResponse get(@PathVariable Long id,
+                            @AuthenticationPrincipal UserDetails principal) {
+        Post post = postRepo.findById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!post.getUser().getEmail().equals(principal.getUsername())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return PostResponse.from(post);
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Delete a post")
+    public void delete(@PathVariable Long id,
+                       @AuthenticationPrincipal UserDetails principal) {
+        Post post = postRepo.findById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!post.getUser().getEmail().equals(principal.getUsername())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        postRepo.delete(post);
+    }
+
+    private User resolveUser(String email) {
+        return userRepo.findByEmail(email)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
+    }
+}
+```
+
+```java
+// src/main/java/com/example/api/security/JwtUtil.java
+package com.example.api.security;
+
+import io.jsonwebtoken.*;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.nio.charset.StandardCharsets;
+import java.security.Key;
+import java.util.Date;
+
+@Component
+public class JwtUtil {
+
+    private final Key key;
+    private final long expirationMs;
+
+    public JwtUtil(@Value("${jwt.secret}") String secret,
+                   @Value("${jwt.expiration-ms:86400000}") long expirationMs) {
+        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        this.expirationMs = expirationMs;
+    }
+
+    public String generate(String email) {
+        return Jwts.builder()
+                   .setSubject(email)
+                   .setIssuedAt(new Date())
+                   .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
+                   .signWith(key, SignatureAlgorithm.HS256)
+                   .compact();
+    }
+
+    public String extractEmail(String token) {
+        return parse(token).getBody().getSubject();
+    }
+
+    public boolean isValid(String token) {
+        try { parse(token); return true; } catch (JwtException | IllegalArgumentException e) { return false; }
+    }
+
+    private Jws<Claims> parse(String token) {
+        return Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
+    }
+}
+```
+
+```java
+// src/main/java/com/example/api/security/SecurityConfig.java
+package com.example.api.security;
+
+import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
+import io.swagger.v3.oas.annotations.security.SecurityScheme;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+@Configuration
+@SecurityScheme(name = "bearerAuth", type = SecuritySchemeType.HTTP, scheme = "bearer", bearerFormat = "JWT")
+public class SecurityConfig {
+
+    private final JwtFilter jwtFilter;
+
+    public SecurityConfig(JwtFilter jwtFilter) {
+        this.jwtFilter = jwtFilter;
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        return http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers(HttpMethod.POST, "/api/auth/**").permitAll()
+                .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                .anyRequest().authenticated()
+            )
+            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+            .build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
+    }
+}
+```
+
+```yaml
+# src/main/resources/application.yml
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/myapp}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:secret}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+jwt:
+  secret: ${JWT_SECRET:change-me-in-production-use-32-plus-chars}
+  expiration-ms: 86400000   # 24 hours
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+```
+
+## How it works
+
+`JwtFilter` (a `OncePerRequestFilter`) intercepts every request, extracts the Bearer token, validates it with `JwtUtil`, and loads the `UserDetails` from the database — then populates the `SecurityContextHolder` for the duration of the request. `SecurityConfig` configures a stateless filter chain that permits only the `/api/auth/**` endpoints publicly. `@Valid` on controller parameters triggers Jakarta Bean Validation before the method body runs; constraint violations are automatically mapped to `400 Bad Request` by Spring's `DefaultHandlerExceptionResolver`.
+
+## Notes
+
+- Replace `ddl-auto: validate` with Flyway or Liquibase migrations for production schema management.
+- Add `spring-boot-starter-cache` + Redis for JWT denylist / token revocation if needed.
+- Enable Actuator (`spring-boot-starter-actuator`) and expose `/actuator/health` for readiness probes in Kubernetes.
+
+## README
+
+### What this includes
+
+- Spring Boot 3 with Spring Web MVC
+- Spring Security stateless JWT filter chain (`OncePerRequestFilter`)
+- `JwtUtil` using `jjwt` for token generation and validation
+- Spring Data JPA with `User` and `Post` entities, `UserRepository`, `PostRepository`
+- Jakarta Bean Validation on `record`-based request DTOs
+- `PostResponse` record for consistent JSON output
+- springdoc-openapi with Swagger UI at `/swagger-ui.html` and bearer auth scheme
+- `application.yml` driven by environment variables
+
+### Prerequisites
+
+- Java 21+
+- Maven 3.9+ or Gradle 8+
+- PostgreSQL instance (local Docker or managed)
+
+### Create this template
+
+```bash
+# 1. Generate project at https://start.spring.io or with curl:
+curl https://start.spring.io/starter.tgz \
+  -d type=maven-project \
+  -d language=java \
+  -d bootVersion=3.3.0 \
+  -d artifactId=my-spring-api \
+  -d packageName=com.example.api \
+  -d javaVersion=21 \
+  -d dependencies=web,data-jpa,postgresql,security,validation \
+  | tar -xzvf -
+cd my-spring-api
+
+# 2. Add extra dependencies to pom.xml
+# io.jsonwebtoken:jjwt-api:0.11.5
+# io.jsonwebtoken:jjwt-impl:0.11.5 (runtime)
+# io.jsonwebtoken:jjwt-jackson:0.11.5 (runtime)
+# org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0
+
+# 3. Create package structure
+mkdir -p src/main/java/com/example/api/{model,repository,dto,controller,security,service}
+
+# 4. Create src/main/resources/application.yml (replace application.properties)
+
+# 5. Write entity, repository, DTO, controller, and security classes as shown above
+
+# 6. Create the database schema (or use ddl-auto: create for first run, then switch to validate)
+# CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email VARCHAR UNIQUE NOT NULL, name VARCHAR NOT NULL, password VARCHAR NOT NULL, role VARCHAR NOT NULL DEFAULT 'USER', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+# CREATE TABLE posts  (id BIGSERIAL PRIMARY KEY, title VARCHAR NOT NULL, body TEXT NOT NULL, published_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE);
+
+# 7. Set environment variables
+# export DATABASE_URL=jdbc:postgresql://localhost:5432/myapp
+# export DB_USERNAME=postgres
+# export DB_PASSWORD=secret
+# export JWT_SECRET=$(openssl rand -hex 32)
+
+# 8. Run
+./mvnw spring-boot:run
+# Swagger UI: http://localhost:8080/swagger-ui.html
+```
+
+### Project structure
+
+```
+my-spring-api/
+├── src/main/java/com/example/api/
+│   ├── ApiApplication.java
+│   ├── controller/
+│   │   ├── AuthController.java
+│   │   └── PostController.java
+│   ├── dto/
+│   │   ├── AuthRequest.java
+│   │   ├── AuthResponse.java
+│   │   ├── CreatePostRequest.java
+│   │   └── PostResponse.java
+│   ├── model/
+│   │   ├── Post.java
+│   │   └── User.java
+│   ├── repository/
+│   │   ├── PostRepository.java
+│   │   └── UserRepository.java
+│   └── security/
+│       ├── JwtFilter.java
+│       ├── JwtUtil.java
+│       ├── SecurityConfig.java
+│       └── UserDetailsServiceImpl.java
+├── src/main/resources/
+│   └── application.yml
+├── src/test/java/com/example/api/
+│   └── controller/
+│       └── PostControllerTest.java
+└── pom.xml
+```
+
+### First things to customize
+
+- `application.yml` `jwt.secret` — set via `JWT_SECRET` env var; must be 32+ characters
+- `User` / `Post` entities — rename or add fields to match your domain
+- `PostRepository` — add query methods as your feature set grows
+- `SecurityConfig` `authorizeHttpRequests` — add role-based rules (e.g., `hasRole("ADMIN")`)
+- `springdoc` `swagger-ui.path` — change to `/docs` or disable in production
+- Switch `ddl-auto: validate` and add Flyway for schema migration management
