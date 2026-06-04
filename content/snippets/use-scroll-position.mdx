@@ -1,0 +1,121 @@
+---
+title: useScrollPosition Hook
+description: Tracks the window or element scroll position and returns current x/y coordinates. Throttled internally to avoid excessive re-renders.
+category: snippets
+language: typescript
+tags: [react, hooks, scroll, dom]
+---
+
+Returns the current scroll coordinates of the window (or a given element ref), updating via a throttled scroll listener so rapid scrolling never floods the render queue.
+
+## Usage
+
+```typescript
+import { useScrollPosition } from '@/hooks/use-scroll-position'
+
+export default function Navbar() {
+  const { x, y } = useScrollPosition()
+
+  return (
+    <header className={y > 60 ? 'shadow' : ''}>
+      Scrolled {y}px down
+    </header>
+  )
+}
+```
+
+```typescript
+import { useState, useEffect, useRef, useCallback, RefObject } from 'react'
+
+interface ScrollPosition {
+  x: number
+  y: number
+}
+
+function getScrollPosition(element?: RefObject<Element>): ScrollPosition {
+  if (typeof window === 'undefined') return { x: 0, y: 0 }
+
+  if (element?.current) {
+    const { scrollLeft, scrollTop } = element.current
+    return { x: scrollLeft, y: scrollTop }
+  }
+
+  return { x: window.scrollX, y: window.scrollY }
+}
+
+export function useScrollPosition(
+  element?: RefObject<Element>,
+  throttleMs: number = 100
+): ScrollPosition {
+  const [position, setPosition] = useState<ScrollPosition>(() =>
+    getScrollPosition(element)
+  )
+
+  const lastCallTime = useRef<number>(0)
+  const rafId = useRef<number | null>(null)
+
+  const handleScroll = useCallback(() => {
+    const now = Date.now()
+
+    if (now - lastCallTime.current < throttleMs) {
+      if (rafId.current !== null) return
+      rafId.current = requestAnimationFrame(() => {
+        rafId.current = null
+        lastCallTime.current = Date.now()
+        setPosition(getScrollPosition(element))
+      })
+      return
+    }
+
+    lastCallTime.current = now
+    setPosition(getScrollPosition(element))
+  }, [element, throttleMs])
+
+  useEffect(() => {
+    const target = element?.current ?? window
+    target.addEventListener('scroll', handleScroll, { passive: true })
+
+    return () => {
+      target.removeEventListener('scroll', handleScroll)
+      if (rafId.current !== null) cancelAnimationFrame(rafId.current)
+    }
+  }, [element, handleScroll])
+
+  return position
+}
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `element` | `RefObject<Element>` | `undefined` | Target element to track. Defaults to `window`. |
+| `throttleMs` | `number` | `100` | Minimum ms between position updates. |
+
+## Examples
+
+Track a scrollable container instead of the window:
+
+```typescript
+const containerRef = useRef<HTMLDivElement>(null)
+const { y } = useScrollPosition(containerRef)
+
+return (
+  <div ref={containerRef} style={{ overflowY: 'scroll', height: 400 }}>
+    {/* scrollable content */}
+  </div>
+)
+```
+
+Show a "back to top" button after scrolling 300px:
+
+```typescript
+const { y } = useScrollPosition()
+const showButton = y > 300
+```
+
+## Notes
+
+- Returns `{ x: 0, y: 0 }` during SSR so it is safe in Next.js server components and `getServerSideProps`.
+- The throttle is implemented with `requestAnimationFrame` for the trailing edge, aligning updates with the browser's paint cycle.
+- Pass `throttleMs={0}` to disable throttling (not recommended for performance-sensitive UIs).
