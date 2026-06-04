@@ -1,0 +1,275 @@
+---
+title: Python CLI with Typer
+description: A Python CLI template built with Typer, providing automatic help generation, type-checked arguments, and Rich integration for beautiful terminal output.
+category: templates
+language: Python
+tags: [python, cli, typer, rich, terminal]
+repo: https://github.com/fastapi/typer
+---
+
+A clean Python CLI template using Typer's decorator-based API — type annotations become argument definitions automatically, `--help` is generated for free, and Rich handles all the pretty-printing with no extra effort.
+
+## Usage
+
+```bash
+# Install and run
+pip install myapp
+myapp --help
+myapp greet Alice
+myapp greet Alice --count 3 --no-color
+myapp process data.csv --output results.csv --verbose
+myapp info
+```
+
+## How it works
+
+```toml
+# pyproject.toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "myapp"
+version = "0.1.0"
+description = "A beautiful CLI built with Typer"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Your Name", email = "you@example.com" }]
+dependencies = [
+  "typer>=0.12",
+  "rich>=13",
+]
+
+[project.scripts]
+myapp = "myapp.cli:app"
+
+[tool.hatch.envs.default]
+dependencies = ["pytest", "typer[all]"]
+
+[tool.hatch.envs.default.scripts]
+dev = "python -m myapp.cli"
+test = "pytest"
+```
+
+```python
+# src/myapp/__init__.py
+"""myapp — a Typer-powered CLI."""
+
+__version__ = "0.1.0"
+```
+
+```python
+# src/myapp/cli.py
+"""CLI entry point — all commands registered here."""
+import typer
+from myapp.commands import greet, process, info
+
+app = typer.Typer(
+    name="myapp",
+    help="A beautiful CLI powered by Typer and Rich.",
+    add_completion=True,
+    rich_markup_mode="rich",
+)
+
+app.command()(greet.command)
+app.command()(process.command)
+app.command()(info.command)
+
+
+def main() -> None:
+    app()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+```python
+# src/myapp/commands/greet.py
+"""Greet command with Rich output."""
+import typer
+from rich.console import Console
+from rich.text import Text
+from typing import Annotated
+
+console = Console()
+
+
+def command(
+    name: Annotated[str, typer.Argument(help="Name to greet")],
+    count: Annotated[int, typer.Option("--count", "-c", help="How many times to greet", min=1, max=10)] = 1,
+    color: Annotated[bool, typer.Option(help="Colorize the output")] = True,
+) -> None:
+    """Print a greeting, optionally multiple times."""
+    for _ in range(count):
+        if color:
+            text = Text()
+            text.append("Hello, ", style="bold green")
+            text.append(name, style="bold cyan")
+            text.append("!", style="bold green")
+            console.print(text)
+        else:
+            typer.echo(f"Hello, {name}!")
+```
+
+```python
+# src/myapp/commands/process.py
+"""Process command that reads a file and writes output."""
+import csv
+import typer
+from pathlib import Path
+from typing import Annotated
+from rich.console import Console
+from rich.progress import track
+
+console = Console()
+
+
+def command(
+    input_file: Annotated[Path, typer.Argument(help="Input CSV file", exists=True, readable=True)],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Output file path")] = Path("output.csv"),
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Print each row as it is processed")] = False,
+) -> None:
+    """Read a CSV file, uppercase all values, and write results."""
+    rows: list[dict[str, str]] = []
+
+    with input_file.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            typer.echo("Error: empty or invalid CSV.", err=True)
+            raise typer.Exit(code=1)
+
+        for row in track(reader, description="Processing rows..."):
+            processed = {k: v.upper() for k, v in row.items()}
+            if verbose:
+                console.print(processed)
+            rows.append(processed)
+
+    with output.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+    console.print(f"[green]Done.[/green] Wrote {len(rows)} rows to [cyan]{output}[/cyan]")
+```
+
+```python
+# src/myapp/commands/info.py
+"""Info command — display version and environment details."""
+import sys
+import typer
+from rich.console import Console
+from rich.table import Table
+from myapp import __version__
+
+console = Console()
+
+
+def command() -> None:
+    """Show version and runtime information."""
+    table = Table(title="myapp info", show_header=False, box=None)
+    table.add_column("Key", style="bold cyan")
+    table.add_column("Value")
+
+    table.add_row("Version", __version__)
+    table.add_row("Python", sys.version.split()[0])
+    table.add_row("Platform", sys.platform)
+
+    console.print(table)
+```
+
+## Options
+
+| Command | Option | Type | Description |
+|---------|--------|------|-------------|
+| `greet` | `name` | argument | Name to greet |
+| `greet` | `--count / -c` | int (1–10) | How many times to greet |
+| `greet` | `--color / --no-color` | flag | Toggle colorized output |
+| `process` | `input_file` | argument (Path) | Source CSV (must exist) |
+| `process` | `--output / -o` | Path | Destination file |
+| `process` | `--verbose / -v` | flag | Print each row |
+
+## Notes
+
+Typer converts Python type annotations directly into CLI arguments and options. `Annotated[..., typer.Option(...)]` lets you attach metadata like help text, default values, and validators without extra decorators.
+
+The `rich_markup_mode="rich"` setting on the `Typer()` instance enables `[bold]`, `[green]`, and other Rich markup inside docstrings and help strings.
+
+## README
+
+### What this includes
+
+- **Typer** — decorator-free CLI builder where type hints define the interface
+- **Rich** — colored text, tables, progress bars, and spinners in the terminal
+- **Automatic `--help`** — generated from function signatures and docstrings
+- **Shell completion** — `myapp --install-completion` adds tab completion for bash/zsh/fish
+- **Subcommand structure** — commands split into separate modules under `commands/`
+- **Hatchling build backend** — PEP 517 packaging with a `pyproject.toml`-only setup
+- **`project.scripts` entry** — installs `myapp` as a system command via pip
+
+### Prerequisites
+
+- Python 3.11+
+- `pip install hatch` (optional, for environment management)
+
+### Create this template
+
+```bash
+# 1. Create project directory
+mkdir myapp && cd myapp
+
+# 2. Create source layout
+mkdir -p src/myapp/commands tests
+
+# 3. Create source files
+touch src/myapp/__init__.py
+touch src/myapp/cli.py
+touch src/myapp/commands/__init__.py
+touch src/myapp/commands/greet.py
+touch src/myapp/commands/process.py
+touch src/myapp/commands/info.py
+touch tests/__init__.py
+
+# 4. Create pyproject.toml (copy content from above)
+touch pyproject.toml
+
+# 5. Install in editable mode with dependencies
+pip install -e ".[dev]"
+# or with hatch:
+pip install hatch && hatch env create
+
+# 6. Verify the CLI is available
+myapp --help
+
+# 7. Install shell completion (optional)
+myapp --install-completion
+```
+
+### Project structure
+
+```
+myapp/
+├── src/
+│   └── myapp/
+│       ├── __init__.py           # Package version
+│       ├── cli.py                # Typer app, command registration
+│       └── commands/
+│           ├── __init__.py
+│           ├── greet.py          # Greet command with Rich output
+│           ├── process.py        # File-processing command
+│           └── info.py           # Version/env info table
+├── tests/
+│   └── __init__.py
+├── pyproject.toml                # Build config, deps, scripts entry
+└── README.md
+```
+
+### First things to customize
+
+- `pyproject.toml` `[project]` — update `name`, `description`, and `authors`
+- `pyproject.toml` `[project.scripts]` — rename `myapp` to your desired command name
+- `src/myapp/cli.py` — update the Typer `name=` and `help=` strings
+- `src/myapp/commands/` — add new command files; import and register each in `cli.py`
+- `src/myapp/__init__.py` `__version__` — bump this when releasing; consider using `importlib.metadata.version()` to read from `pyproject.toml` automatically
