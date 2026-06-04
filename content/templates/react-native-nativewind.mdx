@@ -1,0 +1,362 @@
+---
+title: React Native + NativeWind
+description: A React Native starter with NativeWind v4 for Tailwind-style utility classes, React Navigation v7 for routing, and Zustand for state management.
+category: templates
+language: TypeScript
+tags: [react-native, nativewind, mobile, typescript, react-navigation]
+---
+
+A focused React Native starter that pairs NativeWind v4 utility classes with React Navigation v7's native stack and Zustand for lightweight global state — no Expo managed workflow, giving you full control over native code.
+
+## Usage
+
+```bash
+npm install
+# iOS
+npx pod-install ios && npx react-native run-ios
+# Android
+npx react-native run-android
+```
+
+## App entry point
+
+```typescript
+// App.tsx
+import React from "react";
+import { NavigationContainer } from "@react-navigation/native";
+import { RootNavigator } from "./src/navigation/RootNavigator";
+import "./global.css";
+
+export default function App() {
+  return (
+    <NavigationContainer>
+      <RootNavigator />
+    </NavigationContainer>
+  );
+}
+```
+
+## Navigation
+
+```typescript
+// src/navigation/RootNavigator.tsx
+import React from "react";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { HomeScreen } from "../screens/HomeScreen";
+import { DetailScreen } from "../screens/DetailScreen";
+
+export type RootStackParamList = {
+  Home: undefined;
+  Detail: { id: string; title: string };
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+export function RootNavigator() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="Home" component={HomeScreen} />
+      <Stack.Screen name="Detail" component={DetailScreen} />
+    </Stack.Navigator>
+  );
+}
+```
+
+## Zustand store
+
+```typescript
+// src/store/useAppStore.ts
+import { create } from "zustand";
+
+interface Item {
+  id: string;
+  title: string;
+  completed: boolean;
+}
+
+interface AppState {
+  items: Item[];
+  addItem: (title: string) => void;
+  toggleItem: (id: string) => void;
+  removeItem: (id: string) => void;
+}
+
+export const useAppStore = create<AppState>((set) => ({
+  items: [],
+  addItem: (title) =>
+    set((state) => ({
+      items: [
+        ...state.items,
+        { id: Date.now().toString(), title, completed: false },
+      ],
+    })),
+  toggleItem: (id) =>
+    set((state) => ({
+      items: state.items.map((item) =>
+        item.id === id ? { ...item, completed: !item.completed } : item
+      ),
+    })),
+  removeItem: (id) =>
+    set((state) => ({
+      items: state.items.filter((item) => item.id !== id),
+    })),
+}));
+```
+
+## Home screen
+
+```typescript
+// src/screens/HomeScreen.tsx
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  SafeAreaView,
+} from "react-native";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useAppStore } from "../store/useAppStore";
+import type { RootStackParamList } from "../navigation/RootNavigator";
+
+type Props = NativeStackScreenProps<RootStackParamList, "Home">;
+
+export function HomeScreen({ navigation }: Props) {
+  const [input, setInput] = useState("");
+  const { items, addItem, toggleItem } = useAppStore();
+
+  function handleAdd() {
+    if (input.trim()) {
+      addItem(input.trim());
+      setInput("");
+    }
+  }
+
+  return (
+    <SafeAreaView className="flex-1 bg-white">
+      <View className="px-4 pt-6 pb-4 border-b border-gray-100">
+        <Text className="text-2xl font-bold text-gray-900">My List</Text>
+      </View>
+
+      <View className="flex-row items-center gap-2 px-4 py-3">
+        <TextInput
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-base text-gray-900"
+          placeholder="Add an item..."
+          placeholderTextColor="#9ca3af"
+          value={input}
+          onChangeText={setInput}
+          onSubmitEditing={handleAdd}
+          returnKeyType="done"
+        />
+        <TouchableOpacity
+          className="bg-indigo-500 rounded-lg px-4 py-2"
+          onPress={handleAdd}
+        >
+          <Text className="text-white font-semibold">Add</Text>
+        </TouchableOpacity>
+      </View>
+
+      <FlatList
+        data={items}
+        keyExtractor={(item) => item.id}
+        contentContainerClassName="px-4 gap-2"
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            className="flex-row items-center gap-3 p-3 bg-gray-50 rounded-xl"
+            onPress={() => toggleItem(item.id)}
+            onLongPress={() => navigation.navigate("Detail", { id: item.id, title: item.title })}
+          >
+            <View
+              className={`w-5 h-5 rounded-full border-2 items-center justify-center ${
+                item.completed
+                  ? "bg-indigo-500 border-indigo-500"
+                  : "border-gray-300"
+              }`}
+            />
+            <Text
+              className={`flex-1 text-base ${
+                item.completed
+                  ? "line-through text-gray-400"
+                  : "text-gray-800"
+              }`}
+            >
+              {item.title}
+            </Text>
+          </TouchableOpacity>
+        )}
+      />
+    </SafeAreaView>
+  );
+}
+```
+
+## Detail screen
+
+```typescript
+// src/screens/DetailScreen.tsx
+import React from "react";
+import { View, Text, TouchableOpacity, SafeAreaView } from "react-native";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useAppStore } from "../store/useAppStore";
+import type { RootStackParamList } from "../navigation/RootNavigator";
+
+type Props = NativeStackScreenProps<RootStackParamList, "Detail">;
+
+export function DetailScreen({ route, navigation }: Props) {
+  const { id, title } = route.params;
+  const removeItem = useAppStore((state) => state.removeItem);
+
+  function handleDelete() {
+    removeItem(id);
+    navigation.goBack();
+  }
+
+  return (
+    <SafeAreaView className="flex-1 bg-white">
+      <View className="px-4 pt-6 flex-1">
+        <TouchableOpacity
+          className="self-start mb-6"
+          onPress={() => navigation.goBack()}
+        >
+          <Text className="text-indigo-500 text-base font-medium">← Back</Text>
+        </TouchableOpacity>
+
+        <Text className="text-2xl font-bold text-gray-900 mb-2">{title}</Text>
+        <Text className="text-gray-500 text-sm mb-8">ID: {id}</Text>
+
+        <TouchableOpacity
+          className="bg-red-500 rounded-xl py-4 items-center"
+          onPress={handleDelete}
+        >
+          <Text className="text-white font-semibold text-base">Delete item</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+```
+
+## NativeWind configuration
+
+```javascript
+// tailwind.config.js
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ["./App.tsx", "./src/**/*.{js,jsx,ts,tsx}"],
+  presets: [require("nativewind/preset")],
+  theme: {
+    extend: {
+      colors: {
+        primary: "#6366f1",
+      },
+    },
+  },
+  plugins: [],
+};
+```
+
+```css
+/* global.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+```
+
+```javascript
+// babel.config.js
+module.exports = {
+  presets: [
+    ["@react-native/babel-preset", { jsxImportSource: "nativewind" }],
+    "nativewind/babel",
+  ],
+};
+```
+
+## README
+
+### What this includes
+
+- **React Native 0.74+** — Bare workflow, full access to native modules
+- **NativeWind v4** — Tailwind CSS utility classes compiled for React Native via CSS interop
+- **React Navigation v7** — Native stack navigator with full TypeScript param types
+- **Zustand** — Minimal, hook-based global state management without boilerplate
+- **TypeScript** — Strict mode throughout, typed navigation params and store
+- **Safe area handling** — `SafeAreaView` from React Native core on every screen
+
+### Prerequisites
+
+- Node.js 18+
+- React Native environment set up: [reactnative.dev/docs/set-up-your-environment](https://reactnative.dev/docs/set-up-your-environment)
+- Xcode 15+ for iOS builds
+- Android Studio + NDK for Android builds
+- CocoaPods for iOS: `gem install cocoapods`
+
+### Create this template
+
+```bash
+# 1. Scaffold a bare React Native project with TypeScript
+npx @react-native-community/cli@latest init MyApp --template react-native-template-typescript
+cd MyApp
+
+# 2. Install React Navigation and its dependencies
+npm install @react-navigation/native @react-navigation/native-stack
+npx pod-install  # iOS only
+
+# 3. Install React Navigation peer dependencies
+npm install react-native-screens react-native-safe-area-context
+npx pod-install  # iOS only
+
+# 4. Install NativeWind v4 and Tailwind CSS
+npm install nativewind tailwindcss
+npm install --save-dev babel-preset-expo  # NativeWind v4 requires this
+
+# 5. Install Zustand
+npm install zustand
+
+# 6. Create tailwind.config.js, global.css, update babel.config.js
+#    as shown in the NativeWind configuration section above
+
+# 7. Import global.css at the top of App.tsx
+
+# 8. Create src/navigation/, src/screens/, src/store/ directories
+#    and add the files shown in the code sections above
+
+# 9. Run the app
+npx react-native run-ios
+# or
+npx react-native run-android
+```
+
+### Project structure
+
+```
+MyApp/
+├── android/
+├── ios/
+├── src/
+│   ├── navigation/
+│   │   └── RootNavigator.tsx   # Stack navigator + param list types
+│   ├── screens/
+│   │   ├── HomeScreen.tsx
+│   │   └── DetailScreen.tsx
+│   └── store/
+│       └── useAppStore.ts      # Zustand store
+├── App.tsx                     # NavigationContainer + global.css import
+├── global.css                  # Tailwind directives
+├── tailwind.config.js
+├── babel.config.js
+└── tsconfig.json
+```
+
+### First things to customize
+
+- `src/navigation/RootNavigator.tsx` — Add new screens to `RootStackParamList` and the `Stack.Navigator`
+- `src/store/useAppStore.ts` — Replace the sample items state with your own domain model
+- `tailwind.config.js` — Extend the theme with your brand colors and typography
+- `App.tsx` — Add providers (React Query, theme context, etc.) around `NavigationContainer`
+- `android/app/src/main/res/` and `ios/MyApp/Images.xcassets/` — Swap in your app icon and splash assets
