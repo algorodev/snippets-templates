@@ -1,0 +1,113 @@
+---
+title: Random Color Generator
+description: Generates a random hex color string. Optionally constrains the result to visually distinct hues by sampling from equally-spaced HSL values.
+category: snippets
+language: typescript
+tags: [color, utils, random]
+---
+
+Returns a random hex colour string. In its default mode it picks fully random RGB values; when `distinct` mode is enabled it samples hue angles that are evenly distributed around the colour wheel, so a set of generated colours will look visually varied rather than clumping together.
+
+## Usage
+
+```typescript
+interface RandomColorOptions {
+  /** When true, sample hues from equally-spaced HSL positions for more distinct results. */
+  distinct?: boolean
+  /** Saturation percentage (0–100). Only used in distinct mode. Default: 70. */
+  saturation?: number
+  /** Lightness percentage (0–100). Only used in distinct mode. Default: 55. */
+  lightness?: number
+  /** Random seed offset for distinct mode, useful for deterministic sequences. Default: 0. */
+  offset?: number
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const sNorm = s / 100
+  const lNorm = l / 100
+  const a = sNorm * Math.min(lNorm, 1 - lNorm)
+
+  const toChannel = (n: number): string => {
+    const k = (n + h / 30) % 12
+    const value = lNorm - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))
+    return Math.round(value * 255)
+      .toString(16)
+      .padStart(2, '0')
+  }
+
+  return `#${toChannel(0)}${toChannel(8)}${toChannel(4)}`
+}
+
+/**
+ * Returns a random hex colour string.
+ *
+ * - Default: fully random RGB, suitable for a single colour pick.
+ * - `distinct: true`: samples hues at equal angular intervals, keeping
+ *   colours visually separated when generating a set.
+ */
+function randomColor(options: RandomColorOptions = {}): string {
+  const { distinct = false, saturation = 70, lightness = 55, offset = 0 } = options
+
+  if (!distinct) {
+    const hex = Math.floor(Math.random() * 0xffffff)
+      .toString(16)
+      .padStart(6, '0')
+    return `#${hex}`
+  }
+
+  // Golden-angle increment keeps successive hues maximally spread
+  const goldenAngle = 137.508
+  const hue = (offset * goldenAngle) % 360
+
+  return hslToHex(hue, saturation, lightness)
+}
+
+/**
+ * Generates an array of `count` visually distinct random colours.
+ */
+function randomColors(count: number, options: Omit<RandomColorOptions, 'offset'> = {}): string[] {
+  return Array.from({ length: count }, (_, i) =>
+    randomColor({ ...options, distinct: true, offset: i }),
+  )
+}
+
+export { randomColor, randomColors }
+export default randomColor
+```
+
+## Examples
+
+```typescript
+// Single random colour (fully random RGB)
+randomColor()               // '#a3f2c1'  (varies each call)
+
+// Single distinct colour at offset 0
+randomColor({ distinct: true })                        // '#6bbf58'
+randomColor({ distinct: true, offset: 1 })             // '#5891bf'
+randomColor({ distinct: true, saturation: 90, lightness: 45 })
+
+// Generate a set of visually distinct colours
+randomColors(5)
+// ['#6bbf58', '#5891bf', '#b558bf', '#bf8d58', '#58bfb0']
+
+randomColors(3, { saturation: 50, lightness: 65 })
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `distinct` | `boolean` | `false` | Use golden-angle HSL sampling instead of random RGB. |
+| `saturation` | `number` | `70` | HSL saturation (0–100). Only applies when `distinct` is `true`. |
+| `lightness` | `number` | `55` | HSL lightness (0–100). Only applies when `distinct` is `true`. |
+| `offset` | `number` | `0` | Index into the golden-angle sequence. Increment to get the next distinct colour. |
+
+## How it works
+
+- **Default mode** converts a random 24-bit integer directly to a six-digit hex string — simple and fast.
+- **Distinct mode** uses the golden-angle increment (≈ 137.5°) to step around the HSL hue wheel. Because 137.5° is irrational with respect to 360°, successive hues never repeat a visited region of the wheel, spreading colours as evenly as possible regardless of how many are requested.
+
+## Notes
+
+- `randomColors(n)` is a convenience wrapper that calls `randomColor` with an incrementing `offset`. The output is deterministic per call position but not seeded — if you need reproducibility across page loads, supply your own PRNG.
+- For accessible colour sets, check each generated colour with a contrast ratio utility before displaying it on coloured or dark backgrounds.
