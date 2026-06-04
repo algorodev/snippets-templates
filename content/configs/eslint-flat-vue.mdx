@@ -1,0 +1,162 @@
+---
+title: ESLint Flat Config for Vue 3
+description: Modern ESLint flat config for Vue 3 projects using the Composition API. Includes vue/recommended rules and TypeScript support.
+category: configs
+language: javascript
+tags: [eslint, vue, linting, flat-config, typescript]
+---
+
+ESLint v9 flat config for Vue 3 projects with TypeScript and the Composition API. Covers `.vue` single-file components, enforces `vue/recommended` rules, and integrates `typescript-eslint` for typed linting in `<script setup lang="ts">` blocks.
+
+## Usage
+
+```javascript
+// eslint.config.js
+import js from '@eslint/js'
+import globals from 'globals'
+import tseslint from 'typescript-eslint'
+import vuePlugin from 'eslint-plugin-vue'
+import vueParser from 'vue-eslint-parser'
+
+export default tseslint.config(
+  // ── Ignored paths ────────────────────────────────────────────────
+  {
+    ignores: ['dist/**', 'coverage/**', 'node_modules/**', '*.config.{js,ts}'],
+  },
+
+  // ── Base recommended rules ───────────────────────────────────────
+  js.configs.recommended,
+
+  // ── Vue 3 recommended rule set ───────────────────────────────────
+  ...vuePlugin.configs['flat/recommended'],
+
+  // ── TypeScript (type-checked) ────────────────────────────────────
+  ...tseslint.configs.recommendedTypeChecked,
+
+  // ── Main config for .vue + .ts/.tsx files ────────────────────────
+  {
+    files: ['**/*.{vue,ts,tsx}'],
+    languageOptions: {
+      // vue-eslint-parser must be the outer parser for .vue files;
+      // typescript-eslint handles the <script> block internally.
+      parser: vueParser,
+      parserOptions: {
+        parser: tseslint.parser,
+        project: true,
+        tsconfigRootDir: import.meta.dirname,
+        extraFileExtensions: ['.vue'],
+        ecmaVersion: 2024,
+        sourceType: 'module',
+      },
+      globals: {
+        ...globals.browser,
+        ...globals.es2024,
+      },
+    },
+    plugins: {
+      vue: vuePlugin,
+    },
+    rules: {
+      // ── Vue component style (Composition API) ───────────────────
+      'vue/component-api-style': ['error', ['script-setup', 'composition']],
+      'vue/define-macros-order': ['error', {
+        order: ['defineOptions', 'defineProps', 'defineEmits', 'defineSlots'],
+      }],
+      'vue/define-props-declaration': ['error', 'type-based'],  // prefer defineProps<{ ... }>()
+      'vue/define-emits-declaration': ['error', 'type-based'],  // prefer defineEmits<{ ... }>()
+
+      // ── Template quality ─────────────────────────────────────────
+      'vue/no-unused-vars': 'error',
+      'vue/no-v-html': 'warn',               // XSS risk; use with care
+      'vue/require-v-for-key': 'error',
+      'vue/no-use-v-if-with-v-for': 'error',
+      'vue/html-self-closing': ['warn', {
+        html: { void: 'always', normal: 'never', component: 'always' },
+        svg: 'always',
+        math: 'always',
+      }],
+      'vue/block-order': ['error', {
+        order: ['script', 'template', 'style'],  // <script> first (Volar convention)
+      }],
+      'vue/component-name-in-template-casing': ['error', 'PascalCase'],
+      'vue/no-multiple-template-root': 'off', // Vue 3 supports multiple roots
+
+      // ── TypeScript ───────────────────────────────────────────────
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports', fixStyle: 'inline-type-imports' }],
+      '@typescript-eslint/no-explicit-any': 'warn',
+
+      // ── General ──────────────────────────────────────────────────
+      'prefer-const': 'error',
+      'no-var': 'error',
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+    },
+  },
+
+  // ── Plain TypeScript files (.ts only, not .vue) ──────────────────
+  {
+    files: ['**/*.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: {
+        project: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+      },
+    },
+  },
+
+  // ── Vite config & test files ─────────────────────────────────────
+  {
+    files: ['vite.config.ts', 'vitest.config.ts', '**/*.test.{ts,js}', '**/*.spec.{ts,js}'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      'import/no-extraneous-dependencies': 'off',
+    },
+  },
+)
+```
+
+**Install dependencies:**
+
+```bash
+npm install -D eslint @eslint/js globals typescript-eslint \
+  eslint-plugin-vue vue-eslint-parser
+```
+
+## Options
+
+**Without TypeScript** — replace `tseslint.configs.recommendedTypeChecked` with the non-typed variant to avoid needing a `tsconfig.json`:
+
+```javascript
+...tseslint.configs.recommended,  // no project reference required
+```
+
+And remove the `parserOptions.project` / `tsconfigRootDir` fields from `languageOptions.parserOptions`.
+
+**With Pinia** — add `eslint-plugin-pinia` for store-specific rules:
+
+```bash
+npm install -D eslint-plugin-pinia
+```
+
+```javascript
+import piniaPlugin from 'eslint-plugin-pinia'
+// add to plugins: { pinia: piniaPlugin }
+// add ...piniaPlugin.configs.recommended to the config array
+```
+
+## Notes
+
+- `vue-eslint-parser` must wrap the TypeScript parser, not the other way around. The outer parser tokenizes `.vue` file structure; the inner parser (`parserOptions.parser`) handles the `<script>` block.
+- `vue/block-order` enforcing `['script', 'template', 'style']` matches the Volar/Vue Language Tools convention, which improves IDE performance for large SFCs.
+- `vue/define-props-declaration: 'type-based'` enforces the `defineProps<{ foo: string }>()` syntax over the runtime declaration object, giving you full TypeScript inference on props without a separate `withDefaults` call.
+- If you use `<script setup>`, you do not need to register components or explicitly return values — the `vue/no-unused-vars` rule accounts for this.
