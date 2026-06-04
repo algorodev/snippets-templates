@@ -1,0 +1,180 @@
+---
+title: Cron Shortcut
+description: Add, list, and remove crontab entries interactively without opening a text editor, with human-readable schedule descriptions.
+category: cli
+language: bash
+tags: [system, cron, scheduling, automation]
+---
+
+Drop these functions into your `~/.bashrc` or `~/.zshrc` to manage crontab entries without ever touching `crontab -e`.
+
+## Usage
+
+```bash
+# ── cron helpers ────────────────────────────────────────────────────────────
+
+# Human-readable description of a cron schedule field
+_cron_describe() {
+  local schedule="$1"
+  local -a parts
+  read -ra parts <<< "$schedule"
+  local min="${parts[0]}" hour="${parts[1]}" dom="${parts[2]}" mon="${parts[3]}" dow="${parts[4]}"
+
+  local desc="At "
+  [[ "$min"  == "*" ]] && desc+="every minute" || desc+="minute $min"
+  [[ "$hour" == "*" ]] && desc+=", every hour"  || desc+=", hour $hour"
+  [[ "$dom"  == "*" ]] || desc+=", day $dom of the month"
+  [[ "$mon"  == "*" ]] || desc+=", month $mon"
+  [[ "$dow"  == "*" ]] || desc+=", weekday $dow"
+  echo "$desc"
+}
+
+# cron-list: show current crontab with line numbers and schedule descriptions
+cron-list() {
+  local crontab
+  crontab=$(crontab -l 2>/dev/null) || { echo "No crontab for $USER."; return 0; }
+
+  local i=1
+  while IFS= read -r line; do
+    # Skip blank lines and comments for numbering
+    if [[ -z "$line" || "$line" == \#* ]]; then
+      echo "     $line"
+    else
+      local schedule
+      schedule=$(echo "$line" | awk '{print $1,$2,$3,$4,$5}')
+      local command
+      command=$(echo "$line" | awk '{$1=$2=$3=$4=$5=""; print $0}' | sed 's/^ *//')
+      printf "%3d  %s\n     └─ %s\n     └─ cmd: %s\n\n" \
+        "$i" "$line" "$(_cron_describe "$schedule")" "$command"
+      ((i++))
+    fi
+  done <<< "$crontab"
+}
+
+# cron-add: append a new crontab entry
+# Usage: cron-add "<schedule>" "<command>"
+# Example: cron-add "0 2 * * *" "/home/user/backup.sh"
+cron-add() {
+  local schedule="$1"
+  local command="$2"
+
+  if [[ -z "$schedule" || -z "$command" ]]; then
+    echo "Usage: cron-add \"<schedule>\" \"<command>\""
+    echo "Example: cron-add \"0 2 * * *\" \"/home/user/backup.sh\""
+    return 1
+  fi
+
+  # Validate schedule has 5 fields
+  local field_count
+  field_count=$(echo "$schedule" | awk '{print NF}')
+  if [[ "$field_count" -ne 5 ]]; then
+    echo "Error: schedule must have exactly 5 fields (min hour dom mon dow)."
+    return 1
+  fi
+
+  local entry="$schedule $command"
+  ( crontab -l 2>/dev/null; echo "$entry" ) | crontab -
+  echo "Added: $entry"
+  echo "       $(_cron_describe "$schedule")"
+}
+
+# cron-remove: remove a crontab entry by line number (from cron-list output)
+# Usage: cron-remove <line-number>
+cron-remove() {
+  local target="$1"
+
+  if [[ -z "$target" || ! "$target" =~ ^[0-9]+$ ]]; then
+    echo "Usage: cron-remove <line-number>"
+    echo "Run cron-list first to see line numbers."
+    return 1
+  fi
+
+  local current
+  current=$(crontab -l 2>/dev/null) || { echo "No crontab to remove from."; return 1; }
+
+  # Count only non-blank, non-comment lines to match cron-list numbering
+  local i=1
+  local new_crontab=""
+  local removed=""
+  while IFS= read -r line; do
+    if [[ -z "$line" || "$line" == \#* ]]; then
+      new_crontab+="$line"$'\n'
+    else
+      if [[ "$i" -eq "$target" ]]; then
+        removed="$line"
+      else
+        new_crontab+="$line"$'\n'
+      fi
+      ((i++))
+    fi
+  done <<< "$current"
+
+  if [[ -z "$removed" ]]; then
+    echo "Error: no entry at line $target (run cron-list to check)."
+    return 1
+  fi
+
+  echo "$new_crontab" | crontab -
+  echo "Removed entry $target: $removed"
+}
+
+# cron-run: execute a cron command immediately (for testing)
+# Usage: cron-run <line-number>
+cron-run() {
+  local target="$1"
+  local current
+  current=$(crontab -l 2>/dev/null) || { echo "No crontab entries."; return 1; }
+
+  local i=1
+  while IFS= read -r line; do
+    if [[ -n "$line" && "$line" != \#* ]]; then
+      if [[ "$i" -eq "$target" ]]; then
+        local command
+        command=$(echo "$line" | awk '{$1=$2=$3=$4=$5=""; print $0}' | sed 's/^ *//')
+        echo "Running: $command"
+        eval "$command"
+        return $?
+      fi
+      ((i++))
+    fi
+  done <<< "$current"
+
+  echo "No entry at line $target."
+  return 1
+}
+```
+
+## Options
+
+| Function | Arguments | Description |
+|---|---|---|
+| `cron-list` | — | List all entries with line numbers and human-readable schedules |
+| `cron-add` | `"<schedule>" "<command>"` | Append a new entry to the crontab |
+| `cron-remove` | `<line-number>` | Delete an entry by its number from `cron-list` |
+| `cron-run` | `<line-number>` | Execute an entry's command right now for testing |
+
+## Examples
+
+```bash
+# See what's already scheduled
+cron-list
+
+# Run a backup every day at 2 AM
+cron-add "0 2 * * *" "/home/user/scripts/backup.sh >> /var/log/backup.log 2>&1"
+
+# Run every 15 minutes
+cron-add "*/15 * * * *" "/home/user/scripts/check-disk.sh"
+
+# Review the list, then remove entry 3
+cron-list
+cron-remove 3
+
+# Test entry 2 without waiting for its schedule
+cron-run 2
+```
+
+## Notes
+
+- Line numbers in `cron-remove` and `cron-run` match the numbers shown by `cron-list` — blank lines and comments are not counted.
+- `cron-add` validates that the schedule has exactly 5 fields before writing to the crontab.
+- Changes take effect immediately; no daemon restart is needed.
