@@ -1,0 +1,135 @@
+---
+title: tsup Config
+description: A tsup configuration for zero-config TypeScript library bundling that outputs ESM, CJS, and type declarations. Supports watch mode and source maps out of the box.
+category: configs
+language: javascript
+tags: [tsup, build-tool, library, typescript]
+---
+
+The fastest way to ship a TypeScript library. tsup wraps esbuild for blazing-fast compilation and handles dual-format output, type declarations, and watch mode with minimal configuration.
+
+## Usage
+
+```javascript
+// tsup.config.ts
+import { defineConfig } from 'tsup'
+
+export default defineConfig({
+  entry: ['src/index.ts'],
+  format: ['esm', 'cjs'],
+  dts: true,
+  sourcemap: true,
+  clean: true,
+  splitting: false,
+  treeshake: true,
+  minify: false,
+  outDir: 'dist',
+  external: [],        // tsup auto-externalizes peerDependencies from package.json
+  platform: 'neutral', // 'node' | 'browser' | 'neutral'
+  target: 'es2020',
+  esbuildOptions(options) {
+    options.banner = {
+      js: '"use client";', // Remove this line unless targeting React Server Components
+    }
+  },
+})
+```
+
+**`package.json`:**
+
+```json
+{
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+```
+
+**Install:**
+
+```bash
+npm install -D tsup typescript
+```
+
+## Options
+
+| Field | Default | Effect |
+|-------|---------|--------|
+| `entry` | required | Entry point(s) — accepts a glob or an array |
+| `format` | `['cjs']` | Output formats: `'esm'`, `'cjs'`, `'iife'` |
+| `dts` | `false` | Emit `.d.ts` declaration files |
+| `sourcemap` | `false` | Emit source maps |
+| `clean` | `false` | Delete `outDir` before each build |
+| `splitting` | `true` (ESM) | Enable code splitting for shared chunks |
+| `treeshake` | `false` | Enable Rollup-based tree-shaking (slower than esbuild) |
+| `minify` | `false` | Minify output with esbuild |
+| `platform` | `'node'` | Target platform for built-in shims |
+| `target` | `'node14'` | ECMAScript target for syntax transforms |
+
+## Examples
+
+**Multiple entry points (e.g. a library with sub-paths):**
+
+```javascript
+// tsup.config.ts
+import { defineConfig } from 'tsup'
+
+export default defineConfig({
+  entry: {
+    index: 'src/index.ts',
+    cli: 'src/cli.ts',
+    utils: 'src/utils/index.ts',
+  },
+  format: ['esm', 'cjs'],
+  dts: true,
+  clean: true,
+})
+```
+
+**`package.json` sub-path exports to match:**
+
+```json
+{
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./utils": {
+      "import": "./dist/utils.mjs",
+      "require": "./dist/utils.js"
+    }
+  },
+  "bin": {
+    "my-cli": "./dist/cli.js"
+  }
+}
+```
+
+## Notes
+
+- tsup reads `peerDependencies` from `package.json` and externalizes them automatically — no manual `external` list needed in most cases.
+- Set `splitting: true` only when using `format: ['esm']` with multiple entry points; CJS does not support code splitting.
+- Use `platform: 'node'` for Node CLI tools to avoid injecting browser polyfills, and `platform: 'browser'` for browser-only packages.
+- Remove the `esbuildOptions` block (and the `"use client"` banner) unless you are building a React Server Components-compatible package for Next.js.
+- Run `tsup --watch` during development to get sub-second rebuild times via esbuild's incremental mode.
