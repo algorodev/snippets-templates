@@ -1,0 +1,74 @@
+---
+title: Parse Query String
+description: Converts a query string into a plain object, supporting array values via repeated keys or bracket notation. Works in both browser and Node.js environments.
+category: snippets
+language: typescript
+tags: [dom, utils, url, parsing]
+---
+
+Parses a raw query string (with or without a leading `?`) into a plain object. Repeated keys and keys ending in `[]` are collected into arrays.
+
+## Usage
+
+```typescript
+function parseQueryString(
+  qs: string
+): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {}
+  const cleaned = qs.startsWith('?') ? qs.slice(1) : qs
+
+  if (!cleaned) return result
+
+  for (const part of cleaned.split('&')) {
+    if (!part) continue
+
+    const eqIndex = part.indexOf('=')
+    const rawKey = eqIndex === -1 ? part : part.slice(0, eqIndex)
+    const rawVal = eqIndex === -1 ? '' : part.slice(eqIndex + 1)
+
+    const key = decodeURIComponent(rawKey).replace(/\[]$/, '')
+    const value = decodeURIComponent(rawVal.replace(/\+/g, ' '))
+
+    if (Object.prototype.hasOwnProperty.call(result, key)) {
+      const existing = result[key]
+      result[key] = Array.isArray(existing)
+        ? [...existing, value]
+        : [existing, value]
+    } else {
+      // If the original key used bracket notation, start as an array
+      const useArray = rawKey.endsWith('%5B%5D') || rawKey.endsWith('[]')
+      result[key] = useArray ? [value] : value
+    }
+  }
+
+  return result
+}
+
+export default parseQueryString
+```
+
+## Examples
+
+```typescript
+// Repeated keys
+parseQueryString('?color=red&color=blue')
+// { color: ["red", "blue"] }
+
+// Bracket notation
+parseQueryString('tag[]=ts&tag[]=js&page=1')
+// { tag: ["ts", "js"], page: "1" }
+
+// Leading "?" is optional
+parseQueryString('q=hello+world&sort=asc')
+// { q: "hello world", sort: "asc" }
+
+// Empty string
+parseQueryString('')
+// {}
+```
+
+## Notes
+
+- Runs in Node.js and browsers — no dependency on `window` or `URLSearchParams`.
+- `+` signs in values are decoded as spaces, matching form-encoding (`application/x-www-form-urlencoded`).
+- For reading the live browser URL, prefer the `getQueryParams` snippet which wraps `URLSearchParams` directly.
