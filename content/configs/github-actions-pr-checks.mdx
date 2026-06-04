@@ -1,0 +1,119 @@
+---
+title: "GitHub Actions: PR Checks"
+description: A GitHub Actions workflow that enforces PR title conventions, checks for linked issues, and posts a summary comment. Ensures a consistent pull request workflow.
+category: configs
+language: yaml
+tags: [github-actions, pull-request, ci, conventions]
+---
+
+Runs on every pull request event to validate the PR title against Conventional Commits, confirm a linked issue exists in the body, and post a structured checklist comment. Keeps PR hygiene consistent across contributors without requiring a bot app.
+
+## Usage
+
+```yaml
+# .github/workflows/pr-checks.yml
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  validate-title:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Conventional Commit title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Allowed types (extend as needed)
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          # Require a scope, e.g. feat(auth): ...
+          requireScope: false
+          # Allow merge commits to pass
+          ignoreLabels: |
+            ignore-semantic-pull-request
+
+  check-linked-issue:
+    name: Check Linked Issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify issue reference in PR body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body ?? '';
+            const issuePattern = /(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+/i;
+            const urlPattern = /github\.com\/[^/]+\/[^/]+\/issues\/\d+/i;
+
+            if (!issuePattern.test(body) && !urlPattern.test(body)) {
+              core.setFailed(
+                'PR body must reference a linked issue.\n' +
+                'Use "Closes #123", "Fixes #123", or "Resolves #123".'
+              );
+            }
+
+  post-summary:
+    name: Post PR Summary Comment
+    runs-on: ubuntu-latest
+    # Only post on the first open, not every push
+    if: github.event.action == 'opened'
+    steps:
+      - name: Find existing summary comment
+        id: find-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: PR Checklist
+
+      - name: Create summary comment
+        if: steps.find-comment.outputs.comment-id == ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## PR Checklist
+
+            Thanks for opening this PR! Please make sure the following are complete before requesting a review:
+
+            - [ ] Title follows [Conventional Commits](https://www.conventionalcommits.org/)
+            - [ ] A linked issue is referenced in the description (`Closes #N`)
+            - [ ] All CI checks are passing
+            - [ ] Tests added or updated for changed behaviour
+            - [ ] Documentation updated if applicable
+
+            > _This comment is posted automatically and will not be updated._
+```
+
+## Options
+
+| Input | Description |
+|-------|-------------|
+| `types` | Conventional Commit types allowed in the PR title |
+| `requireScope` | Set to `true` to enforce a scope, e.g. `feat(auth):` |
+| `ignoreLabels` | Labels that let a PR bypass title validation |
+
+## Notes
+
+- The `validate-title` job uses [`amannn/action-semantic-pull-request`](https://github.com/amannn/action-semantic-pull-request) — no token scopes beyond the default `GITHUB_TOKEN` are required.
+- The `check-linked-issue` step matches GitHub's closing keywords (`Closes`, `Fixes`, `Resolves`) in both shorthand (`#123`) and full URL form.
+- The `post-summary` job uses `if: github.event.action == 'opened'` so the comment is only created once, not on every subsequent push.
+- Install the three third-party actions by pinning their major version tags; replace with commit SHAs for stricter supply-chain controls.
