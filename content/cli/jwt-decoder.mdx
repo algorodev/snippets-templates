@@ -1,0 +1,122 @@
+---
+title: JWT Decoder
+description: Decode and pretty-print the header and payload of a JWT from stdin or a command-line argument without sending it to any external service.
+category: cli
+language: bash
+tags: [misc, jwt, auth, security, debugging]
+---
+
+Add this function to your `~/.zshrc` or `~/.bashrc` to inspect JWTs entirely offline. It splits the token on `.`, base64-decodes each part, and pretty-prints the JSON — no network requests, no third-party sites.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+jwt-decode() {
+  local token="${1:-}"
+
+  # Read from stdin if no argument given
+  if [[ -z "$token" ]]; then
+    token=$(cat)
+  fi
+
+  if [[ -z "$token" ]]; then
+    echo "Usage: jwt-decode <token>"
+    echo "       echo <token> | jwt-decode"
+    return 1
+  fi
+
+  # Strip "Bearer " prefix if present
+  token="${token#Bearer }"
+  token="${token#bearer }"
+
+  # Split into parts
+  local header payload signature
+  IFS='.' read -r header payload signature <<< "$token"
+
+  if [[ -z "$header" || -z "$payload" ]]; then
+    echo "Error: not a valid JWT (expected 3 dot-separated parts)" >&2
+    return 1
+  fi
+
+  # Base64url → base64 decode helper (handles missing padding)
+  _b64url_decode() {
+    local input="$1"
+    # Replace URL-safe chars and add padding
+    local padded="${input//-/+}"
+    padded="${padded//_//}"
+    local mod=$(( ${#padded} % 4 ))
+    if (( mod == 2 )); then padded="${padded}=="; fi
+    if (( mod == 3 )); then padded="${padded}=";  fi
+    printf '%s' "$padded" | base64 --decode 2>/dev/null
+  }
+
+  echo "━━━ Header ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  _b64url_decode "$header" | python3 -m json.tool 2>/dev/null \
+    || _b64url_decode "$header"
+
+  echo ""
+  echo "━━━ Payload ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  local raw_payload
+  raw_payload=$(_b64url_decode "$payload")
+
+  # Pretty-print JSON
+  echo "$raw_payload" | python3 -m json.tool 2>/dev/null \
+    || echo "$raw_payload"
+
+  # Human-readable expiry if present
+  local exp
+  exp=$(echo "$raw_payload" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    if 'exp' in d:
+        import datetime
+        dt = datetime.datetime.fromtimestamp(d['exp'])
+        now = datetime.datetime.now()
+        diff = dt - now
+        status = 'EXPIRED' if diff.total_seconds() < 0 else 'valid'
+        print(f\"\nExpiry : {dt.strftime('%Y-%m-%d %H:%M:%S')} ({status})\")
+except Exception:
+    pass
+" 2>/dev/null)
+
+  if [[ -n "$exp" ]]; then
+    echo "$exp"
+  fi
+
+  echo ""
+  echo "━━━ Signature ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "(not verified — signature check requires the secret/public key)"
+}
+```
+
+After adding the function, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# Pass the token as an argument
+jwt-decode eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+
+# Pipe from another command (e.g. grab from a curl response)
+curl -s https://example.com/auth/token | jq -r '.access_token' | jwt-decode
+
+# Strip the "Bearer" prefix automatically
+jwt-decode "Bearer eyJhbGciOiJSUzI1NiJ9..."
+
+# Pipe from clipboard (macOS)
+pbpaste | jwt-decode
+```
+
+## Notes
+
+- The function requires `python3` for JSON pretty-printing and expiry parsing. If `python3` is unavailable, raw decoded bytes are printed instead.
+- JWTs are base64url-encoded, which uses `-` and `_` instead of `+` and `/`. The helper function converts these before decoding.
+- The signature part is intentionally not verified — doing so requires the signing secret or public key. This function is purely for inspection.
+- Never paste production JWTs into browser-based decoders (e.g. jwt.io) when they contain sensitive claims.
