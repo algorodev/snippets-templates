@@ -1,0 +1,118 @@
+---
+title: Docker Compose for Development
+description: A Docker Compose configuration for local development with hot-reloading, bind mounts, and common services like Postgres and Redis. Includes healthchecks and named volumes.
+category: configs
+language: yaml
+tags: [docker, docker-compose, development, local-dev]
+---
+
+A `compose.yaml` for local development that wires up your application with Postgres and Redis. Bind mounts give you hot-reloading, healthchecks ensure services start in the right order, and named volumes persist database data between restarts.
+
+## Usage
+
+```yaml
+# compose.yaml  (Docker Compose v2 — no "version" key needed)
+
+services:
+
+  # ── Application ─────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder          # Use the dev/builder stage, not the slim runtime
+    command: ["npm", "run", "dev"]   # Replace with your hot-reload command
+    volumes:
+      - .:/app                 # Bind-mount source for hot-reloading
+      - /app/node_modules      # Anonymous volume so host node_modules won't shadow container's
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://dev:dev@postgres:5432/devdb
+      REDIS_URL: redis://redis:6379
+    env_file:
+      - .env.local             # Secrets that must NOT be committed
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Postgres ─────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: devdb
+    ports:
+      - "5432:5432"            # Expose so you can connect from host with psql / TablePlus
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d  # Optional: seed SQL on first start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d devdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"            # Expose for local debugging (redis-cli, RedisInsight)
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+## How it works
+
+- **Bind mount + anonymous volume trick** — mounting `.:/app` gives live code reloading, while `/app/node_modules` as an anonymous volume prevents the host's `node_modules` (which may be absent or OS-incompatible) from overwriting the container's installed packages.
+- **`depends_on` with `condition: service_healthy`** — the app container only starts once Postgres and Redis pass their healthchecks, avoiding connection errors on startup.
+- **Named volumes** (`postgres_data`, `redis_data`) — data persists when you run `docker compose down` but is removed with `docker compose down -v`.
+
+## Common commands
+
+```bash
+# Start all services (rebuild image if Dockerfile changed)
+docker compose up --build
+
+# Start in the background
+docker compose up -d
+
+# Tail logs from the app service only
+docker compose logs -f app
+
+# Open a psql shell inside the running Postgres container
+docker compose exec postgres psql -U dev -d devdb
+
+# Open a Redis CLI shell
+docker compose exec redis redis-cli
+
+# Stop and remove containers (keep volumes)
+docker compose down
+
+# Stop and remove containers AND volumes (wipe database)
+docker compose down -v
+```
+
+## Notes
+
+- Rename `compose.yaml` to `docker-compose.yaml` if your Docker version doesn't pick it up automatically (Docker Compose v2.2+ prefers `compose.yaml`).
+- Never commit `.env.local` — add it to `.gitignore`.
+- For a Node.js app, swap `npm run dev` for `pnpm dev` or `yarn dev` as appropriate.
+- For a Python app, replace the `app` command with something like `["uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0"]`.
