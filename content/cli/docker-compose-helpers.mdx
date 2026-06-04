@@ -1,0 +1,75 @@
+---
+title: Docker Compose Helpers
+description: Short aliases for the most common Compose workflows: up-detached, tail logs for a service, restart a single service, and nuke everything.
+category: cli
+language: bash
+tags: [docker, compose, aliases, devops]
+---
+
+Add these aliases to your `~/.bashrc` or `~/.zshrc` to speed up everyday Docker Compose workflows.
+
+## Usage
+
+```bash
+# Bring up the stack in detached mode
+alias dcu='docker compose up -d'
+
+# Bring up and force-recreate all containers
+alias dcuf='docker compose up -d --force-recreate'
+
+# Stop all services
+alias dcd='docker compose down'
+
+# Stop and remove volumes (nuke everything)
+alias dcdn='docker compose down -v --remove-orphans'
+
+# Tail logs for the whole stack (last 50 lines)
+alias dcl='docker compose logs -f --tail=50'
+
+# Tail logs for a single service: dcls <service>
+dcls() {
+  docker compose logs -f --tail=50 "$1"
+}
+
+# Restart a single service without touching others: dcr <service>
+dcr() {
+  docker compose restart "$1"
+}
+
+# Rebuild and restart a single service: dcreb <service>
+dcreb() {
+  docker compose up -d --build --no-deps "$1"
+}
+
+# Show running services and their ports
+alias dcps='docker compose ps'
+
+# Run a one-off command in a service container: dcrun <service> <cmd>
+dcrun() {
+  docker compose run --rm "$@"
+}
+
+# Open a shell in a running service container: dcsh <service>
+dcsh() {
+  docker compose exec "$1" sh -c 'command -v bash > /dev/null && exec bash || exec sh'
+}
+```
+
+## Quick reference
+
+```bash
+dcu               # start the stack detached
+dcl               # stream all logs
+dcls api          # stream logs for the "api" service
+dcr worker        # restart the "worker" service
+dcreb api         # rebuild and restart "api" only
+dcdn              # tear everything down including volumes
+dcsh db           # open a shell in the "db" container
+dcrun api npm test  # run tests in a fresh "api" container
+```
+
+## Notes
+
+- These aliases use `docker compose` (plugin syntax). If your installation still uses `docker-compose` (v1), replace `docker compose` with `docker-compose` throughout.
+- `dcdn` removes named volumes — use it only when you want a fully clean slate (e.g., resetting a database).
+- `dcreb` passes `--no-deps` so only the target service is rebuilt, leaving the rest of the stack untouched.
