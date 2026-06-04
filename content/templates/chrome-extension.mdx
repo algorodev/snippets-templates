@@ -1,0 +1,317 @@
+---
+title: Chrome Extension (Manifest v3)
+description: A vanilla Chrome Extension starter using Manifest v3 with a service worker, popup, content script, and options page. Bundled with Vite for a modern development experience.
+category: templates
+language: TypeScript
+tags: [chrome-extension, manifest-v3, typescript, vite, browser]
+---
+
+Manifest v3 replaces persistent background pages with short-lived service workers and tightens the permissions model. This starter wires up all four extension surfaces — service worker, popup, content script, and options page — with Vite handling TypeScript compilation and hot module replacement during development.
+
+## Usage
+
+```bash
+# Install dependencies
+pnpm install
+
+# Dev build with watch mode
+pnpm dev
+
+# Production build
+pnpm build
+```
+
+Then open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and point it at the `dist/` folder.
+
+## How it works
+
+Vite builds each entry point (popup, options, content script, background) into `dist/`. The `manifest.json` is copied as-is. Because content scripts cannot use ES modules, Vite bundles them into a single IIFE file.
+
+## Manifest
+
+```json
+// public/manifest.json
+{
+  "manifest_version": 3,
+  "name": "My Extension",
+  "version": "1.0.0",
+  "description": "A Chrome Extension built with Manifest v3 and Vite.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
+```
+
+## Service worker (background)
+
+```typescript
+// src/background.ts
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") {
+    // Set default storage values on first install
+    chrome.storage.sync.set({ enabled: true, theme: "light" });
+    console.log("Extension installed — defaults set.");
+  }
+});
+
+// Listen for messages from popup or content scripts
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "GET_TAB_INFO") {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      sendResponse({ url: tab?.url, title: tab?.title });
+    });
+    return true; // keep the message channel open for async response
+  }
+
+  if (message.type === "INJECT_SCRIPT") {
+    if (!sender.tab?.id) return;
+    chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id },
+      func: () => document.body.style.border = "2px solid red",
+    });
+    sendResponse({ ok: true });
+  }
+});
+```
+
+## Popup
+
+```typescript
+// src/popup.ts
+document.addEventListener("DOMContentLoaded", async () => {
+  const toggleBtn = document.getElementById("toggle") as HTMLButtonElement;
+  const statusEl = document.getElementById("status") as HTMLParagraphElement;
+  const tabInfoEl = document.getElementById("tab-info") as HTMLParagraphElement;
+
+  // Load current state
+  const { enabled } = await chrome.storage.sync.get("enabled");
+  statusEl.textContent = enabled ? "Active" : "Inactive";
+  toggleBtn.textContent = enabled ? "Disable" : "Enable";
+
+  // Fetch current tab info from the service worker
+  chrome.runtime.sendMessage({ type: "GET_TAB_INFO" }, (response) => {
+    if (response?.url) {
+      tabInfoEl.textContent = new URL(response.url).hostname;
+    }
+  });
+
+  // Toggle enabled state
+  toggleBtn.addEventListener("click", async () => {
+    const current = (await chrome.storage.sync.get("enabled")).enabled as boolean;
+    await chrome.storage.sync.set({ enabled: !current });
+    statusEl.textContent = !current ? "Active" : "Inactive";
+    toggleBtn.textContent = !current ? "Disable" : "Enable";
+  });
+});
+```
+
+```html
+<!-- popup.html -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Extension</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>My Extension</h1>
+      <p>Status: <strong id="status">—</strong></p>
+      <p>Page: <span id="tab-info">—</span></p>
+      <button id="toggle">Toggle</button>
+      <a href="#" id="open-options">Options</a>
+    </div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
+```
+
+## Content script
+
+```typescript
+// src/content.ts
+// Runs in the context of every web page matching manifest host_permissions
+
+function init() {
+  // Listen for messages from the popup or background
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type === "PING") {
+      sendResponse({ pong: true, url: location.href });
+    }
+  });
+
+  // Example: highlight all links on the page
+  chrome.storage.sync.get("enabled", ({ enabled }) => {
+    if (!enabled) return;
+    document.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
+      a.style.outline = "2px solid rgba(59,130,246,0.5)";
+    });
+  });
+
+  // React to storage changes in real time
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync") return;
+    if ("enabled" in changes) {
+      const nowEnabled = changes.enabled.newValue as boolean;
+      document.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
+        a.style.outline = nowEnabled ? "2px solid rgba(59,130,246,0.5)" : "";
+      });
+    }
+  });
+}
+
+init();
+```
+
+## Options page
+
+```typescript
+// src/options.ts
+document.addEventListener("DOMContentLoaded", async () => {
+  const themeSelect = document.getElementById("theme") as HTMLSelectElement;
+  const saveBtn = document.getElementById("save") as HTMLButtonElement;
+  const statusEl = document.getElementById("save-status") as HTMLParagraphElement;
+
+  const { theme } = await chrome.storage.sync.get("theme");
+  themeSelect.value = theme ?? "light";
+
+  saveBtn.addEventListener("click", async () => {
+    await chrome.storage.sync.set({ theme: themeSelect.value });
+    statusEl.textContent = "Saved!";
+    setTimeout(() => (statusEl.textContent = ""), 2000);
+  });
+});
+```
+
+## Vite config
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import { resolve } from "path";
+
+export default defineConfig({
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        popup: resolve(__dirname, "popup.html"),
+        options: resolve(__dirname, "options.html"),
+        background: resolve(__dirname, "src/background.ts"),
+        content: resolve(__dirname, "src/content.ts"),
+      },
+      output: {
+        entryFileNames: "[name].js",
+        chunkFileNames: "[name].js",
+        assetFileNames: "[name].[ext]",
+      },
+    },
+  },
+});
+```
+
+## README
+
+### What this includes
+
+- **Manifest v3** — Service worker background, updated permissions model
+- **Vite** — TypeScript bundling, watch mode, fast builds
+- **Service worker** — Handles install events, tab queries, and `chrome.scripting`
+- **Popup** — HTML + TypeScript UI that reads/writes `chrome.storage.sync`
+- **Content script** — Injected into pages, listens for runtime messages and storage changes
+- **Options page** — Full-tab settings UI persisted to `chrome.storage.sync`
+- **TypeScript** — Strict mode with `@types/chrome` for full Chrome API type coverage
+
+### Prerequisites
+
+- Node.js 18+
+- pnpm / npm / yarn
+- Google Chrome (or any Chromium-based browser)
+
+### Create this template
+
+```bash
+# 1. Create the project directory
+mkdir my-chrome-extension && cd my-chrome-extension
+
+# 2. Initialize a package.json
+pnpm init
+
+# 3. Install dependencies
+pnpm add -D vite typescript @types/chrome
+
+# 4. Create the folder structure
+mkdir -p src public/icons
+
+# 5. Add the manifest, source files, and vite.config.ts (see code above)
+
+# 6. Add scripts to package.json
+# "dev": "vite build --watch"
+# "build": "vite build"
+
+# 7. Build
+pnpm build
+
+# 8. Load in Chrome
+# Open chrome://extensions → Enable Developer mode → Load unpacked → select dist/
+```
+
+### Project structure
+
+```
+my-chrome-extension/
+├── public/
+│   ├── manifest.json           # Extension manifest
+│   └── icons/
+│       ├── icon16.png
+│       ├── icon48.png
+│       └── icon128.png
+├── src/
+│   ├── background.ts           # Service worker
+│   ├── content.ts              # Content script (injected into pages)
+│   ├── popup.ts                # Popup UI logic
+│   └── options.ts              # Options page logic
+├── popup.html                  # Popup entry HTML
+├── options.html                # Options page entry HTML
+├── vite.config.ts
+├── tsconfig.json
+└── package.json
+```
+
+### First things to customize
+
+- `public/manifest.json` — Update `name`, `description`, and `host_permissions` to match your use case
+- `src/background.ts` — Replace example message handlers with your own event logic
+- `src/content.ts` — Replace the link-highlight demo with your page manipulation code
+- `public/icons/` — Replace placeholder icons with your own (16x16, 48x48, 128x128 PNG)
+- `popup.html` / `src/popup.ts` — Build out the popup UI for your feature set
