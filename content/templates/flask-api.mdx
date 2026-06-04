@@ -1,0 +1,376 @@
+---
+title: Flask REST API
+description: A lightweight Flask REST API with Flask-RESTx for Swagger documentation, Flask-JWT-Extended for authentication, and SQLAlchemy for database access. Simple and easy to extend.
+category: templates
+language: python
+tags: [python, flask, rest-api, swagger, sqlalchemy]
+---
+
+A minimal, production-ready Flask REST API that ships with auto-generated Swagger UI, JWT-based authentication, and SQLAlchemy models — all wired together and ready to extend with your own resources.
+
+## Usage
+
+```python
+# app/__init__.py
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_jwt_extended import JWTManager
+from flask_restx import Api
+
+db = SQLAlchemy()
+jwt = JWTManager()
+
+
+def create_app(config_name: str = "development") -> Flask:
+    app = Flask(__name__)
+    app.config.from_object(f"app.config.{config_name.capitalize()}Config")
+
+    db.init_app(app)
+    jwt.init_app(app)
+
+    api = Api(
+        app,
+        version="1.0",
+        title="My Flask API",
+        description="A simple REST API",
+        doc="/docs",
+        authorizations={
+            "Bearer": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "Authorization",
+                "description": "Type: Bearer <your-token>",
+            }
+        },
+        security="Bearer",
+    )
+
+    from app.resources.auth import auth_ns
+    from app.resources.items import items_ns
+
+    api.add_namespace(auth_ns, path="/auth")
+    api.add_namespace(items_ns, path="/items")
+
+    with app.app_context():
+        db.create_all()
+
+    return app
+```
+
+```python
+# app/config.py
+import os
+
+
+class BaseConfig:
+    SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+
+class DevelopmentConfig(BaseConfig):
+    DEBUG = True
+    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///dev.db")
+
+
+class ProductionConfig(BaseConfig):
+    DEBUG = False
+    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL")
+
+
+class TestingConfig(BaseConfig):
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+```
+
+```python
+# app/models.py
+from datetime import datetime, timezone
+from app import db
+
+
+class User(db.Model):
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(256), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    items = db.relationship("Item", back_populates="owner", lazy="dynamic")
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "email": self.email, "created_at": self.created_at.isoformat()}
+
+
+class Item(db.Model):
+    __tablename__ = "items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text)
+    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    owner = db.relationship("User", back_populates="items")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "owner_id": self.owner_id,
+            "created_at": self.created_at.isoformat(),
+        }
+```
+
+```python
+# app/resources/auth.py
+from flask import request
+from flask_restx import Namespace, Resource, fields
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from werkzeug.security import generate_password_hash, check_password_hash
+from app import db
+from app.models import User
+
+auth_ns = Namespace("auth", description="Authentication operations")
+
+register_model = auth_ns.model(
+    "Register",
+    {
+        "email": fields.String(required=True, example="user@example.com"),
+        "password": fields.String(required=True, example="s3cr3t"),
+    },
+)
+
+login_model = auth_ns.model(
+    "Login",
+    {
+        "email": fields.String(required=True),
+        "password": fields.String(required=True),
+    },
+)
+
+token_model = auth_ns.model("Token", {"access_token": fields.String})
+
+
+@auth_ns.route("/register")
+class Register(Resource):
+    @auth_ns.expect(register_model, validate=True)
+    @auth_ns.marshal_with(token_model, code=201)
+    def post(self):
+        """Register a new user and return an access token."""
+        data = request.get_json()
+        if User.query.filter_by(email=data["email"]).first():
+            auth_ns.abort(409, "Email already registered")
+
+        user = User(
+            email=data["email"],
+            password_hash=generate_password_hash(data["password"]),
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        token = create_access_token(identity=str(user.id))
+        return {"access_token": token}, 201
+
+
+@auth_ns.route("/login")
+class Login(Resource):
+    @auth_ns.expect(login_model, validate=True)
+    @auth_ns.marshal_with(token_model)
+    def post(self):
+        """Authenticate and return an access token."""
+        data = request.get_json()
+        user = User.query.filter_by(email=data["email"]).first()
+
+        if not user or not check_password_hash(user.password_hash, data["password"]):
+            auth_ns.abort(401, "Invalid credentials")
+
+        token = create_access_token(identity=str(user.id))
+        return {"access_token": token}
+
+
+@auth_ns.route("/me")
+class Me(Resource):
+    @jwt_required()
+    def get(self):
+        """Return the current authenticated user."""
+        user = User.query.get(int(get_jwt_identity()))
+        if not user:
+            auth_ns.abort(404, "User not found")
+        return user.to_dict()
+```
+
+```python
+# app/resources/items.py
+from flask import request
+from flask_restx import Namespace, Resource, fields
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app import db
+from app.models import Item
+
+items_ns = Namespace("items", description="Item CRUD operations")
+
+item_model = items_ns.model(
+    "Item",
+    {
+        "id": fields.Integer(readonly=True),
+        "name": fields.String(required=True, example="Widget"),
+        "description": fields.String(example="A useful widget"),
+        "owner_id": fields.Integer(readonly=True),
+        "created_at": fields.String(readonly=True),
+    },
+)
+
+create_model = items_ns.model(
+    "CreateItem",
+    {
+        "name": fields.String(required=True, example="Widget"),
+        "description": fields.String(example="A useful widget"),
+    },
+)
+
+
+@items_ns.route("/")
+class ItemList(Resource):
+    @jwt_required()
+    @items_ns.marshal_list_with(item_model)
+    def get(self):
+        """List all items owned by the current user."""
+        user_id = int(get_jwt_identity())
+        return Item.query.filter_by(owner_id=user_id).all()
+
+    @jwt_required()
+    @items_ns.expect(create_model, validate=True)
+    @items_ns.marshal_with(item_model, code=201)
+    def post(self):
+        """Create a new item."""
+        user_id = int(get_jwt_identity())
+        data = request.get_json()
+        item = Item(name=data["name"], description=data.get("description"), owner_id=user_id)
+        db.session.add(item)
+        db.session.commit()
+        return item, 201
+
+
+@items_ns.route("/<int:item_id>")
+class ItemDetail(Resource):
+    @jwt_required()
+    @items_ns.marshal_with(item_model)
+    def get(self, item_id: int):
+        """Fetch a single item by ID."""
+        user_id = int(get_jwt_identity())
+        item = Item.query.filter_by(id=item_id, owner_id=user_id).first_or_404()
+        return item
+
+    @jwt_required()
+    @items_ns.expect(create_model, validate=True)
+    @items_ns.marshal_with(item_model)
+    def put(self, item_id: int):
+        """Update an item."""
+        user_id = int(get_jwt_identity())
+        item = Item.query.filter_by(id=item_id, owner_id=user_id).first_or_404()
+        data = request.get_json()
+        item.name = data.get("name", item.name)
+        item.description = data.get("description", item.description)
+        db.session.commit()
+        return item
+
+    @jwt_required()
+    @items_ns.response(204, "Deleted")
+    def delete(self, item_id: int):
+        """Delete an item."""
+        user_id = int(get_jwt_identity())
+        item = Item.query.filter_by(id=item_id, owner_id=user_id).first_or_404()
+        db.session.delete(item)
+        db.session.commit()
+        return "", 204
+```
+
+```python
+# run.py
+import os
+from app import create_app
+
+app = create_app(os.getenv("FLASK_ENV", "development"))
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+```
+
+## Options
+
+| Feature | How to enable |
+|---|---|
+| Postgres | Set `DATABASE_URL=postgresql://user:pass@host/db` |
+| Token refresh | Add `create_refresh_token` and a `/auth/refresh` endpoint |
+| Rate limiting | Add `flask-limiter` and decorate routes with `@limiter.limit()` |
+| CORS | `pip install flask-cors` and call `CORS(app)` in `create_app` |
+| Migrations | `pip install flask-migrate`, init with `flask db init` |
+
+## Notes
+
+Swagger UI is served at `/docs` in development. The `Authorization` header must be in the form `Bearer <token>`. All item endpoints are scoped to the authenticated user — queries filter by `owner_id` so users cannot access each other's data.
+
+## README
+
+### What this includes
+
+- Flask application factory (`create_app`) with environment-based config
+- Flask-RESTx namespaces for `auth` and `items` with auto-generated Swagger UI at `/docs`
+- Flask-JWT-Extended for stateless JWT authentication (register, login, `/me`)
+- SQLAlchemy ORM with `User` and `Item` models and a one-to-many relationship
+- Full CRUD for items scoped to the authenticated user
+- Password hashing via Werkzeug
+- SQLite for development, configurable via `DATABASE_URL` for production
+
+### Prerequisites
+
+- Python 3.11+
+- `pip` or `uv`
+
+### Create this template
+
+```bash
+# 1. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 2. Install dependencies
+pip install flask flask-restx flask-jwt-extended flask-sqlalchemy werkzeug
+
+# 3. (Optional) pin versions
+pip freeze > requirements.txt
+
+# 4. Set environment variables
+export FLASK_ENV=development
+export SECRET_KEY=your-secret-key
+export JWT_SECRET_KEY=your-jwt-secret
+
+# 5. Run the development server
+python run.py
+```
+
+### Project structure
+
+```
+my-flask-api/
+├── app/
+│   ├── __init__.py          # App factory, db & jwt init
+│   ├── config.py            # Dev / prod / test config classes
+│   ├── models.py            # SQLAlchemy models
+│   └── resources/
+│       ├── auth.py          # /auth namespace (register, login, me)
+│       └── items.py         # /items namespace (CRUD)
+├── run.py                   # Entry point
+└── requirements.txt
+```
+
+### First things to customize
+
+- `app/config.py` — set real `SECRET_KEY` and `JWT_SECRET_KEY` from environment variables
+- `app/models.py` — replace or extend `Item` with your own domain models
+- `app/__init__.py` — update the API `title` and `description`
+- `DATABASE_URL` env var — switch from SQLite to Postgres for production
+- `JWT_ACCESS_TOKEN_EXPIRES` — set a shorter expiry (default is 1 hour) in `BaseConfig`
