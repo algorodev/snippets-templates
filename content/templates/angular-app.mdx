@@ -1,0 +1,361 @@
+---
+title: Angular App
+description: A modern Angular 18+ application with standalone components, signals-based reactivity, the new control flow syntax, and NgRx SignalStore for state management.
+category: templates
+language: TypeScript
+tags: [angular, typescript, signals, ngrx, standalone]
+---
+
+A modern Angular 18+ starter that embraces the new Angular idioms — standalone components eliminate `NgModule` boilerplate, signals replace `BehaviorSubject` chains, the built-in `@if`/`@for` control flow replaces structural directives, and NgRx SignalStore provides lightweight, composable state management.
+
+## Usage
+
+```bash
+# Install the Angular CLI globally then scaffold
+npm install -g @angular/cli
+ng new my-angular-app --standalone --routing --style=scss
+cd my-angular-app
+ng serve
+```
+
+## Configuration
+
+```typescript
+// src/app/app.config.ts
+import { ApplicationConfig, provideZoneChangeDetection } from "@angular/core";
+import { provideRouter, withComponentInputBinding } from "@angular/router";
+import { provideHttpClient, withFetch } from "@angular/common/http";
+
+import { routes } from "./app.routes";
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideZoneChangeDetection({ eventCoalescing: true }),
+    provideRouter(routes, withComponentInputBinding()),
+    provideHttpClient(withFetch()),
+  ],
+};
+```
+
+```typescript
+// src/main.ts
+import { bootstrapApplication } from "@angular/platform-browser";
+import { appConfig } from "./app/app.config";
+import { AppComponent } from "./app/app.component";
+
+bootstrapApplication(AppComponent, appConfig).catch((err) =>
+  console.error(err)
+);
+```
+
+## NgRx SignalStore
+
+```typescript
+// src/app/stores/posts.store.ts
+import { signalStore, withState, withComputed, withMethods } from "@ngrx/signals";
+import { inject, computed } from "@angular/core";
+import { HttpClient } from "@angular/common/http";
+import { patchState } from "@ngrx/signals";
+import { firstValueFrom } from "rxjs";
+
+export interface Post {
+  id: number;
+  title: string;
+  body: string;
+  userId: number;
+}
+
+interface PostsState {
+  posts: Post[];
+  loading: boolean;
+  error: string | null;
+  selectedId: number | null;
+}
+
+const initialState: PostsState = {
+  posts: [],
+  loading: false,
+  error: null,
+  selectedId: null,
+};
+
+export const PostsStore = signalStore(
+  { providedIn: "root" },
+
+  withState(initialState),
+
+  withComputed(({ posts, selectedId }) => ({
+    postCount: computed(() => posts().length),
+    selectedPost: computed(() =>
+      posts().find((p) => p.id === selectedId()) ?? null
+    ),
+  })),
+
+  withMethods((store, http = inject(HttpClient)) => ({
+    async loadPosts(limit = 10): Promise<void> {
+      patchState(store, { loading: true, error: null });
+      try {
+        const posts = await firstValueFrom(
+          http.get<Post[]>(
+            `https://jsonplaceholder.typicode.com/posts?_limit=${limit}`
+          )
+        );
+        patchState(store, { posts, loading: false });
+      } catch (err) {
+        patchState(store, {
+          error: err instanceof Error ? err.message : "Failed to load posts",
+          loading: false,
+        });
+      }
+    },
+
+    selectPost(id: number): void {
+      patchState(store, { selectedId: id });
+    },
+
+    clearSelection(): void {
+      patchState(store, { selectedId: null });
+    },
+  }))
+);
+```
+
+## Standalone components
+
+```typescript
+// src/app/app.component.ts
+import { Component } from "@angular/core";
+import { RouterOutlet } from "@angular/router";
+import { NavComponent } from "./components/nav/nav.component";
+
+@Component({
+  selector: "app-root",
+  standalone: true,
+  imports: [RouterOutlet, NavComponent],
+  template: `
+    <app-nav />
+    <main class="container">
+      <router-outlet />
+    </main>
+  `,
+})
+export class AppComponent {}
+```
+
+```typescript
+// src/app/pages/posts/posts.component.ts
+import { Component, OnInit, inject } from "@angular/core";
+import { RouterLink } from "@angular/router";
+import { PostsStore } from "../../stores/posts.store";
+
+@Component({
+  selector: "app-posts",
+  standalone: true,
+  imports: [RouterLink],
+  template: `
+    <h1>Posts</h1>
+
+    @if (store.loading()) {
+      <p class="loading">Loading...</p>
+    } @else if (store.error()) {
+      <p class="error">{{ store.error() }}</p>
+    } @else {
+      <ul class="post-list">
+        @for (post of store.posts(); track post.id) {
+          <li class="post-card">
+            <a [routerLink]="['/posts', post.id]">
+              <h2>{{ post.title }}</h2>
+            </a>
+            <p>{{ post.body }}</p>
+          </li>
+        } @empty {
+          <li>No posts found.</li>
+        }
+      </ul>
+    }
+  `,
+})
+export class PostsComponent implements OnInit {
+  protected store = inject(PostsStore);
+
+  ngOnInit(): void {
+    this.store.loadPosts(12);
+  }
+}
+```
+
+```typescript
+// src/app/pages/post-detail/post-detail.component.ts
+import { Component, OnInit, inject, input } from "@angular/core";
+import { RouterLink } from "@angular/router";
+import { PostsStore } from "../../stores/posts.store";
+
+@Component({
+  selector: "app-post-detail",
+  standalone: true,
+  imports: [RouterLink],
+  template: `
+    <a routerLink="/posts">&larr; Back</a>
+
+    @if (store.selectedPost(); as post) {
+      <article>
+        <h1>{{ post.title }}</h1>
+        <p>{{ post.body }}</p>
+      </article>
+    } @else {
+      <p>Post not found.</p>
+    }
+  `,
+})
+export class PostDetailComponent implements OnInit {
+  // Route param bound via withComponentInputBinding()
+  id = input.required<string>();
+
+  protected store = inject(PostsStore);
+
+  ngOnInit(): void {
+    this.store.selectPost(Number(this.id()));
+  }
+}
+```
+
+## Routing
+
+```typescript
+// src/app/app.routes.ts
+import { Routes } from "@angular/router";
+
+export const routes: Routes = [
+  {
+    path: "",
+    redirectTo: "posts",
+    pathMatch: "full",
+  },
+  {
+    path: "posts",
+    loadComponent: () =>
+      import("./pages/posts/posts.component").then((m) => m.PostsComponent),
+  },
+  {
+    path: "posts/:id",
+    loadComponent: () =>
+      import("./pages/post-detail/post-detail.component").then(
+        (m) => m.PostDetailComponent
+      ),
+  },
+  {
+    path: "**",
+    loadComponent: () =>
+      import("./pages/not-found/not-found.component").then(
+        (m) => m.NotFoundComponent
+      ),
+  },
+];
+```
+
+## Signal-based service
+
+```typescript
+// src/app/services/theme.service.ts
+import { Injectable, signal, computed } from "@angular/core";
+
+type Theme = "light" | "dark";
+
+@Injectable({ providedIn: "root" })
+export class ThemeService {
+  private _theme = signal<Theme>(
+    (localStorage.getItem("theme") as Theme) ?? "light"
+  );
+
+  readonly theme = this._theme.asReadonly();
+  readonly isDark = computed(() => this._theme() === "dark");
+
+  toggle(): void {
+    const next: Theme = this._theme() === "light" ? "dark" : "light";
+    this._theme.set(next);
+    localStorage.setItem("theme", next);
+    document.documentElement.setAttribute("data-theme", next);
+  }
+}
+```
+
+## README
+
+### What this includes
+
+- **Angular 18+** — Standalone components as the default; no `NgModule` required
+- **Signals** — `signal()`, `computed()`, and `effect()` for fine-grained reactivity
+- **New control flow** — `@if`, `@for`, `@switch`, `@empty` built into templates
+- **NgRx SignalStore** — Lightweight, composable store built on Angular signals
+- **Lazy-loaded routes** — `loadComponent` code-splitting for every page
+- **`withComponentInputBinding()`** — Route params bound directly as component inputs
+- **`provideHttpClient(withFetch())`** — `fetch`-backed HTTP client, SSR-compatible
+- **SCSS** — Component-scoped styles with global theming support
+
+### Prerequisites
+
+- Node.js 18+
+- npm / pnpm / yarn
+- Angular CLI (`npm install -g @angular/cli`)
+
+### Create this template
+
+```bash
+# 1. Create a new standalone Angular app
+ng new my-angular-app --standalone --routing --style=scss
+cd my-angular-app
+
+# 2. Add NgRx SignalStore
+npm install @ngrx/signals
+
+# 3. Generate pages (lazy-loaded)
+ng generate component pages/posts --standalone
+ng generate component pages/post-detail --standalone
+ng generate component pages/not-found --standalone
+
+# 4. Generate a store
+mkdir -p src/app/stores
+
+# 5. Generate a shared service
+ng generate service services/theme
+
+# 6. Update app.config.ts with provideHttpClient(withFetch())
+#    and provideRouter(routes, withComponentInputBinding())
+
+# 7. Start the dev server
+ng serve
+```
+
+### Project structure
+
+```
+my-angular-app/
+├── src/
+│   └── app/
+│       ├── components/          # Shared standalone components (nav, etc.)
+│       ├── pages/
+│       │   ├── posts/
+│       │   │   └── posts.component.ts
+│       │   ├── post-detail/
+│       │   │   └── post-detail.component.ts
+│       │   └── not-found/
+│       │       └── not-found.component.ts
+│       ├── services/
+│       │   └── theme.service.ts
+│       ├── stores/
+│       │   └── posts.store.ts    # NgRx SignalStore
+│       ├── app.component.ts      # Root standalone component
+│       ├── app.config.ts         # Application providers
+│       └── app.routes.ts         # Route definitions
+├── angular.json
+├── tsconfig.json
+└── tsconfig.app.json
+```
+
+### First things to customize
+
+- `src/app/stores/posts.store.ts` — Replace the JSONPlaceholder API with your real backend endpoints
+- `src/app/app.routes.ts` — Add or rename routes to match your application's structure
+- `src/app/app.config.ts` — Add interceptors, guards, or additional providers (e.g. `provideAnimations()`)
+- `src/styles.scss` — Define global CSS custom properties for your colour palette and typography
+- `angular.json` — Adjust the `budgets` thresholds under `configurations.production` to suit your app's size
