@@ -1,0 +1,44 @@
+---
+title: Add Days To Date
+description: Returns a new Date by adding or subtracting a number of days from a given date. Handles month and year rollovers correctly.
+category: snippets
+language: typescript
+tags: [date, utils, arithmetic]
+---
+
+Creates a copy of the input date before mutating it, so the original is never changed. Pass a negative number to subtract days.
+
+## Usage
+
+```typescript
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date)
+  result.setDate(result.getDate() + days)
+  return result
+}
+
+export default addDays
+```
+
+## Examples
+
+```typescript
+const today = new Date('2024-01-30')
+
+addDays(today, 3)
+// → Date: 2024-02-02  (rolls over into February)
+
+addDays(today, -7)
+// → Date: 2024-01-23
+
+addDays(today, 366)
+// → Date: 2025-01-30  (leap year handled by the JS engine)
+
+// Original is untouched
+console.log(today.toISOString().slice(0, 10))
+// → '2024-01-30'
+```
+
+## How it works
+
+`setDate` accepts values outside the normal 1–31 range and adjusts the month and year automatically. For example, calling `setDate(32)` on a January date advances into February. The native `Date` object handles leap years and varying month lengths, so no manual arithmetic is needed.
