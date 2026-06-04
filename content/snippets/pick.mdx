@@ -1,0 +1,57 @@
+---
+title: Pick Object Keys
+description: Returns a new object containing only the specified keys from the source object. Fully typed so the return type is the exact subset of the input type.
+category: snippets
+language: typescript
+tags: [object, utils, keys, filter]
+---
+
+Extracts a typed subset of an object by key name. The return type is automatically narrowed to `Pick<T, K>` — no casting required.
+
+## Usage
+
+```typescript
+function pick<T extends object, K extends keyof T>(obj: T, keys: K[]): Pick<T, K> {
+  const result = {} as Pick<T, K>
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      result[key] = obj[key]
+    }
+  }
+  return result
+}
+
+export default pick
+```
+
+## Examples
+
+```typescript
+const user = {
+  id: 42,
+  name: 'Alice',
+  email: 'alice@example.com',
+  passwordHash: 'abc123',
+  role: 'admin',
+}
+
+// Strip sensitive fields before sending to the client
+const publicUser = pick(user, ['id', 'name', 'role'])
+// => { id: 42, name: 'Alice', role: 'admin' }
+// TypeScript type: Pick<typeof user, 'id' | 'name' | 'role'>
+
+// Pull only the fields needed for a form
+const formValues = pick(user, ['name', 'email'])
+// => { name: 'Alice', email: 'alice@example.com' }
+
+// Works with any plain object
+const config = { host: 'localhost', port: 5432, ssl: true, pool: 10 }
+const connectionString = pick(config, ['host', 'port'])
+// => { host: 'localhost', port: 5432 }
+```
+
+## Notes
+
+- Keys not present on `obj` are silently skipped (the `hasOwnProperty` guard prevents picking inherited prototype properties).
+- The complement of `pick` is `omit` — use that when it is easier to list what to exclude rather than what to keep.
+- For runtime-dynamic key lists (strings from an API, etc.) you can cast: `pick(obj, dynamicKeys as (keyof typeof obj)[])`. TypeScript will widen the return type to `Partial<T>` in that case.
