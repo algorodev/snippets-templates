@@ -1,0 +1,160 @@
+---
+title: Env Config Loader (Python)
+description: Loads typed environment variables from a .env file and os.environ, raising descriptive errors for missing required fields. Supports int, float, bool, list, and str coercions.
+category: snippets
+language: python
+tags: [utils, config, env, devops]
+---
+
+Centralises all environment-variable access behind a single typed interface so misconfiguration surfaces at startup with a clear error rather than deep inside application logic.
+
+## Usage
+
+```python
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+
+_BOOL_TRUE = {"1", "true", "yes", "on"}
+_BOOL_FALSE = {"0", "false", "no", "off"}
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """Return a dict of key/value pairs parsed from a .env file."""
+    result: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        # Strip matching surrounding quotes
+        if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+            value = value[1:-1]
+        if key:
+            result[key] = value
+    return result
+
+
+def _coerce(value: str, cast: type) -> Any:
+    if cast is bool:
+        lower = value.lower()
+        if lower in _BOOL_TRUE:
+            return True
+        if lower in _BOOL_FALSE:
+            return False
+        raise ValueError(f"Cannot coerce {value!r} to bool")
+    if cast is list:
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return cast(value)
+
+
+def load_config(
+    schema: dict[str, dict[str, Any]],
+    env_file: str | Path | None = ".env",
+) -> dict[str, Any]:
+    """
+    Load and validate environment variables according to *schema*.
+
+    Each schema entry is keyed by the env-var name and accepts:
+        type     – Python type to coerce the string value to (default: str).
+                   Use ``list`` to split on commas.
+        default  – Fallback value when the variable is absent. Omit to make
+                   the variable required.
+        required – Explicit bool; overrides presence of *default* when True.
+
+    Variables are looked up first in os.environ, then in *env_file* (when
+    provided). os.environ always wins.
+
+    Raises
+    ------
+    KeyError
+        When a required variable is missing.
+    ValueError
+        When a value cannot be coerced to the declared type.
+    """
+    file_vars: dict[str, str] = {}
+    if env_file is not None:
+        path = Path(env_file)
+        if path.is_file():
+            file_vars = _parse_env_file(path)
+
+    config: dict[str, Any] = {}
+    errors: list[str] = []
+
+    for key, spec in schema.items():
+        cast = spec.get("type", str)
+        has_default = "default" in spec
+        required = spec.get("required", not has_default)
+
+        raw = os.environ.get(key) or file_vars.get(key)
+
+        if raw is None:
+            if required:
+                errors.append(f"  {key}: required variable is missing")
+            else:
+                config[key] = spec["default"]
+            continue
+
+        try:
+            config[key] = _coerce(raw, cast)
+        except (ValueError, TypeError) as exc:
+            errors.append(f"  {key}: {exc}")
+
+    if errors:
+        raise KeyError("Environment configuration errors:\n" + "\n".join(errors))
+
+    return config
+```
+
+## Options
+
+The `schema` dict maps each variable name to a spec dict:
+
+| Key | Type | Description |
+|---|---|---|
+| `type` | `type` | Python type for coercion: `str`, `int`, `float`, `bool`, or `list`. Defaults to `str`. |
+| `default` | any | Value returned when the variable is absent. Makes the variable optional. |
+| `required` | `bool` | Force the variable to be required even when `default` is provided. |
+
+## Examples
+
+```python
+# config.py
+from env_config import load_config
+
+cfg = load_config(
+    schema={
+        "DATABASE_URL": {"type": str},
+        "PORT":         {"type": int, "default": 8000},
+        "DEBUG":        {"type": bool, "default": False},
+        "ALLOWED_HOSTS": {"type": list, "default": ["localhost"]},
+        "TIMEOUT":      {"type": float, "default": 30.0},
+        "SECRET_KEY":   {"type": str, "required": True},
+    },
+    env_file=".env",
+)
+
+print(cfg["PORT"])           # 8000 (int)
+print(cfg["DEBUG"])          # False (bool)
+print(cfg["ALLOWED_HOSTS"])  # ['localhost'] (list)
+```
+
+A `.env` file that pairs with the schema above:
+
+```
+DATABASE_URL=postgresql://user:pass@localhost/mydb
+SECRET_KEY=supersecret
+DEBUG=true
+ALLOWED_HOSTS=app.example.com, api.example.com
+PORT=5432
+```
+
+## How it works
+
+`load_config` merges two sources — `os.environ` (higher priority) and the parsed `.env` file — then iterates over each schema entry. Missing required keys and coercion failures are both collected before raising a single `KeyError` that lists every problem at once, so the app never starts with a half-valid configuration.
