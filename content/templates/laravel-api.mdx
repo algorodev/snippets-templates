@@ -1,0 +1,392 @@
+---
+title: Laravel API
+description: A Laravel 11 REST API starter with Sanctum token authentication, API resources for response transformation, form request validation, and a feature test suite.
+category: templates
+language: PHP
+tags: [laravel, php, rest-api, sanctum, eloquent]
+---
+
+A Laravel 11 API application using Sanctum for stateless token auth, Eloquent models with API Resources for consistent JSON shaping, and Form Requests for validation — all covered by a PHPUnit feature test suite.
+
+## Usage
+
+```php
+<?php
+// routes/api.php
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\PostController;
+
+Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login']);
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/user', fn(\Illuminate\Http\Request $r) => $r->user());
+    Route::apiResource('posts', PostController::class);
+});
+```
+
+```php
+<?php
+// app/Models/Post.php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Post extends Model
+{
+    use HasFactory;
+
+    protected $fillable = ['title', 'body', 'published_at'];
+
+    protected $casts = [
+        'published_at' => 'datetime',
+    ];
+
+    public function user(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+```
+
+```php
+<?php
+// app/Http/Requests/StorePostRequest.php
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class StorePostRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'title'        => ['required', 'string', 'max:255'],
+            'body'         => ['required', 'string'],
+            'published_at' => ['nullable', 'date'],
+        ];
+    }
+}
+```
+
+```php
+<?php
+// app/Http/Resources/PostResource.php
+namespace App\Http\Resources;
+
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+
+class PostResource extends JsonResource
+{
+    public function toArray(Request $request): array
+    {
+        return [
+            'id'           => $this->id,
+            'title'        => $this->title,
+            'body'         => $this->body,
+            'published_at' => $this->published_at?->toIso8601String(),
+            'author'       => [
+                'id'   => $this->user->id,
+                'name' => $this->user->name,
+            ],
+            'created_at'   => $this->created_at->toIso8601String(),
+            'updated_at'   => $this->updated_at->toIso8601String(),
+        ];
+    }
+}
+```
+
+```php
+<?php
+// app/Http/Controllers/PostController.php
+namespace App\Http\Controllers;
+
+use App\Http\Requests\StorePostRequest;
+use App\Http\Resources\PostResource;
+use App\Models\Post;
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Response;
+
+class PostController extends Controller
+{
+    public function index(Request $request): AnonymousResourceCollection
+    {
+        $posts = $request->user()
+            ->posts()
+            ->latest()
+            ->paginate(15);
+
+        return PostResource::collection($posts);
+    }
+
+    public function store(StorePostRequest $request): PostResource
+    {
+        $post = $request->user()->posts()->create($request->validated());
+        return new PostResource($post);
+    }
+
+    public function show(Request $request, Post $post): PostResource
+    {
+        $this->authorize('view', $post);
+        return new PostResource($post);
+    }
+
+    public function update(StorePostRequest $request, Post $post): PostResource
+    {
+        $this->authorize('update', $post);
+        $post->update($request->validated());
+        return new PostResource($post);
+    }
+
+    public function destroy(Request $request, Post $post): Response
+    {
+        $this->authorize('delete', $post);
+        $post->delete();
+        return response()->noContent();
+    }
+}
+```
+
+```php
+<?php
+// app/Http/Controllers/AuthController.php
+namespace App\Http\Controllers;
+
+use App\Http\Resources\UserResource;
+use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
+
+class AuthController extends Controller
+{
+    public function register(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name'     => ['required', 'string', 'max:255'],
+            'email'    => ['required', 'email', 'unique:users'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $user = User::create([
+            'name'     => $data['name'],
+            'email'    => $data['email'],
+            'password' => Hash::make($data['password']),
+        ]);
+
+        $token = $user->createToken('api')->plainTextToken;
+
+        return response()->json(['token' => $token, 'user' => new UserResource($user)], 201);
+    }
+
+    public function login(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'email'    => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ]);
+
+        $user = User::where('email', $data['email'])->first();
+
+        if (! $user || ! Hash::check($data['password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => ['The provided credentials are incorrect.'],
+            ]);
+        }
+
+        $token = $user->createToken('api')->plainTextToken;
+
+        return response()->json(['token' => $token, 'user' => new UserResource($user)]);
+    }
+
+    public function logout(Request $request): JsonResponse
+    {
+        $request->user()->currentAccessToken()->delete();
+        return response()->json(['message' => 'Logged out']);
+    }
+}
+```
+
+```php
+<?php
+// tests/Feature/PostApiTest.php
+namespace Tests\Feature;
+
+use App\Models\Post;
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
+class PostApiTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private User $user;
+    private string $token;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->user  = User::factory()->create();
+        $this->token = $this->user->createToken('test')->plainTextToken;
+    }
+
+    public function test_unauthenticated_requests_are_rejected(): void
+    {
+        $this->getJson('/api/posts')->assertUnauthorized();
+    }
+
+    public function test_user_can_list_their_posts(): void
+    {
+        Post::factory(3)->for($this->user)->create();
+
+        $this->withToken($this->token)
+            ->getJson('/api/posts')
+            ->assertOk()
+            ->assertJsonCount(3, 'data');
+    }
+
+    public function test_user_can_create_a_post(): void
+    {
+        $this->withToken($this->token)
+            ->postJson('/api/posts', [
+                'title' => 'Hello World',
+                'body'  => 'First post body.',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.title', 'Hello World');
+    }
+
+    public function test_user_cannot_delete_another_users_post(): void
+    {
+        $other = User::factory()->create();
+        $post  = Post::factory()->for($other)->create();
+
+        $this->withToken($this->token)
+            ->deleteJson("/api/posts/{$post->id}")
+            ->assertForbidden();
+    }
+}
+```
+
+## How it works
+
+Sanctum issues opaque tokens stored in the `personal_access_tokens` table. The `auth:sanctum` middleware validates the `Authorization: Bearer <token>` header on every protected route and populates `$request->user()`. Form Requests run validation before the controller method is invoked — if validation fails, Laravel automatically returns a 422 JSON response. API Resources decouple your Eloquent model from the JSON shape, so you can rename DB columns without breaking clients.
+
+## Notes
+
+- Use `php artisan make:policy PostPolicy --model=Post` to scaffold Gate policies for the `authorize()` calls.
+- For rate limiting add `->middleware(['auth:sanctum', 'throttle:api'])` and configure the `api` limiter in `AppServiceProvider`.
+- In production set `SANCTUM_STATEFUL_DOMAINS` only if you also serve an SPA from the same app; for pure token APIs it is not required.
+
+## README
+
+### What this includes
+
+- Laravel 11 with Sanctum for stateless token authentication
+- `AuthController` with register, login, and logout endpoints
+- Eloquent `Post` model with `BelongsTo` user relationship
+- `StorePostRequest` Form Request for input validation
+- `PostResource` API Resource for consistent JSON transformation
+- `PostController` with full CRUD and Gate-based authorization
+- `RefreshDatabase` feature test suite covering auth and authorization
+- Paginated collection responses
+
+### Prerequisites
+
+- PHP 8.3+
+- Composer
+- A database (MySQL, PostgreSQL, or SQLite for local dev)
+- Laravel installer: `composer global require laravel/installer`
+
+### Create this template
+
+```bash
+# 1. Create new Laravel project
+laravel new my-laravel-api --no-interaction
+cd my-laravel-api
+
+# 2. Install Sanctum
+composer require laravel/sanctum
+php artisan install:api   # publishes config, runs migration
+
+# 3. Add HasApiTokens to User model (if not present)
+# use Laravel\Sanctum\HasApiTokens;
+
+# 4. Generate resource, request, and policy stubs
+php artisan make:model Post -mf
+php artisan make:controller PostController --api --model=Post
+php artisan make:controller AuthController
+php artisan make:request StorePostRequest
+php artisan make:resource PostResource
+php artisan make:resource UserResource
+php artisan make:policy PostPolicy --model=Post
+
+# 5. Write migrations, model, request, resource, and controllers
+#    as shown above
+
+# 6. Configure .env
+# DB_CONNECTION=sqlite  (or mysql/pgsql)
+# DB_DATABASE=/absolute/path/to/database/database.sqlite
+
+# 7. Run migrations and seed
+php artisan migrate
+php artisan db:seed   # optional
+
+# 8. Start dev server
+php artisan serve
+# API base: http://localhost:8000/api
+```
+
+### Project structure
+
+```
+my-laravel-api/
+├── app/
+│   ├── Http/
+│   │   ├── Controllers/
+│   │   │   ├── AuthController.php
+│   │   │   └── PostController.php
+│   │   ├── Requests/
+│   │   │   └── StorePostRequest.php
+│   │   └── Resources/
+│   │       ├── PostResource.php
+│   │       └── UserResource.php
+│   ├── Models/
+│   │   ├── Post.php
+│   │   └── User.php
+│   └── Policies/
+│       └── PostPolicy.php
+├── database/
+│   ├── factories/
+│   │   └── PostFactory.php
+│   └── migrations/
+│       └── xxxx_create_posts_table.php
+├── routes/
+│   └── api.php
+├── tests/
+│   └── Feature/
+│       └── PostApiTest.php
+├── .env
+└── composer.json
+```
+
+### First things to customize
+
+- `database/migrations/xxxx_create_posts_table.php` — add/remove columns for your domain
+- `app/Models/Post.php` `$fillable` — keep in sync with your migration
+- `app/Policies/PostPolicy.php` — define ownership rules for each action
+- `routes/api.php` — add your own `apiResource` routes
+- `.env` `APP_NAME`, `DB_*` — rename and point to your database
+- Token expiration: set `'expiration'` in `config/sanctum.php` for time-limited tokens
