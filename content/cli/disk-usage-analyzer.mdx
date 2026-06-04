@@ -1,0 +1,110 @@
+---
+title: Disk Usage Analyzer
+description: Recursively display the top disk-consuming directories sorted by size, with human-readable output and a configurable depth limit.
+category: cli
+language: bash
+tags: [system, disk, storage, analysis]
+---
+
+Add this shell function to your `~/.zshrc` or `~/.bashrc` to quickly find what is eating your disk space. It sorts directories by size, limits traversal depth, and skips virtual filesystems.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+# Usage: dua [path] [depth] [top-n]
+# Defaults: current directory, depth 2, top 20
+dua() {
+  local target="${1:-.}"
+  local depth="${2:-2}"
+  local top="${3:-20}"
+
+  if [[ ! -d "$target" ]]; then
+    echo "Error: '$target' is not a directory"
+    return 1
+  fi
+
+  echo "Top $top directories in '$target' (depth $depth):"
+  echo "──────────────────────────────────────────────────"
+
+  if [[ "$(uname)" == "Darwin" ]]; then
+    # macOS: du does not support --exclude-type, skip known virtual paths manually
+    du -hd "$depth" "$target" 2>/dev/null \
+      | grep -v '/proc\|/sys\|/dev' \
+      | sort -rh \
+      | head -n "$top"
+  else
+    # Linux: exclude tmpfs, devtmpfs, proc
+    du -h --max-depth="$depth" \
+       --exclude=/proc \
+       --exclude=/sys \
+       --exclude=/dev \
+       "$target" 2>/dev/null \
+      | sort -rh \
+      | head -n "$top"
+  fi
+}
+
+# Alias: analyse from current directory, depth 1, top 10 — fast overview
+alias dquick='dua . 1 10'
+
+# Alias: find the largest individual files (not dirs) under a path
+bigfiles() {
+  local target="${1:-.}"
+  local top="${2:-20}"
+  find "$target" -type f -not -path '*/\.*' 2>/dev/null \
+    | xargs du -h 2>/dev/null \
+    | sort -rh \
+    | head -n "$top"
+}
+```
+
+After adding the functions, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# Analyse current directory, default depth (2), top 20
+dua
+
+# Analyse home directory at depth 3, show top 30
+dua ~ 3 30
+
+# Quick top-10 overview of current directory at depth 1
+dquick
+
+# Find the 15 largest files under ~/Downloads
+bigfiles ~/Downloads 15
+
+# Find what is consuming space in node_modules
+dua ./node_modules 1 10
+```
+
+## Options
+
+| Argument | Default | Description |
+|---|---|---|
+| `path` | `.` (current dir) | Root directory to analyse |
+| `depth` | `2` | How many directory levels deep to recurse |
+| `top-n` | `20` | How many results to display |
+
+## How it works
+
+- `du -h` produces human-readable sizes (KB, MB, GB).
+- `-d` / `--max-depth` caps recursion so the output stays manageable.
+- `sort -rh` sorts by human-readable size in descending order (handles K/M/G suffixes correctly).
+- `head -n` trims the output to the requested count.
+- Virtual and pseudo-filesystems (`/proc`, `/sys`, `/dev`) are excluded to avoid misleading numbers and permission errors.
+- `bigfiles` uses `find` instead of `du` to target individual files rather than directories, useful for hunting large logs or archives.
+
+## Notes
+
+- On macOS, `du -d` is the BSD equivalent of GNU `du --max-depth`.
+- `sort -h` (human-numeric sort) requires GNU coreutils. On macOS install via `brew install coreutils` if the flag is unrecognised.
+- Add `-x` to the `du` call (`du -hxd "$depth"`) to restrict analysis to the current filesystem and avoid crossing mount points.
+- `node_modules` directories can be individually large; run `dua . 1` inside a monorepo to compare package sizes quickly.
