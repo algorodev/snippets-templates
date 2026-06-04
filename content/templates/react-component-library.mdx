@@ -1,0 +1,283 @@
+---
+title: React Component Library
+description: A template for building and publishing a reusable React component library with Vite, TypeScript, and automated releases via Changesets. Includes Storybook for visual testing and npm publish configuration.
+category: templates
+language: TypeScript
+tags: [react, component-library, vite, storybook, changesets]
+---
+
+A production-ready scaffold for building and shipping a reusable React component library — Vite in library mode generates ESM and CJS bundles with declaration files, Storybook provides an isolated development environment, and Changesets automates semantic versioning and changelog generation on every merge to main.
+
+## Usage
+
+```bash
+# Install and run Storybook during development
+npm install
+npm run storybook
+
+# Build the distributable library
+npm run build
+
+# Bump version and generate changelog
+npx changeset
+npx changeset version
+npm publish
+```
+
+## Vite library config
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import dts from "vite-plugin-dts";
+import { resolve } from "path";
+
+export default defineConfig({
+  plugins: [
+    react(),
+    dts({
+      insertTypesEntry: true,
+      include: ["src/lib"],
+    }),
+  ],
+  build: {
+    lib: {
+      entry: resolve(__dirname, "src/lib/index.ts"),
+      name: "MyComponentLibrary",
+      formats: ["es", "cjs"],
+      fileName: (format) => `index.${format === "es" ? "mjs" : "cjs"}`,
+    },
+    rollupOptions: {
+      // Treat React as a peer dependency — do not bundle it
+      external: ["react", "react-dom", "react/jsx-runtime"],
+      output: {
+        globals: {
+          react: "React",
+          "react-dom": "ReactDOM",
+        },
+      },
+    },
+    sourcemap: true,
+    emptyOutDir: true,
+  },
+});
+```
+
+## package.json exports
+
+```json
+{
+  "name": "my-component-library",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc && vite build",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "lint": "eslint src --ext ts,tsx"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  }
+}
+```
+
+## Example component
+
+```typescript
+// src/lib/components/Button/Button.tsx
+import type { ButtonHTMLAttributes, ReactNode } from "react";
+import styles from "./Button.module.css";
+
+export type ButtonVariant = "primary" | "secondary" | "ghost";
+export type ButtonSize = "sm" | "md" | "lg";
+
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  loading?: boolean;
+  children: ReactNode;
+}
+
+export function Button({
+  variant = "primary",
+  size = "md",
+  loading = false,
+  disabled,
+  children,
+  className,
+  ...props
+}: ButtonProps) {
+  return (
+    <button
+      {...props}
+      disabled={disabled || loading}
+      className={[
+        styles.button,
+        styles[variant],
+        styles[size],
+        loading ? styles.loading : "",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {loading ? <span className={styles.spinner} aria-hidden /> : null}
+      {children}
+    </button>
+  );
+}
+```
+
+## Storybook story
+
+```typescript
+// src/lib/components/Button/Button.stories.tsx
+import type { Meta, StoryObj } from "@storybook/react";
+import { Button } from "./Button";
+
+const meta: Meta<typeof Button> = {
+  title: "Components/Button",
+  component: Button,
+  tags: ["autodocs"],
+  argTypes: {
+    variant: { control: "select", options: ["primary", "secondary", "ghost"] },
+    size: { control: "select", options: ["sm", "md", "lg"] },
+    loading: { control: "boolean" },
+    disabled: { control: "boolean" },
+  },
+};
+
+export default meta;
+type Story = StoryObj<typeof Button>;
+
+export const Primary: Story = {
+  args: { variant: "primary", children: "Click me" },
+};
+
+export const Secondary: Story = {
+  args: { variant: "secondary", children: "Click me" },
+};
+
+export const Loading: Story = {
+  args: { variant: "primary", loading: true, children: "Saving…" },
+};
+```
+
+## Library entry point
+
+```typescript
+// src/lib/index.ts — re-export everything consumers will use
+export { Button } from "./components/Button/Button";
+export type { ButtonProps, ButtonVariant, ButtonSize } from "./components/Button/Button";
+
+// Add every component export here as you build the library
+```
+
+## Changesets workflow
+
+```bash
+# 1. After making changes, create a changeset describing what changed
+npx changeset
+# Select packages, choose bump type (major/minor/patch), write a summary
+
+# 2. On the release branch, apply all pending changesets
+npx changeset version
+# This bumps package.json versions and updates CHANGELOG.md
+
+# 3. Publish to npm
+npm run build
+npm publish
+```
+
+## README
+
+### What this includes
+
+- **Vite library mode** — Dual ESM + CJS output with TypeScript declaration files via `vite-plugin-dts`
+- **React** as a peer dependency — not bundled into the output
+- **Storybook 8** — Isolated component development with `autodocs` and Controls addon
+- **Changesets** — Semantic versioning, automated changelog, and npm publish workflow
+- **CSS Modules** — Scoped styles that do not leak into consumer apps
+- **TypeScript** — Strict mode, declaration files emitted to `dist/`
+- **`package.json` exports map** — Correct ESM/CJS/types resolution for all module systems
+
+### Prerequisites
+
+- Node.js 18+
+- npm account (for publishing) — run `npm login` before first publish
+
+### Create this template
+
+```bash
+# 1. Create a new Vite project (React + TypeScript)
+npm create vite@latest my-lib -- --template react-ts
+cd my-lib
+
+# 2. Install build and DTS dependencies
+npm install -D vite-plugin-dts
+
+# 3. Install Storybook
+npx storybook@latest init
+
+# 4. Install Changesets
+npm install -D @changesets/cli
+npx changeset init
+
+# 5. Update vite.config.ts with the library mode config shown above
+
+# 6. Update package.json with the exports map shown above
+
+# 7. Create src/lib/index.ts as the library entry point
+
+# 8. Start building components
+npm run storybook
+```
+
+### Project structure
+
+```
+my-lib/
+├── .changeset/
+│   └── config.json          # Changesets configuration
+├── .storybook/
+│   ├── main.ts
+│   └── preview.ts
+├── src/
+│   ├── lib/                 # Everything exported to consumers
+│   │   ├── components/
+│   │   │   └── Button/
+│   │   │       ├── Button.tsx
+│   │   │       ├── Button.module.css
+│   │   │       └── Button.stories.tsx
+│   │   └── index.ts         # Public API entry point
+│   └── App.tsx              # Dev sandbox (not published)
+├── dist/                    # Built output (gitignored)
+│   ├── index.mjs
+│   ├── index.cjs
+│   └── index.d.ts
+├── package.json
+├── tsconfig.json
+└── vite.config.ts
+```
+
+### First things to customize
+
+- `package.json` — Set `name`, `version`, `description`, `repository`, `author`, and `license`
+- `src/lib/index.ts` — Delete the `Button` exports and add your own components
+- `.changeset/config.json` — Set `"access": "public"` if publishing a public scoped package
+- `vite.config.ts` — Update `name` in the `lib` option to match your library's global name
+- `README.md` — Replace the placeholder with real usage examples for your consumers
