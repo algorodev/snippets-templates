@@ -1,0 +1,91 @@
+---
+title: .nvmrc Config
+description: A minimal .nvmrc file pinning the Node.js version for a project, compatible with nvm, fnm, and Volta. Ensures all contributors and CI use the same Node.js version.
+category: configs
+language: toml
+tags: [nvm, nodejs, version-management, nvmrc]
+---
+
+A single-line `.nvmrc` at the project root tells `nvm`, `fnm`, and Volta which Node.js version to use, eliminating "works on my machine" version drift between contributors and CI.
+
+## Usage
+
+```toml
+22.14.0
+```
+
+Place this file at the repository root. Use the full `MAJOR.MINOR.PATCH` form so every tool resolves the exact same release.
+
+## Switching versions automatically
+
+### nvm
+
+```bash
+# Install the pinned version (first time)
+nvm install
+
+# Switch to the pinned version in any shell session
+nvm use
+
+# Auto-switch when entering the directory (add to ~/.zshrc or ~/.bashrc)
+autoload -U add-zsh-hook
+load-nvmrc() {
+  local nvmrc_path
+  nvmrc_path="$(nvm_find_nvmrc)"
+  if [ -n "$nvmrc_path" ]; then
+    local nvmrc_node_version
+    nvmrc_node_version=$(nvm version "$(cat "${nvmrc_path}")")
+    if [ "$nvmrc_node_version" = "N/A" ]; then
+      nvm install
+    elif [ "$nvmrc_node_version" != "$(nvm version)" ]; then
+      nvm use
+    fi
+  elif [ -n "$(PWD=$OLDPWD nvm_find_nvmrc)" ]; then
+    echo "Reverting to nvm default version"
+    nvm use default
+  fi
+}
+add-zsh-hook chpwd load-nvmrc
+load-nvmrc
+```
+
+### fnm
+
+```bash
+# Install the pinned version (first time)
+fnm install
+
+# Switch to the pinned version
+fnm use
+
+# Auto-switch on directory change (add to shell profile)
+eval "$(fnm env --use-on-cd)"
+```
+
+### GitHub Actions / CI
+
+```yaml
+- name: Set up Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version-file: .nvmrc
+    cache: npm
+```
+
+`actions/setup-node` reads `.nvmrc` directly when you pass `node-version-file`, so the CI Node version always tracks the file.
+
+## Notes
+
+You can also use an alias (`lts/iron`, `20`, `lts/*`) instead of a full version string — `nvm` and `fnm` both resolve aliases. However, aliases can resolve to different patch releases over time, so pinning to an exact version is safer for reproducible builds.
+
+If you use Volta, the equivalent is the `"volta"` key in `package.json`:
+
+```json
+{
+  "volta": {
+    "node": "22.14.0"
+  }
+}
+```
+
+Volta does not read `.nvmrc`, but it provides the same auto-switching behaviour without any shell hook configuration.
