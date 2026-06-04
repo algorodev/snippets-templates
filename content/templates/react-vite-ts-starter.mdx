@@ -1,0 +1,229 @@
+---
+title: React + Vite TypeScript Starter
+description: A minimal but complete React starter powered by Vite with TypeScript, ESLint, Prettier, and path aliases configured out of the box. A clean foundation for any client-side React application.
+category: templates
+language: TypeScript
+tags: [react, vite, typescript, eslint, starter]
+---
+
+A deliberately lean React starter that gets you into productive development in under a minute — TypeScript strict mode, ESLint with the recommended React rules, Prettier with a sensible default config, and `@/` path aliases already wired through both Vite and TypeScript. Nothing more, nothing less.
+
+## Usage
+
+```bash
+# Scaffold with the official Vite template
+npm create vite@latest my-app -- --template react-ts
+cd my-app
+npm install
+npm run dev
+```
+
+## Configuration
+
+The starter ships with sane defaults, but these files are where you will spend the first few minutes:
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import path from "path";
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+});
+```
+
+```json
+// tsconfig.json  (paths mirror the Vite alias)
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src"]
+}
+```
+
+```json
+// .eslintrc.cjs
+{
+  "root": true,
+  "env": { "browser": true, "es2020": true },
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:react-hooks/recommended",
+    "plugin:react/recommended",
+    "plugin:react/jsx-runtime"
+  ],
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["react-refresh"],
+  "rules": {
+    "react-refresh/only-export-components": ["warn", { "allowConstantExport": true }]
+  },
+  "settings": {
+    "react": { "version": "detect" }
+  }
+}
+```
+
+```json
+// .prettierrc
+{
+  "semi": true,
+  "singleQuote": false,
+  "tabWidth": 2,
+  "trailingComma": "es5",
+  "printWidth": 100,
+  "plugins": []
+}
+```
+
+## Example component
+
+```typescript
+// src/components/Counter.tsx
+import { useState } from "react";
+
+interface CounterProps {
+  initialCount?: number;
+  label?: string;
+}
+
+export function Counter({ initialCount = 0, label = "Count" }: CounterProps) {
+  const [count, setCount] = useState(initialCount);
+
+  return (
+    <div>
+      <p>
+        {label}: {count}
+      </p>
+      <button onClick={() => setCount((c) => c + 1)}>Increment</button>
+      <button onClick={() => setCount((c) => c - 1)}>Decrement</button>
+      <button onClick={() => setCount(initialCount)}>Reset</button>
+    </div>
+  );
+}
+```
+
+```typescript
+// src/App.tsx  — using the @ alias
+import { Counter } from "@/components/Counter";
+
+function App() {
+  return (
+    <main>
+      <h1>My App</h1>
+      <Counter initialCount={0} label="Clicks" />
+    </main>
+  );
+}
+
+export default App;
+```
+
+## Scripts
+
+```json
+{
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "format": "prettier --write src"
+  }
+}
+```
+
+## README
+
+### What this includes
+
+- **Vite** — Instant HMR dev server and optimised production builds
+- **React 18** — Concurrent features ready
+- **TypeScript** — Strict mode enabled, `bundler` module resolution
+- **ESLint** — `@typescript-eslint`, `react-hooks`, `react-refresh` plugins
+- **Prettier** — Consistent formatting, integrated with ESLint
+- **Path aliases** — `@/` maps to `src/` in both Vite and TypeScript
+- **`tsc` pre-build check** — Type errors fail the build
+
+### Prerequisites
+
+- Node.js 18+
+- npm / pnpm / yarn
+
+### Create this template
+
+```bash
+# 1. Scaffold the official Vite React-TS template
+npm create vite@latest my-app -- --template react-ts
+cd my-app
+
+# 2. Install base dependencies
+npm install
+
+# 3. Add ESLint + Prettier tooling
+npm install -D \
+  eslint \
+  @typescript-eslint/eslint-plugin \
+  @typescript-eslint/parser \
+  eslint-plugin-react \
+  eslint-plugin-react-hooks \
+  eslint-plugin-react-refresh \
+  prettier
+
+# 4. Add path alias support (so TypeScript resolves @/ imports)
+npm install -D @types/node
+
+# 5. Update vite.config.ts, tsconfig.json, .eslintrc.cjs, .prettierrc
+#    with the config shown in the Configuration section above
+
+# 6. Start the dev server
+npm run dev
+```
+
+### Project structure
+
+```
+my-app/
+├── public/
+│   └── vite.svg
+├── src/
+│   ├── assets/
+│   ├── components/       # Your components (use @/components/...)
+│   ├── hooks/            # Custom hooks
+│   ├── App.tsx
+│   ├── main.tsx
+│   └── vite-env.d.ts
+├── .eslintrc.cjs
+├── .prettierrc
+├── index.html
+├── tsconfig.json
+├── tsconfig.node.json
+└── vite.config.ts
+```
+
+### First things to customize
+
+- `src/App.tsx` — Replace the Vite/React demo with your own root component
+- `src/index.css` — Add your global styles or swap in Tailwind/CSS Modules
+- `vite.config.ts` — Add extra plugins (e.g. `vite-tsconfig-paths`, `@vitejs/plugin-react-swc`)
+- `tsconfig.json` — Adjust `target` and `lib` if you need to support older environments
+- `.prettierrc` — Change `singleQuote`, `semi`, or `printWidth` to match your team's preference
