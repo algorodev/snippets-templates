@@ -1,0 +1,56 @@
+---
+title: Get ISO Week Number
+description: Returns the ISO 8601 week number and year for a given date. Handles edge cases where the week belongs to the previous or next calendar year.
+category: snippets
+language: typescript
+tags: [date, utils, iso, week]
+---
+
+Returns the ISO 8601 week number (1–53) and the corresponding ISO year for any given date. The ISO year can differ from the calendar year around New Year — this function handles that correctly.
+
+## Usage
+
+```typescript
+function getISOWeek(date: Date): { week: number; year: number } {
+  // Copy date to avoid mutating the original, then set to nearest Thursday
+  // (ISO weeks are defined by which Thursday falls in them)
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const dayOfWeek = d.getUTCDay() === 0 ? 7 : d.getUTCDay() // Sunday → 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayOfWeek)
+
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const week = Math.ceil(((d.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7)
+
+  return { week, year: d.getUTCFullYear() }
+}
+
+export default getISOWeek
+```
+
+## Examples
+
+```typescript
+// Regular mid-year date
+getISOWeek(new Date('2024-06-15'))
+// => { week: 24, year: 2024 }
+
+// 2024-12-31 belongs to week 1 of ISO year 2025
+getISOWeek(new Date('2024-12-31'))
+// => { week: 1, year: 2025 }
+
+// 2021-01-01 belongs to week 53 of ISO year 2020
+getISOWeek(new Date('2021-01-01'))
+// => { week: 53, year: 2020 }
+
+// Format as ISO week string: "2024-W24"
+function formatISOWeek(date: Date): string {
+  const { week, year } = getISOWeek(date)
+  return `${year}-W${String(week).padStart(2, '0')}`
+}
+
+formatISOWeek(new Date('2024-06-15')) // => "2024-W24"
+```
+
+## How it works
+
+ISO 8601 defines week 1 as the week containing the year's first Thursday. The algorithm shifts each date to the nearest Thursday, then calculates how many full 7-day periods have elapsed since January 1 of the resulting year. Because the Thursday anchor is used for both the input date and the year start, the ISO year returned may be one less or one more than the Gregorian calendar year for dates in the first or last few days of January/December.
