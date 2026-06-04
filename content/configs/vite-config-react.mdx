@@ -1,0 +1,93 @@
+---
+title: Vite Config for React
+description: A ready-to-use Vite configuration for React applications with the official React plugin and path alias support. Includes dev server proxy setup and build optimizations.
+category: configs
+language: javascript
+tags: [vite, react, build-tool, bundler]
+---
+
+Production-ready Vite config for React apps with `@` path aliases, a dev-server proxy for local API calls, and chunk-splitting that keeps vendor code separate from application code.
+
+## Usage
+
+```javascript
+// vite.config.js
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { resolve } from 'path'
+
+export default defineConfig({
+  plugins: [react()],
+
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, 'src'),
+    },
+  },
+
+  server: {
+    port: 3000,
+    open: true,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    },
+  },
+
+  build: {
+    outDir: 'dist',
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+        },
+      },
+    },
+  },
+
+  preview: {
+    port: 4173,
+  },
+})
+```
+
+**Install:**
+
+```bash
+npm create vite@latest my-app -- --template react
+cd my-app
+npm install
+```
+
+## Options
+
+| Field | Default | Effect |
+|-------|---------|--------|
+| `server.port` | `5173` | Port for the dev server |
+| `server.open` | `false` | Auto-open browser on start |
+| `server.proxy` | — | Proxy requests matching a path prefix to another origin |
+| `build.sourcemap` | `false` | Emit source maps alongside build output |
+| `build.outDir` | `'dist'` | Directory for production output |
+| `resolve.alias` | — | Path aliases resolved by Vite and Rollup |
+
+## Notes
+
+- The `manualChunks` entry keeps `react` and `react-dom` in a separate `vendor` chunk so that application code changes do not bust the vendor cache.
+- `changeOrigin: true` in the proxy config rewrites the `Host` header to match the target, which is required by most API servers.
+- Use `@vitejs/plugin-react-swc` instead of `@vitejs/plugin-react` to swap Babel for SWC and get faster HMR in large projects.
+- For TypeScript projects, add a matching `paths` entry in `tsconfig.json` so the compiler also resolves `@/*` imports:
+
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  }
+}
+```
