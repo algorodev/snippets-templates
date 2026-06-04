@@ -1,0 +1,149 @@
+---
+title: CSV to JSON Converter
+description: Convert a CSV file with headers to a JSON array using only standard Unix tools, with optional key-name normalisation.
+category: cli
+language: bash
+tags: [misc, csv, json, data]
+---
+
+Convert a CSV file to a JSON array of objects using only standard Unix tools (`awk`, `sed`) plus `jq` for the final encoding step. The first row is treated as headers. An optional normalisation step lowercases keys and replaces spaces with underscores.
+
+## Usage
+
+```bash
+# ── csv2json ──────────────────────────────────────────────────────────────────
+# Dependencies: awk, jq (brew install jq / apt install jq)
+#
+# Usage:
+#   csv2json input.csv              # print JSON array to stdout
+#   csv2json input.csv output.json  # write to file
+#   csv2json -n input.csv           # normalise header names
+#   cat data.csv | csv2json         # read from stdin
+
+function csv2json() {
+  local normalise=0
+  local input="-"   # default: stdin
+  local output=""
+
+  # Parse flags
+  while [[ "$1" == -* ]]; do
+    case "$1" in
+      -n|--normalise|--normalize) normalise=1 ;;
+      *) echo "Unknown flag: $1" >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  [[ -n "$1" ]] && input="$1"
+  [[ -n "$2" ]] && output="$2"
+
+  # Read the CSV (handle stdin vs file)
+  local csv_data
+  if [[ "$input" == "-" ]]; then
+    csv_data=$(cat)
+  else
+    if [[ ! -f "$input" ]]; then
+      echo "File not found: $input" >&2
+      return 1
+    fi
+    csv_data=$(cat "$input")
+  fi
+
+  # Convert with awk: parse headers from row 1, emit JSON objects for the rest
+  local json
+  json=$(echo "$csv_data" | awk '
+  BEGIN { FS=","; OFS="" }
+  NR==1 {
+    # Store headers
+    for (i=1; i<=NF; i++) {
+      gsub(/\r/, "", $i)   # strip Windows CR
+      headers[i] = $i
+    }
+    ncols = NF
+    print "["
+    next
+  }
+  {
+    gsub(/\r/, "")          # strip Windows CR on data rows
+    if (NR > 2) print ","
+    printf "  {"
+    for (i=1; i<=ncols; i++) {
+      val = $i
+      # Escape double-quotes inside values
+      gsub(/"/, "\\\"", val)
+      printf "%s\"%s\": \"%s\"", (i>1 ? ", " : ""), headers[i], val
+    }
+    printf "}"
+  }
+  END { print "\n]" }
+  ')
+
+  # Optionally normalise key names (lowercase + spaces → underscores)
+  if [[ "$normalise" -eq 1 ]]; then
+    json=$(echo "$json" | jq '[.[] | with_entries(.key |= (ascii_downcase | gsub(" "; "_")))]')
+  else
+    # Still pass through jq to validate and pretty-print
+    json=$(echo "$json" | jq '.')
+  fi
+
+  if [[ -n "$output" ]]; then
+    echo "$json" > "$output"
+    echo "Written to $output"
+  else
+    echo "$json"
+  fi
+}
+```
+
+## Examples
+
+```bash
+# Basic conversion — prints to stdout
+csv2json users.csv
+
+# Write output to a file
+csv2json users.csv users.json
+
+# Normalise headers: "First Name" → "first_name"
+csv2json -n employees.csv
+
+# Pipe from another command
+curl -s https://example.com/data.csv | csv2json -n
+
+# Chain with jq to filter the result
+csv2json users.csv | jq '[.[] | select(.country == "US")]'
+```
+
+## Input / output
+
+Given `users.csv`:
+
+```
+First Name,Last Name,Email
+Alice,Smith,alice@example.com
+Bob,Jones,bob@example.com
+```
+
+Running `csv2json -n users.csv` produces:
+
+```json
+[
+  {
+    "first_name": "Alice",
+    "last_name": "Smith",
+    "email": "alice@example.com"
+  },
+  {
+    "first_name": "Bob",
+    "last_name": "Jones",
+    "email": "bob@example.com"
+  }
+]
+```
+
+## Notes
+
+- **Limitations**: the awk parser handles simple CSVs correctly. It does not handle quoted fields that contain commas or embedded newlines (e.g. `"Smith, Jr."`). For those cases use Python's `csv` module or [`csvkit`](https://csvkit.readthedocs.io/): `csvjson data.csv`.
+- `jq` is used for the final pretty-print and key normalisation step. Install it with `brew install jq` or `apt install jq`.
+- Windows-style line endings (`\r\n`) are stripped automatically.
+- All values are emitted as strings. If you need typed numbers or booleans, pipe the result through `jq` with explicit type coercions, e.g. `.[] |= (.age |= tonumber)`.
