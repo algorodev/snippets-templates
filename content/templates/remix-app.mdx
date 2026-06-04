@@ -1,0 +1,325 @@
+---
+title: Remix App
+description: A Remix full-stack web application starter with nested routing, loader/action data patterns, Prisma ORM, and session-based authentication.
+category: templates
+language: TypeScript
+tags: [remix, react, typescript, prisma, full-stack]
+repo: https://github.com/remix-run/remix
+---
+
+A full-stack Remix starter using nested routing, `loader`/`action` co-location, Prisma ORM for type-safe database access, and cookie-based session authentication — all with progressive enhancement out of the box.
+
+## Usage
+
+```typescript
+// prisma/schema.prisma
+// Run `npx prisma generate` after editing this file.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  posts     Post[]
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  published Boolean  @default(false)
+  createdAt DateTime @default(now())
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId  String
+}
+```
+
+```typescript
+// app/utils/session.server.ts
+import { createCookieSessionStorage, redirect } from '@remix-run/node'
+import bcrypt from 'bcryptjs'
+import { prisma } from './db.server'
+
+const sessionStorage = createCookieSessionStorage({
+  cookie: {
+    name: '__session',
+    httpOnly: true,
+    path: '/',
+    sameSite: 'lax',
+    secrets: [process.env.SESSION_SECRET!],
+    secure: process.env.NODE_ENV === 'production',
+  },
+})
+
+export async function createUserSession(userId: string, redirectTo: string) {
+  const session = await sessionStorage.getSession()
+  session.set('userId', userId)
+  return redirect(redirectTo, {
+    headers: { 'Set-Cookie': await sessionStorage.commitSession(session) },
+  })
+}
+
+export async function getUserId(request: Request): Promise<string | null> {
+  const session = await sessionStorage.getSession(request.headers.get('Cookie'))
+  return session.get('userId') ?? null
+}
+
+export async function requireUserId(request: Request, redirectTo = '/login') {
+  const userId = await getUserId(request)
+  if (!userId) {
+    const params = new URLSearchParams([['redirectTo', request.url]])
+    throw redirect(`${redirectTo}?${params}`)
+  }
+  return userId
+}
+
+export async function logout(request: Request) {
+  const session = await sessionStorage.getSession(request.headers.get('Cookie'))
+  return redirect('/login', {
+    headers: { 'Set-Cookie': await sessionStorage.destroySession(session) },
+  })
+}
+
+export async function verifyLogin(email: string, password: string) {
+  const user = await prisma.user.findUnique({ where: { email } })
+  if (!user) return null
+  const valid = await bcrypt.compare(password, user.password)
+  return valid ? user : null
+}
+```
+
+```typescript
+// app/routes/posts._index.tsx
+import { json } from '@remix-run/node'
+import { Link, useLoaderData } from '@remix-run/react'
+import { requireUserId } from '~/utils/session.server'
+import { prisma } from '~/utils/db.server'
+import type { LoaderFunctionArgs } from '@remix-run/node'
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const userId = await requireUserId(request)
+  const posts = await prisma.post.findMany({
+    where: { authorId: userId },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, title: true, published: true, createdAt: true },
+  })
+  return json({ posts })
+}
+
+export default function PostsIndex() {
+  const { posts } = useLoaderData<typeof loader>()
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-12">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-bold">My Posts</h1>
+        <Link
+          to="new"
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          New post
+        </Link>
+      </div>
+
+      {posts.length === 0 ? (
+        <p className="text-neutral-500">No posts yet.</p>
+      ) : (
+        <ul className="divide-y">
+          {posts.map((post) => (
+            <li key={post.id} className="flex items-center justify-between py-4">
+              <div>
+                <Link to={post.id} className="font-medium hover:underline">
+                  {post.title}
+                </Link>
+                <p className="text-sm text-neutral-500">
+                  {new Date(post.createdAt).toLocaleDateString()}
+                  {' · '}
+                  <span className={post.published ? 'text-green-600' : 'text-yellow-600'}>
+                    {post.published ? 'Published' : 'Draft'}
+                  </span>
+                </p>
+              </div>
+              <Link to={`${post.id}/edit`} className="text-sm text-blue-600 hover:underline">
+                Edit
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+```
+
+```typescript
+// app/routes/posts.new.tsx
+import { redirect, json } from '@remix-run/node'
+import { Form, useActionData } from '@remix-run/react'
+import { requireUserId } from '~/utils/session.server'
+import { prisma } from '~/utils/db.server'
+import type { ActionFunctionArgs } from '@remix-run/node'
+
+export async function action({ request }: ActionFunctionArgs) {
+  const userId = await requireUserId(request)
+  const formData = await request.formData()
+  const title = String(formData.get('title') ?? '').trim()
+  const body = String(formData.get('body') ?? '').trim()
+
+  const errors: Record<string, string> = {}
+  if (!title) errors.title = 'Title is required.'
+  if (!body) errors.body = 'Body is required.'
+  if (Object.keys(errors).length) return json({ errors }, { status: 400 })
+
+  const post = await prisma.post.create({
+    data: { title, body, authorId: userId },
+  })
+
+  return redirect(`/posts/${post.id}`)
+}
+
+export default function NewPost() {
+  const actionData = useActionData<typeof action>()
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-12">
+      <h1 className="mb-6 text-2xl font-bold">New Post</h1>
+      <Form method="post" className="space-y-4">
+        <div>
+          <label htmlFor="title" className="block text-sm font-medium">
+            Title
+          </label>
+          <input
+            id="title"
+            name="title"
+            type="text"
+            className="mt-1 block w-full rounded-md border px-3 py-2 text-sm"
+          />
+          {actionData?.errors.title && (
+            <p className="mt-1 text-sm text-red-600">{actionData.errors.title}</p>
+          )}
+        </div>
+        <div>
+          <label htmlFor="body" className="block text-sm font-medium">
+            Body
+          </label>
+          <textarea
+            id="body"
+            name="body"
+            rows={8}
+            className="mt-1 block w-full rounded-md border px-3 py-2 text-sm"
+          />
+          {actionData?.errors.body && (
+            <p className="mt-1 text-sm text-red-600">{actionData.errors.body}</p>
+          )}
+        </div>
+        <button
+          type="submit"
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+        >
+          Create post
+        </button>
+      </Form>
+    </div>
+  )
+}
+```
+
+## Notes
+
+Every Remix route can export both a `loader` (GET) and an `action` (POST/PUT/DELETE) from the same file, keeping data fetching and mutations co-located with the UI. Forms submit to the nearest `action` by default — no `fetch` calls or state management needed for basic CRUD.
+
+## README
+
+### What this includes
+
+- **Nested routing** — layouts share data and UI with child routes via `<Outlet />`
+- **Loader/action pattern** — server data fetching and mutations co-located with each route file
+- **Prisma ORM** — type-safe database client with auto-generated types from your schema
+- **Cookie session auth** — `createCookieSessionStorage` with `requireUserId` guard utility
+- **bcryptjs** — secure password hashing for registration and login
+- **Progressive enhancement** — `<Form>` works without JavaScript; JS layer adds optimistic UI
+- **Error boundaries** — per-route `ErrorBoundary` exports for graceful error handling
+- **Tailwind CSS** — utility-first styling
+
+### Prerequisites
+
+- Node.js 20.9 or later
+- npm, pnpm, or bun
+
+### Create this template
+
+```bash
+# 1. Scaffold a new Remix app
+npx create-remix@latest my-app --template remix-run/remix/templates/remix
+cd my-app
+
+# 2. Install Prisma
+npm install prisma @prisma/client
+npx prisma init --datasource-provider sqlite
+
+# 3. Install bcrypt and Tailwind
+npm install bcryptjs
+npm install -D @types/bcryptjs tailwindcss @tailwindcss/vite
+
+# 4. Add Tailwind to vite.config.ts
+# (import tailwindcss from '@tailwindcss/vite' and add to plugins array)
+
+# 5. Add SESSION_SECRET to .env
+echo 'SESSION_SECRET="change-me-in-production-use-a-long-random-string"' >> .env
+echo 'DATABASE_URL="file:./dev.db"' >> .env
+
+# 6. Push the Prisma schema to the database
+npx prisma db push
+
+# 7. Generate the Prisma client
+npx prisma generate
+
+# 8. Start the dev server
+npm run dev
+```
+
+### Project structure
+
+```
+my-app/
+  app/
+    root.tsx                    # Root layout, global error boundary
+    entry.client.tsx            # Browser hydration entry
+    entry.server.tsx            # Server rendering entry
+    routes/
+      _index.tsx                # / — homepage
+      login.tsx                 # /login — login form + action
+      register.tsx              # /register — register form + action
+      logout.tsx                # /logout — action only (POST to sign out)
+      posts._index.tsx          # /posts — list user's posts
+      posts.new.tsx             # /posts/new — create post form
+      posts.$postId.tsx         # /posts/:postId — view single post
+      posts.$postId.edit.tsx    # /posts/:postId/edit — edit post
+    utils/
+      db.server.ts              # Prisma client singleton
+      session.server.ts         # Session helpers (create, get, require, logout)
+  prisma/
+    schema.prisma               # Database schema
+    dev.db                      # SQLite database (git-ignored)
+  public/
+  vite.config.ts
+  tailwind.config.ts
+  tsconfig.json
+```
+
+### First things to customize
+
+- `prisma/schema.prisma` — add your domain models, then run `npx prisma db push`
+- `.env` — replace `SESSION_SECRET` with a long random string before deploying
+- `app/root.tsx` — update the site name, nav links, and global `<Links>` / `<Meta>`
+- `app/utils/session.server.ts` — adjust cookie name, expiry, and `redirectTo` defaults
+- `app/routes/login.tsx` — add OAuth providers (GitHub, Google) via `remix-auth`
