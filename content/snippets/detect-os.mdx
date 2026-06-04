@@ -1,0 +1,64 @@
+---
+title: Detect Operating System
+description: Detects the user's operating system from the browser's user-agent string, returning a typed union of 'windows' | 'macos' | 'linux' | 'ios' | 'android' | 'unknown'. Falls back to navigator.userAgentData when available.
+category: snippets
+language: typescript
+tags: [dom, utils, browser, detection]
+---
+
+Returns one of six typed OS values by inspecting `navigator.userAgentData` first (modern browsers) and falling back to the legacy `navigator.userAgent` string.
+
+## Usage
+
+```typescript
+type OS = 'windows' | 'macos' | 'linux' | 'ios' | 'android' | 'unknown'
+
+function detectOS(): OS {
+  // Prefer the modern User-Agent Client Hints API
+  const uaData = (navigator as Navigator & {
+    userAgentData?: { platform: string }
+  }).userAgentData
+
+  if (uaData?.platform) {
+    const platform = uaData.platform.toLowerCase()
+    if (platform.includes('win'))     return 'windows'
+    if (platform.includes('mac'))     return 'macos'
+    if (platform.includes('linux'))   return 'linux'
+    if (platform.includes('android')) return 'android'
+  }
+
+  // Legacy user-agent fallback
+  const ua = navigator.userAgent
+
+  if (/android/i.test(ua))                          return 'android'
+  if (/iphone|ipad|ipod/i.test(ua))                 return 'ios'
+  if (/win(dows|32|64|ce|phone)/i.test(ua))         return 'windows'
+  if (/macintosh|mac os x/i.test(ua))               return 'macos'
+  if (/linux/i.test(ua))                            return 'linux'
+
+  return 'unknown'
+}
+
+export default detectOS
+```
+
+## Examples
+
+```typescript
+const os = detectOS()
+
+if (os === 'macos') {
+  console.log('Use ⌘ for shortcuts')
+} else if (os === 'windows') {
+  console.log('Use Ctrl for shortcuts')
+}
+
+// Conditional key-hint rendering
+const modKey = detectOS() === 'macos' ? '⌘' : 'Ctrl'
+```
+
+## Notes
+
+- `navigator.userAgentData` is available in Chromium-based browsers (Chrome, Edge 90+). Firefox and Safari fall through to the UA string.
+- iOS devices report `Macintosh` in desktop mode — check for iOS before macOS if mobile detection matters.
+- This snippet is browser-only; it will throw in Node.js or other non-browser environments.
