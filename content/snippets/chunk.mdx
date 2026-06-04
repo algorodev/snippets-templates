@@ -1,0 +1,55 @@
+---
+title: Chunk Array
+description: Splits an array into sub-arrays of a specified size, with the last chunk containing the remaining elements. Throws a range error for non-positive chunk sizes.
+category: snippets
+language: typescript
+tags: [array, utils, split]
+---
+
+Divides an array into consecutive sub-arrays of a given size. The final chunk holds whatever elements remain and may be smaller than the requested size.
+
+## Usage
+
+```typescript
+function chunk<T>(array: T[], size: number): T[][] {
+  if (size <= 0) {
+    throw new RangeError(`chunk: size must be a positive integer, got ${size}`)
+  }
+
+  const chunks: T[][] = []
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size))
+  }
+  return chunks
+}
+
+export default chunk
+```
+
+## Examples
+
+```typescript
+chunk([1, 2, 3, 4, 5], 2)
+// → [[1, 2], [3, 4], [5]]
+
+chunk(['a', 'b', 'c', 'd', 'e', 'f'], 3)
+// → [['a', 'b', 'c'], ['d', 'e', 'f']]
+
+// Chunk size larger than the array — returns one chunk
+chunk([1, 2, 3], 10)
+// → [[1, 2, 3]]
+
+// Chunk size of 1 — each element becomes its own sub-array
+chunk([1, 2, 3], 1)
+// → [[1], [2], [3]]
+
+// Throws for invalid size
+chunk([1, 2, 3], 0)
+// RangeError: chunk: size must be a positive integer, got 0
+```
+
+## Notes
+
+- The original array is never mutated; `Array.prototype.slice` produces new sub-arrays.
+- Passing a non-integer size (e.g. `2.5`) is not guarded — use `Math.floor` on the caller side if needed.
+- Useful for batching API requests, paginating lists, or rendering grid rows from a flat data source.
