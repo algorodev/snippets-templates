@@ -1,0 +1,78 @@
+---
+title: Date Difference
+description: Calculates the difference between two dates in a specified unit: milliseconds, seconds, minutes, hours, days, weeks, or months. Returns a signed integer.
+category: snippets
+language: typescript
+tags: [date, utils, arithmetic, diff]
+---
+
+Returns a signed integer so you can tell which date comes first — positive means `a` is after `b`, negative means `a` is before `b`.
+
+## Usage
+
+```typescript
+type DateDiffUnit =
+  | 'milliseconds'
+  | 'seconds'
+  | 'minutes'
+  | 'hours'
+  | 'days'
+  | 'weeks'
+  | 'months'
+
+function dateDiff(a: Date, b: Date, unit: DateDiffUnit = 'days'): number {
+  const ms = a.getTime() - b.getTime()
+
+  switch (unit) {
+    case 'milliseconds':
+      return ms
+    case 'seconds':
+      return Math.trunc(ms / 1_000)
+    case 'minutes':
+      return Math.trunc(ms / (1_000 * 60))
+    case 'hours':
+      return Math.trunc(ms / (1_000 * 60 * 60))
+    case 'days':
+      return Math.trunc(ms / (1_000 * 60 * 60 * 24))
+    case 'weeks':
+      return Math.trunc(ms / (1_000 * 60 * 60 * 24 * 7))
+    case 'months': {
+      const yearDiff = a.getFullYear() - b.getFullYear()
+      const monthDiff = a.getMonth() - b.getMonth()
+      return yearDiff * 12 + monthDiff
+    }
+    default:
+      throw new Error(`Unknown unit: ${unit satisfies never}`)
+  }
+}
+
+export default dateDiff
+```
+
+## Examples
+
+```typescript
+const start = new Date('2024-01-01')
+const end   = new Date('2024-03-15')
+
+dateDiff(end, start, 'days')
+// → 74
+
+dateDiff(end, start, 'weeks')
+// → 10
+
+dateDiff(end, start, 'months')
+// → 2
+
+dateDiff(start, end, 'days')
+// → -74  (signed: start is before end)
+
+dateDiff(end, start, 'hours')
+// → 1776
+```
+
+## Notes
+
+- All units except `'months'` are derived from the raw millisecond difference, so they account for DST transitions (a day across a DST boundary may be 23 or 25 hours long).
+- `'months'` uses calendar arithmetic (year and month components) rather than dividing milliseconds, which gives the intuitively correct result for month-boundary comparisons.
+- `Math.trunc` is used instead of `Math.floor` so that negative differences truncate toward zero, keeping the sign meaningful.
