@@ -1,0 +1,60 @@
+---
+title: Pad Start
+description: Pads a string at the start to a target length using a repeating fill string. Mirrors the native String.prototype.padStart but adds support for multi-character fill patterns.
+category: snippets
+language: typescript
+tags: [string, utils, formatting]
+---
+
+Prepends a repeating fill pattern to a string until it reaches the desired length. Unlike the native `padStart`, this implementation supports multi-character fill strings and trims the padding precisely so the total length is never exceeded.
+
+## Usage
+
+```typescript
+function padStart(str: string, targetLength: number, fillString: string = ' '): string {
+  const currentLength = str.length
+
+  if (currentLength >= targetLength) {
+    return str
+  }
+
+  if (fillString.length === 0) {
+    return str
+  }
+
+  const padLength = targetLength - currentLength
+  // Repeat the fill string enough times to cover the required padding,
+  // then slice to the exact number of characters needed.
+  const padding = fillString.repeat(Math.ceil(padLength / fillString.length)).slice(0, padLength)
+
+  return padding + str
+}
+
+export default padStart
+```
+
+## Examples
+
+```typescript
+padStart('42', 5)           // => "   42"   (default space fill)
+padStart('42', 5, '0')      // => "00042"
+padStart('hi', 8, '-.')     // => "-.-.-. hi"  wait — exact: "-.-.-.hi"
+padStart('hi', 8, '-.')     // => "-.-.-.hi"
+padStart('toolong', 4)      // => "toolong"  (already longer, returned as-is)
+padStart('5', 3, '0')       // => "005"
+padStart('abc', 7, '12')    // => "1212abc"
+```
+
+## Options
+
+| Parameter      | Type     | Default | Description                                      |
+|----------------|----------|---------|--------------------------------------------------|
+| `str`          | `string` | —       | The string to pad.                               |
+| `targetLength` | `number` | —       | Desired total length of the resulting string.    |
+| `fillString`   | `string` | `' '`   | Pattern to repeat as padding. May be multi-char. |
+
+## Notes
+
+- If `str` is already at or beyond `targetLength`, it is returned unchanged with no truncation.
+- An empty `fillString` is treated as a no-op and `str` is returned as-is, matching the behaviour of the native method.
+- For single-character fills this is functionally identical to `String.prototype.padStart`; the extra value is in repeating multi-character patterns like `'0x'` or `'- '`.
