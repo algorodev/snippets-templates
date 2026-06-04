@@ -1,0 +1,157 @@
+---
+title: Docker Network Inspector
+description: List all Docker networks, show which containers are attached to each, and print the subnet and gateway in one readable output.
+category: cli
+language: bash
+tags: [docker, networking, inspection, devops]
+---
+
+A script that iterates every Docker network, pretty-prints its driver, subnet, and gateway, and lists every container attached to it — replacing a wall of `docker network inspect` JSON with a concise, scannable report.
+
+## Usage
+
+```bash
+#!/usr/bin/env bash
+# docker-network-inspector.sh — human-readable overview of all Docker networks
+# Usage: ./docker-network-inspector.sh [OPTIONS]
+# Options:
+#   -n <name>   Inspect a single network by name or ID
+#   -s          Short mode: one line per network, no container details
+#   -j          Dump raw JSON for each network (uses jq if available)
+
+set -euo pipefail
+
+SINGLE=""
+SHORT=false
+JSON=false
+
+usage() {
+  echo "Usage: $0 [-n network] [-s] [-j]" >&2
+  exit 1
+}
+
+while getopts ":n:sj" opt; do
+  case $opt in
+    n) SINGLE="$OPTARG" ;;
+    s) SHORT=true ;;
+    j) JSON=true ;;
+    *) usage ;;
+  esac
+done
+
+command -v docker &>/dev/null || { echo "docker not found" >&2; exit 1; }
+
+# Colours
+BOLD="\033[1m"
+CYAN="\033[1;36m"
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+RESET="\033[0m"
+
+hr() { printf '%0.s─' {1..60}; printf '\n'; }
+
+inspect_network() {
+  local net_id="$1"
+
+  if $JSON; then
+    if command -v jq &>/dev/null; then
+      docker network inspect "$net_id" | jq '.[0]'
+    else
+      docker network inspect "$net_id"
+    fi
+    return
+  fi
+
+  local info
+  info=$(docker network inspect "$net_id" \
+    --format '{{.Name}}|{{.Driver}}|{{.Scope}}|{{range .IPAM.Config}}{{.Subnet}}|{{.Gateway}}{{end}}')
+
+  local name driver scope subnet gateway
+  IFS='|' read -r name driver scope subnet gateway <<< "$info"
+
+  subnet="${subnet:-n/a}"
+  gateway="${gateway:-n/a}"
+
+  if $SHORT; then
+    printf "${CYAN}%-25s${RESET}  driver=%-10s  subnet=%-20s  gateway=%s\n" \
+      "$name" "$driver" "$subnet" "$gateway"
+    return
+  fi
+
+  printf "\n${BOLD}${CYAN}Network: %s${RESET}\n" "$name"
+  hr
+  printf "  ${YELLOW}ID:${RESET}      %s\n" "$net_id"
+  printf "  ${YELLOW}Driver:${RESET}  %s\n" "$driver"
+  printf "  ${YELLOW}Scope:${RESET}   %s\n" "$scope"
+  printf "  ${YELLOW}Subnet:${RESET}  %s\n" "$subnet"
+  printf "  ${YELLOW}Gateway:${RESET} %s\n" "$gateway"
+
+  # List containers attached to this network
+  local containers
+  containers=$(docker network inspect "$net_id" \
+    --format '{{range $id, $c := .Containers}}{{$c.Name}}|{{$c.IPv4Address}}|{{$c.MacAddress}}\n{{end}}')
+
+  if [[ -z "$containers" ]]; then
+    printf "  ${YELLOW}Containers:${RESET} (none)\n"
+  else
+    printf "  ${YELLOW}Containers:${RESET}\n"
+    printf "%s" "$containers" | while IFS='|' read -r cname ipv4 mac; do
+      [[ -z "$cname" ]] && continue
+      ipv4="${ipv4:-no ip}"
+      mac="${mac:-no mac}"
+      printf "    ${GREEN}%-30s${RESET}  ip=%-20s  mac=%s\n" "$cname" "$ipv4" "$mac"
+    done
+  fi
+}
+
+# Build the list of networks to inspect
+if [[ -n "$SINGLE" ]]; then
+  NETWORKS=("$SINGLE")
+else
+  mapfile -t NETWORKS < <(docker network ls --format '{{.ID}}')
+fi
+
+if $SHORT; then
+  printf "${BOLD}%-25s  %-10s  %-20s  %s${RESET}\n" "NETWORK" "DRIVER" "SUBNET" "GATEWAY"
+  hr
+fi
+
+for net in "${NETWORKS[@]}"; do
+  inspect_network "$net"
+done
+
+if ! $SHORT && ! $JSON; then
+  printf "\n"
+fi
+```
+
+## Examples
+
+```bash
+# Full report for all networks
+./docker-network-inspector.sh
+
+# One-line summary per network
+./docker-network-inspector.sh -s
+
+# Inspect a specific network by name
+./docker-network-inspector.sh -n my_app_default
+
+# Dump raw JSON (pretty-printed with jq if installed)
+./docker-network-inspector.sh -j -n bridge
+
+# Find which network a container is on
+./docker-network-inspector.sh | grep my_container
+```
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `-n <name>` | Inspect a single network instead of all networks |
+| `-s` | Short mode — one summary line per network, no container list |
+| `-j` | Raw JSON output via `docker network inspect` (pretty-printed with `jq` if available) |
+
+## How it works
+
+The script calls `docker network ls` to get all network IDs, then runs `docker network inspect` on each one using a Go template to extract the name, driver, scope, IPAM subnet/gateway, and the map of attached containers. Results are formatted with ANSI colour codes for readability. The `-s` flag skips the container loop for a quick overview when you have many networks.
