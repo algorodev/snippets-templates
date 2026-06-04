@@ -1,0 +1,69 @@
+---
+title: TSConfig for Next.js
+description: TypeScript configuration for Next.js applications using the App Router. Extends the official Next.js tsconfig base with additional strict settings.
+category: configs
+language: json
+tags: [typescript, tsconfig, nextjs]
+---
+
+TypeScript configuration for Next.js App Router projects. Extends `@tsconfig/next` with the recommended plugin, path aliases, and extra safety flags.
+
+## Usage
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+
+    /* Module resolution */
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    /* Output */
+    "noEmit": true,
+    "jsx": "preserve",
+    "incremental": true,
+
+    /* Path aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
+    /* Next.js language server plugin */
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+```
+
+## Options
+
+| Flag | Purpose |
+|------|---------|
+| `noUncheckedIndexedAccess` | Array lookups return `T \| undefined` — forces a null check before use |
+| `exactOptionalPropertyTypes` | Distinguishes between a missing property and one set to `undefined` |
+| `noImplicitReturns` | All code paths in a function must explicitly return a value |
+| `plugins: [{ "name": "next" }]` | Enables Next.js-specific type checking in your editor |
+| `moduleResolution: "bundler"` | Matches Webpack/Turbopack resolution semantics — required for App Router |
+
+## Notes
+
+- The `paths` alias maps `@/*` to `src/*`. If you do not use a `src/` directory, change it to `./*`.
+- `incremental: true` caches type-check results in `.next/` for faster subsequent builds.
+- `noEmit: true` delegates compilation to Next.js — TypeScript is used for type checking only.
+- Run `npx tsc --noEmit` in CI to catch type errors independently of the build.
