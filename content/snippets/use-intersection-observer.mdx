@@ -1,0 +1,140 @@
+---
+title: useIntersectionObserver Hook
+description: Observes an element's intersection with the viewport using IntersectionObserver and returns the current entry. Supports all IntersectionObserver options and auto-disconnects on unmount.
+category: snippets
+language: typescript
+tags: [react, hooks, dom, visibility]
+---
+
+Tracks whether an element is visible in the viewport (or a custom root) and returns the latest `IntersectionObserverEntry`, enabling lazy loading, infinite scroll, and scroll-triggered animations without manual observer management.
+
+## Usage
+
+```typescript
+import { useEffect, useRef, useState } from 'react'
+
+interface UseIntersectionObserverOptions extends IntersectionObserverInit {
+  /** Start observing only when this is true (default: true). */
+  enabled?: boolean
+  /** Stop observing after the element intersects once (default: false). */
+  freezeOnceVisible?: boolean
+}
+
+function useIntersectionObserver(
+  elementRef: React.RefObject<Element>,
+  {
+    threshold = 0,
+    root = null,
+    rootMargin = '0%',
+    enabled = true,
+    freezeOnceVisible = false,
+  }: UseIntersectionObserverOptions = {},
+): IntersectionObserverEntry | undefined {
+  const [entry, setEntry] = useState<IntersectionObserverEntry>()
+
+  const frozen = entry?.isIntersecting && freezeOnceVisible
+
+  useEffect(() => {
+    const node = elementRef.current
+    if (!node || !enabled || frozen) return
+    if (typeof IntersectionObserver === 'undefined') return
+
+    const observer = new IntersectionObserver(
+      ([newEntry]) => setEntry(newEntry),
+      { threshold, root, rootMargin },
+    )
+
+    observer.observe(node)
+
+    return () => observer.disconnect()
+  }, [
+    elementRef,
+    threshold,
+    root,
+    rootMargin,
+    enabled,
+    frozen,
+  ])
+
+  return entry
+}
+
+export default useIntersectionObserver
+```
+
+## Examples
+
+```typescript
+import { useRef } from 'react'
+import useIntersectionObserver from './useIntersectionObserver'
+
+// Lazy-load an image when it enters the viewport
+function LazyImage({ src, alt }: { src: string; alt: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const entry = useIntersectionObserver(ref, { freezeOnceVisible: true })
+  const isVisible = !!entry?.isIntersecting
+
+  return (
+    <div ref={ref} style={{ minHeight: 200 }}>
+      {isVisible ? (
+        <img src={src} alt={alt} />
+      ) : (
+        <div className="placeholder" />
+      )}
+    </div>
+  )
+}
+
+// Trigger a CSS animation when an element scrolls into view
+function AnimatedCard({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const entry = useIntersectionObserver(ref, {
+    threshold: 0.2,
+    freezeOnceVisible: true,
+  })
+
+  return (
+    <div
+      ref={ref}
+      className={entry?.isIntersecting ? 'animate-in' : 'opacity-0'}
+    >
+      {children}
+    </div>
+  )
+}
+
+// Infinite scroll sentinel
+function InfiniteList() {
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const entry = useIntersectionObserver(sentinelRef, { rootMargin: '200px' })
+
+  useEffect(() => {
+    if (entry?.isIntersecting) {
+      loadMoreItems()
+    }
+  }, [entry?.isIntersecting])
+
+  return (
+    <ul>
+      {/* ...items... */}
+      <div ref={sentinelRef} />
+    </ul>
+  )
+}
+```
+
+## Options
+
+| Option              | Type                           | Default | Description                                                        |
+| ------------------- | ------------------------------ | ------- | ------------------------------------------------------------------ |
+| `threshold`         | `number \| number[]`           | `0`     | Ratio of the element that must be visible to fire                  |
+| `root`              | `Element \| null`              | `null`  | Scroll container; `null` uses the viewport                         |
+| `rootMargin`        | `string`                       | `'0%'`  | CSS margin around the root (e.g. `'200px'` for early triggering)   |
+| `enabled`           | `boolean`                      | `true`  | Set to `false` to skip observation (useful for conditional hooks)  |
+| `freezeOnceVisible` | `boolean`                      | `false` | Disconnect the observer after the first intersection               |
+
+## Notes
+
+- `IntersectionObserver` is not available in older browsers (IE11) or certain Node environments. The hook guards with `typeof IntersectionObserver === 'undefined'` and returns `undefined` in those cases.
+- `freezeOnceVisible` is ideal for one-shot animations or lazy loading where re-observing on scroll-out is unnecessary and would cause a flash.
+- Passing a `root` ref requires the root element to be scrollable. Pass the `.current` value directly as the `root` option — note that `root` accepts an `Element`, not a `RefObject`.
