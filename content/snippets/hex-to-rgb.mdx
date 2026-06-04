@@ -1,0 +1,68 @@
+---
+title: Hex To RGB
+description: Converts a CSS hex color string (3 or 6 digit, with or without #) to an RGB object with r, g, and b properties in 0–255 range. Returns null for invalid input.
+category: snippets
+language: typescript
+tags: [color, utils, conversion]
+---
+
+Strips the optional `#` prefix, expands 3-digit shorthand to 6 digits, then parses each channel as a base-16 integer. Returns `null` instead of throwing when the input is not a valid hex color.
+
+## Usage
+
+```typescript
+interface RGB {
+  r: number
+  g: number
+  b: number
+}
+
+function hexToRgb(hex: string): RGB | null {
+  const sanitized = hex.trim().replace(/^#/, '')
+
+  const expanded =
+    sanitized.length === 3
+      ? sanitized
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : sanitized
+
+  if (!/^[0-9a-fA-F]{6}$/.test(expanded)) return null
+
+  return {
+    r: parseInt(expanded.slice(0, 2), 16),
+    g: parseInt(expanded.slice(2, 4), 16),
+    b: parseInt(expanded.slice(4, 6), 16),
+  }
+}
+
+export default hexToRgb
+```
+
+## Examples
+
+```typescript
+hexToRgb('#ff6600')   // { r: 255, g: 102, b: 0 }
+hexToRgb('ff6600')    // { r: 255, g: 102, b: 0 }  — # is optional
+hexToRgb('#f60')      // { r: 255, g: 102, b: 0 }  — 3-digit shorthand
+hexToRgb('#F60')      // { r: 255, g: 102, b: 0 }  — case-insensitive
+hexToRgb('invalid')   // null
+hexToRgb('')          // null
+
+// Compose an rgba() CSS value with variable opacity
+function hexToRgba(hex: string, alpha: number): string {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return 'transparent'
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`
+}
+
+hexToRgba('#ff6600', 0.5) // "rgba(255, 102, 0, 0.5)"
+```
+
+## How it works
+
+1. **Strip `#`** — `replace(/^#/, '')` removes the hash if present so the rest of the logic works on raw hex digits.
+2. **Expand shorthand** — a 3-character string like `f60` is expanded to `ff6600` by doubling each character.
+3. **Validate** — a regex ensures the result is exactly 6 hexadecimal characters before parsing. Anything else returns `null`.
+4. **Parse channels** — `parseInt(slice, 16)` converts each 2-character segment to a decimal integer in the 0–255 range.
