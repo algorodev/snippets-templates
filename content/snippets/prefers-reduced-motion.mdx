@@ -1,0 +1,52 @@
+---
+title: Prefers Reduced Motion
+description: Returns a boolean indicating whether the user has requested reduced motion via their OS accessibility settings. Defaults to false in non-browser environments.
+category: snippets
+language: typescript
+tags: [dom, utils, accessibility, motion]
+---
+
+Reads the `prefers-reduced-motion` CSS media feature via `window.matchMedia`. Returns `false` in SSR or Node environments where `window` is unavailable so animations are never accidentally suppressed on the server.
+
+## Usage
+
+```typescript
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false
+  }
+
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+export default prefersReducedMotion
+```
+
+## Examples
+
+```typescript
+// Skip animation entirely if the user prefers reduced motion
+function animateElement(el: HTMLElement) {
+  if (prefersReducedMotion()) {
+    el.classList.add('visible')
+    return
+  }
+
+  el.animate(
+    [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }],
+    { duration: 300, easing: 'ease-out', fill: 'forwards' }
+  )
+}
+
+// Use in a React component
+import { useMemo } from 'react'
+
+function useReducedMotion(): boolean {
+  return useMemo(() => prefersReducedMotion(), [])
+}
+```
+
+## Notes
+
+- The OS setting is read once per call. To react to live changes (the user toggling the setting while the page is open) attach a listener to the `MediaQueryList` returned by `matchMedia` instead.
+- `prefers-reduced-motion: reduce` is supported in all modern browsers. The `typeof window.matchMedia !== 'function'` guard handles very old browsers that ship `window` but not `matchMedia`.
