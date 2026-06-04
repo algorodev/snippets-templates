@@ -1,0 +1,256 @@
+---
+title: Bun HTTP Server
+description: A minimal yet fast HTTP server using Bun's native HTTP APIs with routing, middleware, and static file serving. No Node.js compatibility layer needed — runs natively on Bun.
+category: templates
+language: TypeScript
+tags: [bun, node.js, http-server, typescript, performance]
+---
+
+A lightweight HTTP server built on Bun's native `Bun.serve` API — no Express, no adapters, just direct access to Bun's high-performance networking primitives with a custom router and middleware pipeline.
+
+## Usage
+
+```bash
+# Start the server
+bun run src/index.ts
+
+# Start with file-watcher (hot reload)
+bun --hot src/index.ts
+```
+
+## How it works
+
+```typescript
+// src/router.ts
+export type Handler = (req: Request, params: Record<string, string>) => Response | Promise<Response>
+
+interface Route {
+  method: string
+  pattern: URLPattern
+  handler: Handler
+}
+
+export class Router {
+  private routes: Route[] = []
+
+  add(method: string, path: string, handler: Handler) {
+    this.routes.push({
+      method: method.toUpperCase(),
+      pattern: new URLPattern({ pathname: path }),
+      handler,
+    })
+    return this
+  }
+
+  get(path: string, handler: Handler) { return this.add("GET", path, handler) }
+  post(path: string, handler: Handler) { return this.add("POST", path, handler) }
+  put(path: string, handler: Handler) { return this.add("PUT", path, handler) }
+  delete(path: string, handler: Handler) { return this.add("DELETE", path, handler) }
+
+  match(req: Request): { handler: Handler; params: Record<string, string> } | null {
+    const url = new URL(req.url)
+    for (const route of this.routes) {
+      if (route.method !== req.method) continue
+      const result = route.pattern.exec({ pathname: url.pathname })
+      if (result) {
+        return {
+          handler: route.handler,
+          params: (result.pathname.groups as Record<string, string>) ?? {},
+        }
+      }
+    }
+    return null
+  }
+}
+```
+
+```typescript
+// src/middleware.ts
+export type Middleware = (
+  req: Request,
+  next: () => Promise<Response>
+) => Promise<Response>
+
+export function compose(middlewares: Middleware[]) {
+  return async function (req: Request, final: () => Promise<Response>): Promise<Response> {
+    let index = -1
+
+    async function dispatch(i: number): Promise<Response> {
+      if (i <= index) throw new Error("next() called multiple times")
+      index = i
+      const fn = i < middlewares.length ? middlewares[i] : final
+      return fn!(req, () => dispatch(i + 1))
+    }
+
+    return dispatch(0)
+  }
+}
+
+// Built-in middleware: request logger
+export const logger: Middleware = async (req, next) => {
+  const start = performance.now()
+  const res = await next()
+  const ms = (performance.now() - start).toFixed(1)
+  console.log(`${req.method} ${new URL(req.url).pathname} ${res.status} — ${ms}ms`)
+  return res
+}
+
+// Built-in middleware: CORS
+export function cors(origin = "*"): Middleware {
+  return async (req, next) => {
+    if (req.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        },
+      })
+    }
+    const res = await next()
+    res.headers.set("Access-Control-Allow-Origin", origin)
+    return res
+  }
+}
+```
+
+```typescript
+// src/static.ts
+import { join } from "path"
+
+export async function serveStatic(req: Request, publicDir: string): Promise<Response | null> {
+  const url = new URL(req.url)
+  const filePath = join(publicDir, url.pathname === "/" ? "index.html" : url.pathname)
+
+  const file = Bun.file(filePath)
+  if (!(await file.exists())) return null
+
+  return new Response(file)
+}
+```
+
+```typescript
+// src/index.ts
+import { Router } from "./router"
+import { compose, cors, logger } from "./middleware"
+import { serveStatic } from "./static"
+import { join } from "path"
+
+const router = new Router()
+const PUBLIC_DIR = join(import.meta.dir, "../public")
+
+// Routes
+router.get("/", () =>
+  Response.json({ message: "Hello from Bun!", version: Bun.version })
+)
+
+router.get("/users/:id", (_req, params) =>
+  Response.json({ userId: params.id, name: "Alice" })
+)
+
+router.post("/echo", async (req) => {
+  const body = await req.json()
+  return Response.json({ received: body })
+})
+
+// Middleware stack
+const runMiddleware = compose([logger, cors()])
+
+const server = Bun.serve({
+  port: process.env.PORT ? Number(process.env.PORT) : 3000,
+
+  async fetch(req) {
+    return runMiddleware(req, async () => {
+      // Try static files first
+      const staticRes = await serveStatic(req, PUBLIC_DIR)
+      if (staticRes) return staticRes
+
+      // Then dynamic routes
+      const match = router.match(req)
+      if (match) return match.handler(req, match.params)
+
+      return Response.json({ error: "Not Found" }, { status: 404 })
+    })
+  },
+
+  error(err) {
+    console.error(err)
+    return Response.json({ error: "Internal Server Error" }, { status: 500 })
+  },
+})
+
+console.log(`Server listening on http://localhost:${server.port}`)
+```
+
+## Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `PORT` env var | `3000` | Port the server listens on |
+| `publicDir` | `public/` | Directory for static file serving |
+| `cors()` origin | `"*"` | Allowed CORS origin |
+
+## README
+
+### What this includes
+
+- **Bun.serve** — native HTTP server with no Node.js compatibility overhead
+- **URLPattern-based router** — supports named path parameters (`:id` style)
+- **Composable middleware** — `async/await` pipeline with `next()` calls
+- **CORS middleware** — configurable origin, handles preflight `OPTIONS`
+- **Request logger** — method, path, status code, and response time
+- **Static file serving** — zero-copy file responses via `Bun.file()`
+- **Hot reload** — `bun --hot` restarts on file changes without restarting the process
+
+### Prerequisites
+
+- [Bun](https://bun.sh) 1.0 or later (`curl -fsSL https://bun.sh/install | bash`)
+
+### Create this template
+
+```bash
+# 1. Create and enter the project directory
+mkdir bun-http-server && cd bun-http-server
+
+# 2. Initialise a Bun project
+bun init -y
+
+# 3. Create the source and public directories
+mkdir -p src public
+
+# 4. Create the source files (router, middleware, static, index)
+touch src/router.ts src/middleware.ts src/static.ts src/index.ts
+
+# 5. Add a start script to package.json
+bun pm init   # or edit package.json manually
+
+# 6. Run the server
+bun run src/index.ts
+
+# 7. (Optional) Run with hot reload during development
+bun --hot src/index.ts
+```
+
+### Project structure
+
+```
+bun-http-server/
+├── public/               # Static assets served at /
+│   └── index.html
+├── src/
+│   ├── index.ts          # Entry point — server setup and routes
+│   ├── router.ts         # URLPattern-based router
+│   ├── middleware.ts      # Middleware pipeline, logger, CORS
+│   └── static.ts         # Static file handler
+├── package.json
+└── tsconfig.json
+```
+
+### First things to customize
+
+- `src/index.ts` — Add your own routes via `router.get/post/put/delete`
+- `src/middleware.ts` `cors()` — Replace `"*"` with your allowed origin in production
+- `PORT` env var — Set in a `.env` file or deployment config to change the listen port
+- `public/` — Drop HTML, CSS, and JS assets here to be served statically
+- `src/static.ts` — Extend with cache headers or directory index generation
