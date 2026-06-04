@@ -1,0 +1,138 @@
+---
+title: NVM Helpers
+description: Auto-switch Node versions when entering a directory with an .nvmrc file, plus aliases for installing the latest LTS and pruning old versions.
+category: cli
+language: zsh
+tags: [node, nvm, versions, productivity]
+---
+
+Manually running `nvm use` every time you `cd` into a project gets old fast. These helpers make nvm invisible when things are working — Node switches automatically — and give you one-liners for the housekeeping tasks you run a few times a year.
+
+## Usage
+
+Add to `~/.zshrc` (after the line that loads nvm itself):
+
+```zsh
+# ---------------------------------------------------------------------------
+# Auto-switch Node version when entering a directory with an .nvmrc file.
+# Falls back to the default nvm alias when leaving a project.
+# ---------------------------------------------------------------------------
+autoload -U add-zsh-hook
+
+_nvm_auto_use() {
+  local nvmrc_path
+  nvmrc_path="$(nvm_find_nvmrc)"
+
+  if [ -n "$nvmrc_path" ]; then
+    local nvmrc_node_version
+    nvmrc_node_version=$(cat "$nvmrc_path")
+
+    if [ "$nvmrc_node_version" = "$(nvm version)" ]; then
+      # Already on the right version — do nothing
+      return
+    fi
+
+    if nvm ls "$nvmrc_node_version" > /dev/null 2>&1; then
+      nvm use --silent
+    else
+      echo "nvm: version '$nvmrc_node_version' not installed. Run: nvm install"
+    fi
+  elif [ "$(nvm version)" != "$(nvm version default)" ]; then
+    nvm use default --silent
+  fi
+}
+
+add-zsh-hook chpwd _nvm_auto_use
+
+# Run once for the current shell session (handles the terminal you just opened)
+_nvm_auto_use
+
+# ---------------------------------------------------------------------------
+# Aliases
+# ---------------------------------------------------------------------------
+
+# Install the latest LTS release and set it as the default
+alias nvm-use-lts='nvm install --lts && nvm alias default lts/* && nvm use default'
+
+# List installed Node versions that are NOT the current default — review before pruning
+alias nvm-stale='nvm ls | grep -v "default\|lts\|system\|->" | grep -oP "v[0-9]+\.[0-9]+\.[0-9]+"'
+
+# Remove all non-default, non-current, non-LTS-aliased versions
+nvm-prune() {
+  local current
+  current=$(nvm version)
+  local default_ver
+  default_ver=$(nvm version default)
+
+  echo "Current:  $current"
+  echo "Default:  $default_ver"
+  echo ""
+  echo "Versions that will be removed:"
+
+  local to_remove=()
+  while IFS= read -r version; do
+    if [ "$version" != "$current" ] && [ "$version" != "$default_ver" ]; then
+      to_remove+=("$version")
+      echo "  $version"
+    fi
+  done < <(nvm ls --no-colors | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+')
+
+  if [ ${#to_remove[@]} -eq 0 ]; then
+    echo "  Nothing to remove."
+    return 0
+  fi
+
+  echo ""
+  read -rp "Remove these versions? [y/N] " confirm
+  if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    for v in "${to_remove[@]}"; do
+      echo "Removing $v..."
+      nvm uninstall "$v"
+    done
+    echo "Done."
+  else
+    echo "Aborted."
+  fi
+}
+```
+
+## How it works
+
+`_nvm_auto_use` is registered as a `chpwd` hook — zsh fires it every time your working directory changes. It calls `nvm_find_nvmrc`, which walks up the directory tree looking for the nearest `.nvmrc`. If one is found and the version it specifies is already installed, `nvm use --silent` switches to it quietly. If the version is missing it prints a one-line install reminder instead of silently using the wrong version. When you leave a project tree entirely it restores the `default` alias so your global tooling is never left on a project-specific version.
+
+## Options
+
+| Alias / Function | Description |
+|-----------------|-------------|
+| `_nvm_auto_use` | Hook: auto-switch on `cd` (called automatically) |
+| `nvm-use-lts` | Install latest LTS, set as default, switch to it |
+| `nvm-stale` | List installed versions that are not the current default |
+| `nvm-prune` | Interactively remove all non-default, non-current versions |
+
+## Examples
+
+```zsh
+# Enter a project — version switches automatically if .nvmrc is present
+cd ~/projects/my-app
+# nvm: now using node v20.11.0
+
+# Leave the project — reverts to default
+cd ~
+# nvm: now using node v22.3.0 (default)
+
+# Upgrade to the latest LTS globally
+nvm-use-lts
+
+# See which old versions are taking up space
+nvm-stale
+
+# Remove them interactively
+nvm-prune
+```
+
+## Notes
+
+- `nvm_find_nvmrc` is a shell function shipped by nvm itself. The hook depends on nvm being loaded before this snippet runs — place this block after the `[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"` line in your `.zshrc`.
+- The auto-switch only runs `nvm use --silent` when the required version is already installed, so it never blocks your prompt with a slow download.
+- For bash users, replace `add-zsh-hook chpwd _nvm_auto_use` with a `PROMPT_COMMAND` entry or a `cd` wrapper function. The nvm docs include an official bash snippet that mirrors this behavior.
+- `.nvmrc` should contain just the version string, e.g. `20` or `20.11.0`. The `lts/iron` alias form also works with recent nvm versions.
