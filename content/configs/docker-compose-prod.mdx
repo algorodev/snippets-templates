@@ -1,0 +1,196 @@
+---
+title: Docker Compose for Production
+description: A production-oriented Docker Compose configuration with resource limits, restart policies, and a reverse proxy setup. Suitable for single-server deployments.
+category: configs
+language: yaml
+tags: [docker, docker-compose, production, deployment]
+---
+
+A `compose.yaml` built for single-server production deployments. It puts Caddy in front as a reverse proxy that handles TLS automatically, enforces memory and CPU limits on every service, and uses `restart: always` so containers come back up after a reboot or crash.
+
+## Usage
+
+```yaml
+# compose.yaml
+
+services:
+
+  # ── Reverse proxy (Caddy — automatic HTTPS) ──────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"     # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - public
+      - internal
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+
+  # ── Application ──────────────────────────────────────────────────────────────
+  app:
+    image: ghcr.io/your-org/your-app:${APP_VERSION:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      SECRET_KEY: ${SECRET_KEY}
+    env_file:
+      - .env.production      # Not committed — injected by CI/CD or scp'd to server
+    expose:
+      - "3000"               # Only reachable via Caddy, not from the host
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3000/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+
+  # ── Postgres ─────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: >
+      redis-server
+      --save 900 1
+      --save 300 10
+      --requirepass ${REDIS_PASSWORD}
+      --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+networks:
+  public:
+  internal:
+    internal: true            # No direct internet access for DB/cache containers
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  redis_data:
+```
+
+## Caddyfile
+
+Create a `Caddyfile` in the same directory. Caddy will obtain and renew a TLS certificate automatically.
+
+```
+your-domain.com {
+    reverse_proxy app:3000
+    encode gzip zstd
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}
+```
+
+## Environment file
+
+Create `.env.production` on the server (never commit it):
+
+```bash
+APP_VERSION=1.2.3
+DATABASE_URL=postgres://user:pass@postgres:5432/proddb
+POSTGRES_USER=user
+POSTGRES_PASSWORD=a-very-long-random-password
+POSTGRES_DB=proddb
+REDIS_PASSWORD=another-long-random-password
+SECRET_KEY=your-app-secret-key
+```
+
+## How it works
+
+- **Network isolation** — the `internal: true` network means Postgres and Redis cannot receive traffic from outside Docker; only the `app` container (on the same internal network) can reach them.
+- **Caddy as reverse proxy** — Caddy sits on the `public` network (exposed to the internet) and on `internal` so it can forward requests to `app`. The app itself has no exposed ports.
+- **Resource limits** — `deploy.resources.limits` caps CPU and memory per service, preventing one runaway container from starving the others on a single-server setup.
+- **`restart: always`** — containers restart automatically after a server reboot or an OOM kill.
+
+## Deployment workflow
+
+```bash
+# 1. Pull the latest image on the server
+docker compose pull
+
+# 2. Re-create only changed containers (zero-downtime for stateless services)
+docker compose up -d --remove-orphans
+
+# 3. Check status
+docker compose ps
+
+# 4. Tail logs
+docker compose logs -f app
+```
+
+## Notes
+
+- For zero-downtime deployments across multiple nodes, consider Docker Swarm or Kubernetes instead.
+- Back up `postgres_data` volume regularly — e.g. via `pg_dump` run from a cron container or a host cron job.
+- Set `APP_VERSION` in your CI/CD pipeline to the exact image tag you just pushed, so deployments are deterministic.
