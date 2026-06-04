@@ -1,0 +1,76 @@
+---
+title: .editorconfig
+description: A universal .editorconfig file enforcing consistent indentation, line endings, and charset across all editors and IDEs. Covers common file types including JS, TS, JSON, YAML, and Markdown.
+category: configs
+language: toml
+tags: [editorconfig, formatting, editor, cross-platform]
+---
+
+Keeps indentation, line endings, and charset consistent for every contributor regardless of their editor or OS. Supported natively by VS Code, JetBrains IDEs, Vim, and Neovim — no plugin required for most editors.
+
+## Usage
+
+```toml
+# editorconfig.org
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{ts,tsx,js,jsx,mjs,cjs}]
+indent_style = space
+indent_size = 2
+
+[*.{json,jsonc}]
+indent_style = space
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.{md,mdx}]
+trim_trailing_whitespace = false
+indent_size = 2
+
+[*.{py}]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
+
+[*.{sh,bash,zsh}]
+indent_style = space
+indent_size = 2
+
+[*.go]
+indent_style = tab
+indent_size = 4
+
+[*.{rs}]
+indent_size = 4
+```
+
+## Options
+
+| Key | Values | Effect |
+|-----|--------|--------|
+| `root` | `true` | Stops EditorConfig from searching parent directories |
+| `indent_style` | `space` \| `tab` | Indentation character |
+| `indent_size` | number | Number of spaces per indent level |
+| `end_of_line` | `lf` \| `crlf` \| `cr` | Line ending style |
+| `charset` | `utf-8` \| `latin1` | File encoding |
+| `trim_trailing_whitespace` | `true` \| `false` | Strip trailing spaces on save |
+| `insert_final_newline` | `true` \| `false` | Ensure files end with a newline |
+
+## Notes
+
+- `trim_trailing_whitespace = false` is intentionally set for Markdown and MDX because trailing double-spaces create a `<br>` in rendered output — trimming them would silently break line breaks.
+- Makefile rules must be indented with real tabs; the `[Makefile]` override prevents editors from converting them to spaces.
+- If your project uses Prettier, add `"editorconfig": true` to `.prettierrc` so Prettier reads `indent_size` and `end_of_line` from this file instead of duplicating them.
+- VS Code users do not need an extension — EditorConfig support is built in. For other editors, check [editorconfig.org/download](https://editorconfig.org/#download) for the appropriate plugin.
