@@ -1,0 +1,130 @@
+---
+title: Tailwind CSS v4 Config
+description: A Tailwind CSS v4 configuration using the new CSS-first config format with theme variables and custom utilities. Replaces the legacy tailwind.config.js with a single CSS entry point.
+category: configs
+language: css
+tags: [tailwind, css, styling, v4]
+---
+
+Tailwind CSS v4 drops `tailwind.config.js` in favour of a CSS-first approach. All theme customisation, plugin imports, and source paths live in your main CSS entry point — no separate config file needed.
+
+## Usage
+
+```css
+/* src/app/globals.css */
+@import "tailwindcss";
+
+/* ─── Source paths ──────────────────────────────────────────────────────────
+   Tell Tailwind where to scan for class names.
+   Defaults to the current directory, so this is only needed if your
+   templates live outside the project root.                                  */
+@source "../node_modules/@my-org/ui/src";
+
+/* ─── Theme variables ───────────────────────────────────────────────────── */
+@theme {
+  /* Fonts */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Brand colours — use CSS oklch for wide-gamut displays */
+  --color-brand-50:  oklch(97% 0.02 264);
+  --color-brand-100: oklch(93% 0.05 264);
+  --color-brand-200: oklch(86% 0.09 264);
+  --color-brand-300: oklch(77% 0.13 264);
+  --color-brand-400: oklch(66% 0.17 264);
+  --color-brand-500: oklch(55% 0.20 264);
+  --color-brand-600: oklch(46% 0.19 264);
+  --color-brand-700: oklch(38% 0.17 264);
+  --color-brand-800: oklch(30% 0.13 264);
+  --color-brand-900: oklch(22% 0.09 264);
+  --color-brand-950: oklch(15% 0.05 264);
+
+  /* Spacing additions */
+  --spacing-18: 4.5rem;
+  --spacing-22: 5.5rem;
+  --spacing-128: 32rem;
+
+  /* Border radius */
+  --radius-sm:  0.25rem;
+  --radius-md:  0.5rem;
+  --radius-lg:  0.75rem;
+  --radius-xl:  1rem;
+  --radius-2xl: 1.5rem;
+
+  /* Animations */
+  --animate-fade-in: fade-in 0.2s ease-out;
+  --animate-slide-up: slide-up 0.3s ease-out;
+}
+
+/* ─── Keyframes ─────────────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Custom utilities ──────────────────────────────────────────────────── */
+@utility container-narrow {
+  max-width: 65ch;
+  margin-inline: auto;
+  padding-inline: var(--spacing-4);
+}
+
+@utility focus-ring {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+/* ─── Variant aliases ───────────────────────────────────────────────────── */
+@custom-variant hocus (&:hover, &:focus-visible);
+@custom-variant supports-hover (@media (hover: hover));
+```
+
+**Install:**
+
+```bash
+npm install tailwindcss @tailwindcss/vite
+# or with PostCSS
+npm install tailwindcss @tailwindcss/postcss postcss
+```
+
+**Vite setup (`vite.config.ts`):**
+
+```ts
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [tailwindcss()],
+});
+```
+
+**PostCSS setup (`postcss.config.mjs`):**
+
+```js
+export default {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+```
+
+## How it works
+
+Tailwind v4 uses a **CSS-first config** model:
+
+- `@import "tailwindcss"` replaces the old `@tailwind base/components/utilities` directives and loads the entire framework.
+- `@theme { }` defines CSS custom properties that map to Tailwind's scale. Every `--color-*`, `--font-*`, `--spacing-*` variable you declare becomes a utility class automatically (e.g. `--color-brand-500` generates `bg-brand-500`, `text-brand-500`, `border-brand-500`).
+- `@utility` registers a single-class custom utility. Use it for reusable patterns that don't belong in a component.
+- `@custom-variant` creates variant aliases, letting you write `hocus:underline` instead of `hover:underline focus-visible:underline`.
+- `@source` expands the content scan path — only needed for packages outside the default scan root.
+
+## Notes
+
+- The `oklch()` colour space provides perceptually uniform colour scales and enables wide-gamut colours on P3 displays. All modern browsers support it.
+- Remove the `@source` directive if all your templates are inside the project directory — Tailwind v4 auto-detects them.
+- Legacy `tailwind.config.js` files can be imported with `@config "./tailwind.config.js"` during a gradual migration, but the goal is to eliminate them.
