@@ -1,0 +1,158 @@
+---
+title: SQLite Inspector
+description: Open any SQLite file, list tables with row counts, and run ad-hoc queries from the command line without installing a GUI tool.
+category: cli
+language: bash
+tags: [database, sqlite, inspection, debugging]
+---
+
+Shell functions that turn the `sqlite3` CLI into a quick inspection toolkit. List every table with its row count, describe a table's schema, or run a one-off query — all without leaving the terminal or opening a GUI.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# Print all tables in a SQLite database with their row counts.
+# Usage: sqlite_tables <database.db>
+sqlite_tables() {
+  local db="$1"
+
+  if [ -z "$db" ]; then
+    echo "Usage: sqlite_tables <database.db>"
+    return 1
+  fi
+
+  if [ ! -f "$db" ]; then
+    echo "Error: file not found: $db"
+    return 1
+  fi
+
+  echo "Tables in: $db"
+  echo "---"
+
+  sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;" | while read -r table; do
+    local count
+    count=$(sqlite3 "$db" "SELECT COUNT(*) FROM \"${table}\";")
+    printf "%-40s %s rows\n" "$table" "$count"
+  done
+}
+
+# Describe the schema of one or all tables (column names, types, constraints).
+# Usage: sqlite_describe <database.db> [table]
+sqlite_describe() {
+  local db="$1"
+  local table="$2"
+
+  if [ -z "$db" ]; then
+    echo "Usage: sqlite_describe <database.db> [table]"
+    return 1
+  fi
+
+  if [ ! -f "$db" ]; then
+    echo "Error: file not found: $db"
+    return 1
+  fi
+
+  if [ -n "$table" ]; then
+    echo "Schema for table: $table"
+    sqlite3 "$db" "PRAGMA table_info(\"${table}\");" | \
+      awk -F'|' '{ printf "  cid=%-3s  %-30s type=%-15s notnull=%s  default=%-10s  pk=%s\n", $1, $2, $3, $4, $5, $6 }'
+  else
+    # Describe every table
+    sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;" | while read -r t; do
+      echo ""
+      echo "=== $t ==="
+      sqlite3 "$db" "PRAGMA table_info(\"${t}\");" | \
+        awk -F'|' '{ printf "  %-30s %-15s notnull=%s  pk=%s\n", $2, $3, $4, $6 }'
+    done
+  fi
+}
+
+# Run an ad-hoc query against a SQLite file and print column-aligned output.
+# Usage: sqlite_query <database.db> "<SQL>"
+sqlite_query() {
+  local db="$1"
+  local sql="$2"
+
+  if [ -z "$db" ] || [ -z "$sql" ]; then
+    echo "Usage: sqlite_query <database.db> \"<SQL>\""
+    return 1
+  fi
+
+  if [ ! -f "$db" ]; then
+    echo "Error: file not found: $db"
+    return 1
+  fi
+
+  sqlite3 -column -header "$db" "$sql"
+}
+
+# Open an interactive sqlite3 shell with helpful defaults pre-applied.
+# Usage: sqlite_shell <database.db>
+sqlite_shell() {
+  local db="$1"
+
+  if [ -z "$db" ]; then
+    echo "Usage: sqlite_shell <database.db>"
+    return 1
+  fi
+
+  if [ ! -f "$db" ]; then
+    echo "Warning: $db does not exist — sqlite3 will create it."
+  fi
+
+  sqlite3 \
+    -column \
+    -header \
+    -cmd ".mode column" \
+    -cmd ".headers on" \
+    -cmd ".timer on" \
+    -cmd ".tables" \
+    "$db"
+}
+```
+
+## Options
+
+| Function | Arguments | Description |
+|----------|-----------|-------------|
+| `sqlite_tables` | `<db>` | List every table with its row count |
+| `sqlite_describe` | `<db> [table]` | Show column info for one table or all tables |
+| `sqlite_query` | `<db> "<sql>"` | Run a query and print column-aligned results |
+| `sqlite_shell` | `<db>` | Open an interactive shell with headers and timer on |
+
+## Examples
+
+```bash
+# List all tables and row counts
+sqlite_tables ~/data/app.db
+
+# Describe every table in the database
+sqlite_describe ~/data/app.db
+
+# Describe a single table
+sqlite_describe ~/data/app.db users
+
+# Run a quick SELECT
+sqlite_query ~/data/app.db "SELECT id, email FROM users WHERE created_at > '2024-01-01' LIMIT 20;"
+
+# Aggregate query
+sqlite_query ~/data/app.db "SELECT status, COUNT(*) as n FROM orders GROUP BY status ORDER BY n DESC;"
+
+# Open an interactive shell (lists tables on open)
+sqlite_shell ~/data/app.db
+```
+
+## Notes
+
+`sqlite3` ships with macOS and most Linux distributions. Verify it is available with `sqlite3 --version`. On Debian/Ubuntu, install it with `sudo apt install sqlite3`.
+
+The `sqlite_shell` function pre-applies `.mode column`, `.headers on`, and `.timer on`, so every query in the session prints aligned columns with a query execution time — useful when profiling slow queries interactively.
+
+For read-only inspection of a production database file, copy it first to avoid any accidental writes:
+
+```bash
+cp /var/app/production.db /tmp/prod-snapshot.db
+sqlite_tables /tmp/prod-snapshot.db
+```
