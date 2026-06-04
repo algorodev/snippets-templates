@@ -1,0 +1,84 @@
+---
+title: RGB To HSL
+description: Converts RGB values (0–255) to HSL values, returning hue in degrees and saturation/lightness as percentages. Useful for color manipulation and theming.
+category: snippets
+language: typescript
+tags: [color, utils, conversion]
+---
+
+Converts a colour expressed as red, green, and blue integer channels (0–255 each) into the equivalent HSL representation — hue in degrees (0–360), saturation and lightness as percentages (0–100). Handy as a building block for palette generators and dynamic theming utilities.
+
+## Usage
+
+```typescript
+interface HSL {
+  h: number // 0–360 degrees
+  s: number // 0–100 %
+  l: number // 0–100 %
+}
+
+function rgbToHsl(r: number, g: number, b: number): HSL {
+  const rNorm = r / 255
+  const gNorm = g / 255
+  const bNorm = b / 255
+
+  const max = Math.max(rNorm, gNorm, bNorm)
+  const min = Math.min(rNorm, gNorm, bNorm)
+  const delta = max - min
+
+  let h = 0
+  let s = 0
+  const l = (max + min) / 2
+
+  if (delta !== 0) {
+    s = delta / (1 - Math.abs(2 * l - 1))
+
+    switch (max) {
+      case rNorm:
+        h = ((gNorm - bNorm) / delta) % 6
+        break
+      case gNorm:
+        h = (bNorm - rNorm) / delta + 2
+        break
+      case bNorm:
+        h = (rNorm - gNorm) / delta + 4
+        break
+    }
+
+    h = Math.round(h * 60)
+    if (h < 0) h += 360
+  }
+
+  return {
+    h,
+    s: Math.round(s * 100),
+    l: Math.round(l * 100),
+  }
+}
+
+export default rgbToHsl
+```
+
+## Examples
+
+```typescript
+rgbToHsl(255, 0, 0)       // { h: 0,   s: 100, l: 50 }  — pure red
+rgbToHsl(0, 128, 0)       // { h: 120, s: 100, l: 25 }  — green
+rgbToHsl(70, 130, 180)    // { h: 207, s: 44,  l: 49 }  — steel blue
+rgbToHsl(255, 255, 255)   // { h: 0,   s: 0,   l: 100 } — white
+rgbToHsl(0, 0, 0)         // { h: 0,   s: 0,   l: 0 }   — black
+rgbToHsl(128, 128, 128)   // { h: 0,   s: 0,   l: 50 }  — mid grey
+```
+
+## How it works
+
+1. Each channel is normalised to the 0–1 range by dividing by 255.
+2. Lightness is the average of the highest and lowest normalised channel values.
+3. Saturation is derived from the chroma (range between max and min channels) relative to the lightness level, with a guard against achromatic colours where chroma is zero.
+4. Hue is computed from whichever channel is dominant, then converted from the 0–6 sextant range to 0–360 degrees.
+
+## Notes
+
+- Input channels are expected to be integers in the range 0–255; values outside that range are not clamped and will produce out-of-range output.
+- All output values are rounded to the nearest integer. If you need fractional precision, remove the `Math.round` calls.
+- To go the other direction, pair this with an `hslToRgb` utility.
