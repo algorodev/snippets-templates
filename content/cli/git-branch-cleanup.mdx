@@ -1,0 +1,88 @@
+---
+title: Git Branch Cleanup
+description: Remove merged and stale local branches in one command. Keeps main, master, and the currently checked-out branch safe.
+category: cli
+language: bash
+tags: [git, branches, cleanup, productivity]
+---
+
+Accumulated local branches slow down `git branch` output and waste mental space. This script prunes remote-tracking refs then deletes every local branch that has been merged into your default branch or whose remote counterpart has been deleted.
+
+## Usage
+
+```bash
+# Delete branches already merged into the current branch
+git fetch --prune
+git branch --merged | grep -vE '^\*|^\s*(main|master|develop)$' | xargs -r git branch -d
+
+# One-liner alias — add to ~/.gitconfig under [alias]
+[alias]
+  cleanup = "!git fetch --prune && git branch --merged | grep -vE '^\\*|^\\s*(main|master|develop)$' | xargs -r git branch -d"
+```
+
+## Shell function version
+
+Add to `~/.zshrc` or `~/.bashrc` for more control:
+
+```bash
+git-cleanup() {
+  local default_branch
+  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+    | sed 's|^refs/remotes/origin/||')
+  default_branch=${default_branch:-main}
+
+  echo "Default branch: $default_branch"
+
+  # Prune stale remote-tracking refs
+  git fetch --prune
+
+  # Delete local branches whose remote is gone
+  local gone_branches
+  gone_branches=$(git branch -vv \
+    | grep ': gone]' \
+    | grep -vE '^\*' \
+    | awk '{print $1}')
+
+  # Delete local branches already merged into default
+  local merged_branches
+  merged_branches=$(git branch --merged "$default_branch" \
+    | grep -vE "^\*|^\s*(${default_branch}|main|master|develop)$")
+
+  local all_branches
+  all_branches=$(printf '%s\n%s\n' "$gone_branches" "$merged_branches" \
+    | sort -u \
+    | grep -v '^$')
+
+  if [ -z "$all_branches" ]; then
+    echo "Nothing to clean up."
+    return 0
+  fi
+
+  echo "Branches to delete:"
+  echo "$all_branches"
+  echo ""
+  read -r "reply?Delete these branches? [y/N] "
+
+  if [[ "$reply" =~ ^[Yy]$ ]]; then
+    echo "$all_branches" | xargs git branch -d
+    echo "Done."
+  else
+    echo "Aborted."
+  fi
+}
+```
+
+## Options
+
+| Flag | Meaning |
+|------|---------|
+| `--merged` | Only branches fully merged into HEAD (safe delete with `-d`) |
+| `--prune` on fetch | Removes remote-tracking refs that no longer exist on the remote |
+| `-d` | Safe delete — refuses to remove unmerged branches |
+| `-D` | Force delete — use only if you are sure the branch is expendable |
+
+## Notes
+
+- The `-r` flag on `xargs` (GNU coreutils) prevents execution when input is empty. On macOS, `xargs` silently handles empty input, so `-r` is harmless.
+- Always run with `-d` first. Upgrade to `-D` only if git tells you a branch is unmerged but you know it has been squash-merged via a PR.
+- Add `develop` or any other long-lived branch to the exclusion pattern as needed.
