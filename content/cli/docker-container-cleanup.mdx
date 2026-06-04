@@ -1,0 +1,83 @@
+---
+title: Docker Container Cleanup
+description: Stop and remove all exited containers with one alias, with an optional force flag to also kill running ones.
+category: cli
+language: bash
+tags: [docker, containers, cleanup, devops]
+---
+
+Exited containers pile up fast during development. This alias clears them in one shot and optionally tears down running containers too when you need a clean slate.
+
+## Usage
+
+```bash
+# Remove all exited (stopped) containers
+docker rm $(docker ps -aq -f status=exited)
+
+# Modern equivalent using docker prune (no dangling image removal)
+docker container prune -f
+```
+
+## Shell function version
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+dclean() {
+  local force=false
+
+  for arg in "$@"; do
+    case "$arg" in
+      -f|--force) force=true ;;
+      *) echo "Unknown option: $arg"; return 1 ;;
+    esac
+  done
+
+  if $force; then
+    echo "Stopping all running containers..."
+    local running
+    running=$(docker ps -q)
+    if [ -n "$running" ]; then
+      docker stop $running
+    else
+      echo "  No running containers."
+    fi
+  fi
+
+  echo "Removing exited containers..."
+  local exited
+  exited=$(docker ps -aq -f status=exited)
+  if [ -n "$exited" ]; then
+    docker rm $exited
+    echo "Done."
+  else
+    echo "  No exited containers."
+  fi
+}
+```
+
+## Options
+
+| Flag | Meaning |
+|------|---------|
+| _(none)_ | Remove only containers with `status=exited` |
+| `-f` / `--force` | Stop all running containers first, then remove exited ones |
+
+## Examples
+
+```bash
+# Soft clean — exited containers only
+dclean
+
+# Full reset — stop running containers, then remove exited ones
+dclean --force
+
+# Quick one-liner without the function
+docker ps -aq -f status=exited | xargs -r docker rm
+```
+
+## Notes
+
+- `docker container prune -f` is the built-in equivalent for exited containers but also removes containers in other non-running states (created, dead). The function targets `status=exited` only for a more predictable result.
+- Always double-check before using `--force` in shared or production environments — it stops every running container on the host.
+- To also clean up volumes left behind by removed containers, append `docker volume prune -f`.
