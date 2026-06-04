@@ -1,0 +1,55 @@
+---
+title: Get Query Params
+description: Parses the current URL's search string into a typed record of key-value pairs. Supports multi-value keys returned as arrays.
+category: snippets
+language: typescript
+tags: [dom, utils, url, params]
+---
+
+Reads `window.location.search` and returns a typed `Record` where single-occurrence keys map to a string and repeated keys map to a string array.
+
+## Usage
+
+```typescript
+function getQueryParams(): Record<string, string | string[]> {
+  const params = new URLSearchParams(window.location.search)
+  const result: Record<string, string | string[]> = {}
+
+  params.forEach((value, key) => {
+    if (Object.prototype.hasOwnProperty.call(result, key)) {
+      const existing = result[key]
+      result[key] = Array.isArray(existing)
+        ? [...existing, value]
+        : [existing, value]
+    } else {
+      result[key] = value
+    }
+  })
+
+  return result
+}
+
+export default getQueryParams
+```
+
+## Examples
+
+```typescript
+// URL: https://example.com/search?q=hello&page=2&tag=ts&tag=js
+
+const params = getQueryParams()
+// {
+//   q: "hello",
+//   page: "2",
+//   tag: ["ts", "js"]
+// }
+
+const query = params.q as string           // "hello"
+const tags  = params.tag as string[]       // ["ts", "js"]
+```
+
+## Notes
+
+- Works only in browser environments where `window.location` is available.
+- All values are strings; coerce to numbers with `Number()` or `parseInt()` as needed.
+- To parse an arbitrary query string instead of the live URL, see the `parseQueryString` snippet.
