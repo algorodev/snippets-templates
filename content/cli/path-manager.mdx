@@ -1,0 +1,203 @@
+---
+title: PATH Manager
+description: Add, remove, list, and persist PATH entries across sessions with deduplication, preventing the PATH from growing unboundedly.
+category: cli
+language: zsh
+tags: [system, path, shell, productivity]
+---
+
+A small suite of `path` subcommands that lets you add, remove, list, and persist `PATH` entries — with automatic deduplication so sourcing your rc file multiple times never inflates the variable with duplicate entries.
+
+## Usage
+
+```zsh
+path add /usr/local/myapp/bin        # prepend a directory
+path add /opt/tool/bin --append      # append instead of prepend
+path remove /usr/local/myapp/bin     # remove an entry
+path list                            # print current entries, numbered
+path dedup                           # remove duplicates in-place
+path persist /usr/local/myapp/bin    # write a permanent entry to ~/.zshrc
+```
+
+## Shell function version
+
+Add to `~/.zshrc`:
+
+```zsh
+# ── PATH Manager ─────────────────────────────────────────────────────────────
+
+_path_dedup() {
+  # Remove duplicate PATH entries, preserving order (first occurrence wins)
+  local seen=()
+  local new_path=""
+  local IFS=':'
+  for dir in $PATH; do
+    local found=0
+    for s in "${seen[@]}"; do [[ "$s" == "$dir" ]] && found=1 && break; done
+    if (( found == 0 )); then
+      seen+=("$dir")
+      new_path="${new_path:+$new_path:}$dir"
+    fi
+  done
+  export PATH="$new_path"
+}
+
+_path_list() {
+  local IFS=':'
+  local i=1
+  for dir in $PATH; do
+    printf "  %3d  %s" $i "$dir"
+    [[ -d "$dir" ]] || printf "  \e[33m(missing)\e[0m"
+    printf "\n"
+    (( i++ ))
+  done
+  echo ""
+  echo "  Total: $(( i - 1 )) entries"
+}
+
+_path_add() {
+  local dir="" append=0
+
+  # Parse arguments
+  for arg in "$@"; do
+    case "$arg" in
+      --append|-a) append=1 ;;
+      *)           dir="$arg" ;;
+    esac
+  done
+
+  if [[ -z "$dir" ]]; then
+    echo "path add: directory argument required" >&2; return 1
+  fi
+
+  # Expand ~ and resolve the path
+  dir="${dir/#\~/$HOME}"
+
+  if [[ ! -d "$dir" ]]; then
+    echo "path add: warning: '$dir' does not exist (adding anyway)" >&2
+  fi
+
+  # No-op if already present
+  local IFS=':'
+  for existing in $PATH; do
+    [[ "$existing" == "$dir" ]] && echo "path add: '$dir' is already in PATH" && return 0
+  done
+
+  if (( append )); then
+    export PATH="${PATH}:${dir}"
+  else
+    export PATH="${dir}:${PATH}"
+  fi
+  echo "Added: $dir"
+  _path_dedup
+}
+
+_path_remove() {
+  local dir="${1:?path remove: directory argument required}"
+  dir="${dir/#\~/$HOME}"
+
+  local new_path=""
+  local removed=0
+  local IFS=':'
+  for entry in $PATH; do
+    if [[ "$entry" == "$dir" ]]; then
+      (( removed++ ))
+    else
+      new_path="${new_path:+$new_path:}$entry"
+    fi
+  done
+
+  if (( removed == 0 )); then
+    echo "path remove: '$dir' not found in PATH" >&2; return 1
+  fi
+
+  export PATH="$new_path"
+  echo "Removed $removed occurrence(s) of: $dir"
+}
+
+_path_persist() {
+  local dir="${1:?path persist: directory argument required}"
+  dir="${dir/#\~/$HOME}"
+
+  local rc="${ZDOTDIR:-$HOME}/.zshrc"
+  local marker="# path-manager: $dir"
+
+  if grep -qF "$marker" "$rc" 2>/dev/null; then
+    echo "path persist: '$dir' is already persisted in $rc"
+    return 0
+  fi
+
+  printf '\n%s\nexport PATH="%s:$PATH"\n' "$marker" "$dir" >> "$rc"
+  echo "Persisted to $rc: $dir"
+  echo "Run 'source $rc' or open a new shell to pick up the change globally."
+}
+
+path() {
+  local cmd="${1:-list}"
+  shift 2>/dev/null || true
+
+  case "$cmd" in
+    add)     _path_add "$@" ;;
+    remove)  _path_remove "$@" ;;
+    list)    _path_list ;;
+    dedup)   _path_dedup && echo "Deduplication complete." ;;
+    persist) _path_persist "$@" ;;
+    *)
+      echo "Usage: path <add|remove|list|dedup|persist> [directory] [--append]" >&2
+      return 1
+      ;;
+  esac
+}
+```
+
+## Options
+
+| Subcommand | Arguments | Description |
+|---|---|---|
+| `add` | `<dir> [--append]` | Prepend (default) or append a directory |
+| `remove` | `<dir>` | Remove all occurrences of a directory |
+| `list` | — | Print numbered entries; flags missing dirs |
+| `dedup` | — | Remove duplicate entries in-place |
+| `persist` | `<dir>` | Append a permanent `export PATH=` line to `~/.zshrc` |
+
+## Examples
+
+```zsh
+# Add Homebrew's sbin to the front
+path add /usr/local/sbin
+
+# Add a custom scripts dir to the end
+path add ~/scripts --append
+
+# Remove a stale entry
+path remove /usr/local/opt/old-tool/bin
+
+# See the current PATH, one entry per line
+path list
+#     1  /usr/local/sbin
+#     2  /usr/local/bin
+#     3  /usr/bin
+#     4  /bin
+#     5  /usr/sbin
+#     6  /sbin
+#     7  /Users/alex/scripts
+#
+#   Total: 7 entries
+
+# Persist a frequently-needed dir across new shells
+path persist /usr/local/myapp/bin
+# Persisted to /Users/alex/.zshrc: /usr/local/myapp/bin
+```
+
+## How it works
+
+- `_path_dedup` splits `$PATH` on `:`, walks the entries, and rebuilds the string keeping only the first occurrence of each directory — so sourcing your rc file ten times results in the same `PATH` as sourcing it once.
+- `_path_add` checks for an existing entry before inserting, making it safe to call unconditionally in scripts.
+- `_path_persist` writes a guarded block (`# path-manager: <dir>`) to `~/.zshrc` and checks for that marker before writing again, preventing duplicate lines across sessions.
+- Missing directories are flagged in `path list` with a yellow `(missing)` label but are not removed automatically — you may have entries for tools that are conditionally installed.
+
+## Notes
+
+- The function modifies the current shell's environment directly. It must be defined in (or sourced from) your `~/.zshrc`, not run as a child process.
+- `path persist` appends to `~/.zshrc`. If you use a separate `~/.zshenv` or `~/.zprofile` for `PATH` entries, adjust the `rc` variable at the top of `_path_persist`.
+- For Bash, replace `local IFS=':'` with `IFS=':' read -ra entries <<< "$PATH"` and iterate over `"${entries[@]}"` — the logic is otherwise identical.
