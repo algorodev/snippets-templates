@@ -1,0 +1,120 @@
+---
+title: Truncate Text (Python)
+description: Truncates a string to a maximum length at a word boundary, appending a configurable suffix. Handles multi-line strings and Unicode whitespace correctly.
+category: snippets
+language: python
+tags: [string, utils, text, formatting]
+---
+
+Cuts long strings down to a readable preview without splitting words mid-character, making it safe to use with Unicode text, multi-line content, and any suffix length.
+
+## Usage
+
+```python
+import re
+
+
+def truncate_text(
+    text: str,
+    max_length: int,
+    suffix: str = "…",
+    *,
+    normalize_whitespace: bool = True,
+) -> str:
+    """
+    Truncate *text* to at most *max_length* characters at a word boundary.
+
+    Parameters
+    ----------
+    text:
+        The input string. May contain newlines and Unicode whitespace.
+    max_length:
+        Maximum length of the returned string, **including** the suffix.
+        Must be greater than ``len(suffix)``.
+    suffix:
+        String appended when truncation occurs. Defaults to the Unicode
+        ellipsis character ``"…"`` (U+2026), which counts as one character.
+    normalize_whitespace:
+        When ``True`` (default), collapse all runs of whitespace
+        (including newlines and tabs) into a single space before measuring.
+        Set to ``False`` to preserve the original whitespace layout.
+
+    Returns
+    -------
+    str
+        The original string when it fits within *max_length*, or a
+        truncated version ending with *suffix*.
+
+    Raises
+    ------
+    ValueError
+        When *max_length* is not large enough to fit at least one character
+        plus the suffix.
+    """
+    if max_length <= len(suffix):
+        raise ValueError(
+            f"max_length ({max_length}) must be greater than len(suffix) ({len(suffix)})"
+        )
+
+    if normalize_whitespace:
+        text = re.sub(r"\s+", " ", text, flags=re.UNICODE).strip()
+    
+    if len(text) <= max_length:
+        return text
+
+    budget = max_length - len(suffix)
+    # Walk back from the budget position to the last Unicode word boundary
+    cut = text.rfind(" ", 0, budget + 1)
+
+    if cut <= 0:
+        # No word boundary found — hard-cut at the budget
+        cut = budget
+
+    return text[:cut].rstrip() + suffix
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `text` | `str` | — | Input string to truncate |
+| `max_length` | `int` | — | Maximum character count of the result, including the suffix |
+| `suffix` | `str` | `"…"` | Appended when the text is truncated |
+| `normalize_whitespace` | `bool` | `True` | Collapse newlines/tabs/runs of spaces into a single space before measuring |
+
+## Examples
+
+```python
+title = "The quick brown fox jumped over the lazy dog near the riverbank"
+
+print(truncate_text(title, 30))
+# "The quick brown fox jumped…"
+
+print(truncate_text(title, 30, suffix=" [more]"))
+# "The quick brown fox [more]"
+
+# Multi-line input is flattened by default
+bio = """Alice is a software engineer
+         who loves open-source projects
+         and long hikes."""
+
+print(truncate_text(bio, 40))
+# "Alice is a software engineer who loves…"
+
+# Preserve original whitespace layout
+code_snippet = "def foo():\n    return 42\n# end"
+print(truncate_text(code_snippet, 20, normalize_whitespace=False))
+# "def foo():\n    re…"
+
+# String that already fits is returned unchanged
+print(truncate_text("Hello", 10))
+# "Hello"
+
+# No space in range — hard-cuts at budget
+print(truncate_text("superlongwordwithnobreaks", 10))
+# "superlongw…"
+```
+
+## How it works
+
+After optionally collapsing whitespace, the function checks whether the string already fits. If truncation is needed, it calculates a `budget` equal to `max_length - len(suffix)` and uses `str.rfind(" ", 0, budget + 1)` to find the last space at or before that position. If no space exists (a single long token), it falls back to a hard cut at `budget`. The trailing whitespace is stripped before the suffix is appended so the result never ends with a stray space.
