@@ -1,0 +1,134 @@
+---
+title: Env File Loader
+description: Source a .env file into the current shell session, with support for multiple environments (dev, staging, prod) and secret masking in logs.
+category: cli
+language: bash
+tags: [system, environment, dotenv, productivity]
+---
+
+Load a `.env` file into your current shell session safely — skipping comments and blank lines, supporting multiple named environments (`dev`, `staging`, `prod`), and masking secret values in the confirmation output so nothing sensitive scrolls past in your terminal history.
+
+## Usage
+
+```bash
+# Load default .env in the current directory
+loadenv
+
+# Load a specific environment
+loadenv dev        # reads .env.dev
+loadenv staging    # reads .env.staging
+loadenv prod       # reads .env.prod
+
+# Load a file at an explicit path
+loadenv /path/to/.env.ci
+```
+
+## Shell function version
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+loadenv() {
+  local env_arg="${1:-}"
+  local env_file
+
+  # Resolve the target file
+  if [[ -z "$env_arg" ]]; then
+    env_file=".env"
+  elif [[ "$env_arg" == /* || "$env_arg" == ./* || "$env_arg" == ../* ]]; then
+    # Explicit path
+    env_file="$env_arg"
+  else
+    # Named environment shorthand: dev → .env.dev
+    env_file=".env.${env_arg}"
+  fi
+
+  # Validate
+  if [[ ! -f "$env_file" ]]; then
+    echo "loadenv: file not found: $env_file" >&2
+    return 1
+  fi
+
+  local loaded=0
+  local skipped=0
+
+  # Secret key patterns — values for these are masked in output
+  local secret_pattern='(KEY|SECRET|TOKEN|PASSWORD|PASS|CREDENTIAL|PRIVATE|AUTH)'
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip blank lines and comments
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && (( skipped++ )) && continue
+
+    # Must look like KEY=VALUE (with optional leading export)
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      local key="${BASH_REMATCH[2]}"
+      local val="${BASH_REMATCH[3]}"
+
+      # Strip surrounding quotes if present
+      val="${val%\"}"
+      val="${val#\"}"
+      val="${val%\'}"
+      val="${val#\'}"
+
+      export "$key=$val"
+      (( loaded++ ))
+
+      # Mask sensitive values in the log
+      if [[ "$key" =~ $secret_pattern ]]; then
+        printf "  %-30s = %s\n" "$key" "****"
+      else
+        printf "  %-30s = %s\n" "$key" "$val"
+      fi
+    else
+      echo "  [warn] skipping unrecognised line: $line" >&2
+      (( skipped++ ))
+    fi
+  done < "$env_file"
+
+  echo ""
+  echo "Loaded $loaded variable(s) from $env_file ($skipped line(s) skipped)."
+}
+
+# Convenience aliases
+alias loadenv.dev='loadenv dev'
+alias loadenv.staging='loadenv staging'
+alias loadenv.prod='loadenv prod'
+```
+
+## Examples
+
+```bash
+# Standard .env
+loadenv
+#   DATABASE_URL                   = postgres://localhost/myapp
+#   API_KEY                        = ****
+#   PORT                           = 3000
+#
+# Loaded 3 variable(s) from .env (0 line(s) skipped).
+
+# Staging environment
+loadenv staging
+#   DATABASE_URL                   = postgres://staging-host/myapp
+#   API_SECRET                     = ****
+#
+# Loaded 2 variable(s) from .env.staging (1 line(s) skipped).
+
+# Verify a variable loaded correctly
+echo "$PORT"
+# 3000
+```
+
+## How it works
+
+1. The file argument is resolved to a path: no argument → `.env`, a word like `staging` → `.env.staging`, a path → used as-is.
+2. Each line is read with `IFS= read -r` to preserve whitespace and backslashes.
+3. Blank lines and `#` comments are skipped silently.
+4. Lines matching `[export] KEY=VALUE` are parsed with a Bash regex; surrounding single or double quotes are stripped from the value.
+5. Any key whose name matches the secret pattern (`KEY`, `SECRET`, `TOKEN`, etc.) has its value replaced with `****` in the printed summary — the real value is still exported.
+
+## Notes
+
+- The function mutates your current shell's environment, so it must be sourced (defined in your rc file or `. env-loader.sh`) rather than run as a subprocess.
+- `export` prefixes inside the `.env` file are supported and handled correctly.
+- To unload all variables from a file, re-source with a clean subshell or restart your terminal. A complementary `unloadenv` can be built by looping the same file and calling `unset` on each key.
+- Never commit `.env.staging` or `.env.prod` to version control. Add them to `.gitignore`.
