@@ -1,0 +1,157 @@
+---
+title: Docker Build Helpers
+description: Wrapper functions for common build patterns: build with a git-sha tag, build multi-platform images, and stream the build log cleanly.
+category: cli
+language: bash
+tags: [docker, build, automation, devops]
+---
+
+Raw `docker build` invocations grow long flags fast. These wrappers encode the patterns you repeat on every project — git-sha tagging, multi-platform cross-compilation, and clean log streaming — into short, memorable commands.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# Build an image tagged with the current git SHA (short form) and optionally a named tag.
+# Usage: dbuild <image-name> [tag] [extra docker build args...]
+# Example: dbuild myapp latest --no-cache
+dbuild() {
+  local image="$1"
+  shift
+
+  if [ -z "$image" ]; then
+    echo "Usage: dbuild <image-name> [tag] [extra args...]"
+    return 1
+  fi
+
+  local sha
+  sha=$(git rev-parse --short HEAD 2>/dev/null)
+  if [ -z "$sha" ]; then
+    echo "Warning: not inside a git repository — skipping SHA tag."
+    sha="notag"
+  fi
+
+  local named_tag=""
+  # If next arg doesn't start with '-', treat it as an explicit tag
+  if [ -n "$1" ] && [[ "$1" != -* ]]; then
+    named_tag="$1"
+    shift
+  fi
+
+  local tag_args=("-t" "${image}:${sha}")
+  if [ -n "$named_tag" ]; then
+    tag_args+=("-t" "${image}:${named_tag}")
+  fi
+
+  echo "Building ${image}:${sha}${named_tag:+ and ${image}:${named_tag}}..."
+  docker build "${tag_args[@]}" "$@" .
+}
+
+# Build a multi-platform image using buildx and push to a registry.
+# Requires: docker buildx and a configured builder with multi-arch support.
+# Usage: dbuildx <image:tag> [--platform linux/amd64,linux/arm64] [extra args...]
+dbuildx() {
+  local image="$1"
+  shift
+
+  if [ -z "$image" ]; then
+    echo "Usage: dbuildx <image:tag> [--platform platforms] [extra args...]"
+    return 1
+  fi
+
+  local platform="linux/amd64,linux/arm64"
+
+  # Allow caller to override --platform
+  local args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --platform)
+        platform="$2"
+        shift 2
+        ;;
+      *)
+        args+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  echo "Building multi-platform image: ${image}"
+  echo "Platforms: ${platform}"
+
+  docker buildx build \
+    --platform "$platform" \
+    --tag "$image" \
+    --push \
+    "${args[@]}" \
+    .
+}
+
+# Build with a clean, readable log — timestamps, no ANSI clutter, saved to a file.
+# Usage: dbuildlog <image-name> [tag]
+dbuildlog() {
+  local image="${1:-app}"
+  local tag="${2:-latest}"
+  local logfile="${image//\//_}-build-$(date +%Y%m%d%H%M%S).log"
+
+  echo "Building ${image}:${tag} — log: ${logfile}"
+
+  docker build \
+    --progress=plain \
+    --no-cache \
+    -t "${image}:${tag}" \
+    . 2>&1 | tee "$logfile"
+
+  local exit_code=${PIPESTATUS[0]}
+  if [ "$exit_code" -eq 0 ]; then
+    echo "Build succeeded. Full log saved to: ${logfile}"
+  else
+    echo "Build FAILED (exit ${exit_code}). Check: ${logfile}"
+  fi
+  return "$exit_code"
+}
+```
+
+## Options
+
+| Function | Key Arguments | Description |
+|----------|--------------|-------------|
+| `dbuild` | `<image> [tag] [flags]` | Build and tag with the current git SHA; optionally add a named tag |
+| `dbuildx` | `<image:tag> [--platform ...]` | Build multi-arch via buildx and push to registry |
+| `dbuildlog` | `<image> [tag]` | Build with `--progress=plain`, stream output, and save a timestamped log |
+
+## Examples
+
+```bash
+# Tag with git SHA only
+dbuild myapp
+
+# Tag with git SHA and also as "latest"
+dbuild myapp latest
+
+# Pass extra build args
+dbuild myapp staging --build-arg ENV=staging --no-cache
+
+# Multi-platform build for amd64 + arm64 (default)
+dbuildx registry.example.com/myapp:1.2.0
+
+# Multi-platform build targeting only arm64
+dbuildx registry.example.com/myapp:arm-only --platform linux/arm64
+
+# Clean build with full log saved to file
+dbuildlog myapp v2.0
+```
+
+## How it works
+
+`dbuild` runs `git rev-parse --short HEAD` at call time, so the SHA always reflects the exact commit that was checked out when the build ran. Pairing a human-readable tag (e.g. `staging`) with a SHA tag means you can always trace any running container back to its source commit.
+
+`dbuildx` delegates to `docker buildx build --push`, which requires a buildx builder with multi-architecture support. Set one up with:
+
+```bash
+docker buildx create --name multiarch --use
+docker buildx inspect --bootstrap
+```
+
+`dbuildlog` forces `--progress=plain` so every `RUN` step prints its full output instead of collapsing it, and saves the combined stdout/stderr to a timestamped file you can share with teammates or attach to a CI artifact.
