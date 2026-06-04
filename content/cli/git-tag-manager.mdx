@@ -1,0 +1,165 @@
+---
+title: Git Tag Manager
+description: Functions to create annotated tags, push them to remote, delete local and remote tags, and list tags sorted by version.
+category: cli
+language: bash
+tags: [git, tags, releases, versioning]
+---
+
+Releasing software with git tags involves the same five or six commands every time. These helpers collapse them into memorable one-liners while adding confirmation prompts and sensible defaults for annotated tags and semver sorting.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`.
+
+```bash
+# ──────────────────────────────────────────────────────────────
+# Git Tag Manager
+#
+# tag-create  <version> [message]  — create an annotated tag
+# tag-push    [version]            — push a tag (or all tags) to origin
+# tag-delete  <version>            — delete tag locally and on remote
+# tag-list    [pattern]            — list tags sorted by version
+# tag-release <version> [message]  — create + push in one step
+# ──────────────────────────────────────────────────────────────
+
+# Create an annotated tag at the current HEAD.
+# If no message is provided, the version string is used as the annotation.
+tag-create() {
+  if [ -z "$1" ]; then
+    echo "Usage: tag-create <version> [message]"
+    echo "  e.g. tag-create v1.4.0 'Stable release with dark mode'"
+    return 1
+  fi
+
+  local version="$1"
+  local message="${2:-Release $version}"
+
+  if git tag | grep -qx "$version"; then
+    echo "Tag '$version' already exists locally."
+    return 1
+  fi
+
+  git tag -a "$version" -m "$message"
+  echo "Created annotated tag: $version"
+  echo "  $(git show "$version" --no-patch --format='%H  %s')"
+}
+
+# Push a specific tag to origin, or all tags if no version is given.
+tag-push() {
+  local version="$1"
+
+  if [ -n "$version" ]; then
+    if ! git tag | grep -qx "$version"; then
+      echo "Tag '$version' not found locally."
+      return 1
+    fi
+    git push origin "$version"
+    echo "Pushed: $version"
+  else
+    echo "Pushing all tags to origin…"
+    git push origin --tags
+    echo "Done."
+  fi
+}
+
+# Delete a tag both locally and on the remote (with confirmation).
+tag-delete() {
+  if [ -z "$1" ]; then
+    echo "Usage: tag-delete <version>"
+    return 1
+  fi
+
+  local version="$1"
+
+  if ! git tag | grep -qx "$version"; then
+    echo "Tag '$version' not found locally."
+    return 1
+  fi
+
+  echo "About to delete tag '$version' locally and on origin."
+  read -r "reply?Continue? [y/N] "
+  if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    return 0
+  fi
+
+  # Delete locally
+  git tag -d "$version"
+
+  # Delete on remote (ignore error if it was never pushed)
+  if git ls-remote --tags origin "$version" | grep -q "$version"; then
+    git push origin ":refs/tags/$version"
+    echo "Deleted from origin."
+  else
+    echo "Tag was not on origin — skipping remote delete."
+  fi
+
+  echo "Done."
+}
+
+# List tags, sorted by version (semver-aware if git >= 2.12).
+# Optionally filter by a glob pattern.
+tag-list() {
+  local pattern="${1:-*}"
+  local git_version
+  git_version=$(git --version | awk '{print $3}')
+  local major minor
+  major=$(echo "$git_version" | cut -d. -f1)
+  minor=$(echo "$git_version" | cut -d. -f2)
+
+  if [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 12 ]; }; then
+    git tag -l "$pattern" --sort=-version:refname
+  else
+    # Fallback for older git: sort using sort -V if available
+    git tag -l "$pattern" | sort -rV 2>/dev/null || git tag -l "$pattern"
+  fi
+}
+
+# Create an annotated tag and immediately push it to origin.
+tag-release() {
+  if [ -z "$1" ]; then
+    echo "Usage: tag-release <version> [message]"
+    return 1
+  fi
+
+  local version="$1"
+  local message="${2:-Release $version}"
+
+  tag-create "$version" "$message" || return 1
+  tag-push "$version"
+}
+```
+
+## Examples
+
+```bash
+# Create an annotated tag at HEAD
+tag-create v2.0.0 "Major release: new plugin architecture"
+
+# Push just that tag to origin
+tag-push v2.0.0
+
+# Create and push in a single command
+tag-release v2.0.1 "Patch: fix memory leak in event loop"
+
+# List all tags, newest semver first
+tag-list
+# v2.0.1
+# v2.0.0
+# v1.9.3
+# v1.9.2
+
+# List only v1.x tags
+tag-list "v1.*"
+
+# Delete a mistaken tag locally and on origin
+tag-delete v2.0.0-rc1
+```
+
+## Notes
+
+- Always use **annotated** tags (`-a`) for releases. Annotated tags store the tagger, date, and message, and are treated as first-class objects by `git describe` and GitHub's release tooling. Lightweight tags are fine for personal bookmarks but should not be pushed as release markers.
+- `tag-list` uses `--sort=-version:refname`, which understands semver ordering (e.g. `v1.10.0` sorts after `v1.9.0`). This requires git 2.12+. The fallback uses `sort -V` (GNU coreutils).
+- Deleting a tag that has been fetched by others does not remove it from their local repos. Coordinate with your team before deleting a published tag.
+- To sign tags with GPG, replace `git tag -a` with `git tag -s` in `tag-create`. You must have a GPG key configured in your git config (`user.signingKey`).
