@@ -1,0 +1,187 @@
+---
+title: Postgres Dump & Restore
+description: Wrapper around pg_dump and pg_restore with sensible defaults for compression, schema-only exports, and one-command database cloning.
+category: cli
+language: bash
+tags: [database, postgres, backup, devops]
+---
+
+Add these functions to your `~/.bashrc` or `~/.zshrc` for friction-free Postgres backups and restores. All functions respect `PGPASSWORD`, `PGHOST`, `PGPORT`, and `PGUSER` environment variables.
+
+## Usage
+
+```bash
+# ── Postgres dump & restore helpers ─────────────────────────────────────────
+
+# pgdump: dump a database to a compressed file
+# Usage: pgdump <dbname> [output_file]
+# Example: pgdump myapp
+#          pgdump myapp /backups/myapp.dump
+pgdump() {
+  local dbname="$1"
+  local outfile="${2:-${dbname}_$(date +%Y%m%d_%H%M%S).dump}"
+
+  if [[ -z "$dbname" ]]; then
+    echo "Usage: pgdump <dbname> [output_file]"
+    return 1
+  fi
+
+  echo "Dumping '$dbname' → $outfile ..."
+  pg_dump \
+    --format=custom \
+    --compress=9 \
+    --no-owner \
+    --no-acl \
+    --verbose \
+    --file="$outfile" \
+    "$dbname"
+
+  local exit_code=$?
+  if [[ $exit_code -eq 0 ]]; then
+    local size
+    size=$(du -sh "$outfile" | cut -f1)
+    echo "Done. File: $outfile ($size)"
+  else
+    echo "pg_dump failed (exit $exit_code)."
+    return $exit_code
+  fi
+}
+
+# pgdump-schema: dump schema only (no data)
+# Usage: pgdump-schema <dbname> [output_file]
+pgdump-schema() {
+  local dbname="$1"
+  local outfile="${2:-${dbname}_schema_$(date +%Y%m%d_%H%M%S).sql}"
+
+  if [[ -z "$dbname" ]]; then
+    echo "Usage: pgdump-schema <dbname> [output_file]"
+    return 1
+  fi
+
+  echo "Dumping schema of '$dbname' → $outfile ..."
+  pg_dump \
+    --schema-only \
+    --no-owner \
+    --no-acl \
+    --file="$outfile" \
+    "$dbname"
+
+  [[ $? -eq 0 ]] && echo "Done. File: $outfile" || return $?
+}
+
+# pgrestore: restore a dump file into a database
+# Usage: pgrestore <dump_file> <dbname>
+# The target database must already exist.
+pgrestore() {
+  local dumpfile="$1"
+  local dbname="$2"
+
+  if [[ -z "$dumpfile" || -z "$dbname" ]]; then
+    echo "Usage: pgrestore <dump_file> <dbname>"
+    return 1
+  fi
+
+  if [[ ! -f "$dumpfile" ]]; then
+    echo "Error: dump file not found: $dumpfile"
+    return 1
+  fi
+
+  echo "Restoring '$dumpfile' → '$dbname' ..."
+  pg_restore \
+    --format=custom \
+    --no-owner \
+    --no-acl \
+    --verbose \
+    --dbname="$dbname" \
+    "$dumpfile"
+
+  local exit_code=$?
+  [[ $exit_code -eq 0 ]] && echo "Restore complete." || echo "pg_restore finished with warnings/errors (exit $exit_code)."
+  return $exit_code
+}
+
+# pgclone: copy one local database to another in one command
+# Usage: pgclone <source_db> <target_db>
+# Creates target_db if it does not exist.
+pgclone() {
+  local src="$1"
+  local dst="$2"
+
+  if [[ -z "$src" || -z "$dst" ]]; then
+    echo "Usage: pgclone <source_db> <target_db>"
+    return 1
+  fi
+
+  echo "Cloning '$src' → '$dst' ..."
+
+  # Create destination DB if needed
+  if ! psql --list --tuples-only | awk '{print $1}' | grep -qx "$dst"; then
+    echo "Creating database '$dst' ..."
+    createdb "$dst"
+  fi
+
+  local tmpfile
+  tmpfile=$(mktemp /tmp/pgclone_XXXXXX.dump)
+  trap "rm -f '$tmpfile'" RETURN
+
+  pg_dump --format=custom --compress=9 --no-owner --no-acl --file="$tmpfile" "$src" && \
+  pg_restore --format=custom --no-owner --no-acl --dbname="$dst" "$tmpfile"
+
+  local exit_code=$?
+  rm -f "$tmpfile"
+  [[ $exit_code -eq 0 ]] && echo "Clone complete: $src → $dst" || return $exit_code
+}
+
+# pgbackup-all: dump every database except system databases
+# Usage: pgbackup-all [output_dir]
+pgbackup-all() {
+  local outdir="${1:-.}"
+  mkdir -p "$outdir"
+
+  echo "Backing up all user databases to $outdir ..."
+  psql -t -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres');" \
+    | grep -v '^\s*$' \
+    | while read -r db; do
+        pgdump "$db" "$outdir/${db}_$(date +%Y%m%d_%H%M%S).dump"
+      done
+
+  echo "All databases backed up."
+}
+```
+
+## Options
+
+| Function | Arguments | Description |
+|---|---|---|
+| `pgdump` | `<dbname> [file]` | Custom-format compressed dump with no ownership metadata |
+| `pgdump-schema` | `<dbname> [file]` | Schema-only SQL dump |
+| `pgrestore` | `<dump_file> <dbname>` | Restore a custom-format dump into an existing database |
+| `pgclone` | `<src> <dst>` | Dump and immediately restore into a new local database |
+| `pgbackup-all` | `[output_dir]` | Dump every non-system database to a directory |
+
+## Examples
+
+```bash
+# Backup production, restore into a local staging DB
+pgdump myapp_prod /backups/myapp_prod.dump
+pgrestore /backups/myapp_prod.dump myapp_staging
+
+# Schema-only export for migration review
+pgdump-schema myapp myapp_schema.sql
+
+# One-liner: clone prod to local for debugging
+PGHOST=prod-db.example.com pgclone myapp myapp_local
+
+# Nightly backup of all databases
+pgbackup-all /var/backups/postgres
+```
+
+## Notes
+
+- Dumps use `--format=custom` (binary, seekable) so `pg_restore` can do parallel restores and selective table restores. To restore a plain SQL file use `psql < file.sql` instead.
+- `--no-owner` and `--no-acl` strip role-specific ownership so dumps restore cleanly under any superuser.
+- Set connection details via environment variables to avoid passing them on every call:
+  ```bash
+  export PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=secret
+  ```
+- `pg_restore` may exit non-zero for harmless warnings (e.g. existing objects). Check the verbose output to confirm no real errors occurred.
