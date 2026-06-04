@@ -1,0 +1,160 @@
+---
+title: Functional Map/Filter/Reduce (Go)
+description: Generic Map, Filter, and Reduce higher-order functions implemented with Go 1.18+ type parameters. Enables functional-style slice transformations without reflection.
+category: snippets
+language: go
+tags: [utils, functional, generics, slice]
+---
+
+Brings `map`, `filter`, and `reduce` to Go slices using type parameters introduced in Go 1.18. All three functions are allocation-efficient, type-safe, and compose cleanly without requiring reflection.
+
+## Usage
+
+```go
+package slices
+
+// Map applies transform to each element of in and returns a new slice of
+// the results. The input slice is never modified.
+//
+//	doubled := slices.Map([]int{1, 2, 3}, func(v int) int { return v * 2 })
+//	// => [2 4 6]
+func Map[T, U any](in []T, transform func(T) U) []U {
+	if in == nil {
+		return nil
+	}
+	out := make([]U, len(in))
+	for i, v := range in {
+		out[i] = transform(v)
+	}
+	return out
+}
+
+// Filter returns a new slice containing only the elements of in for which
+// keep returns true.
+//
+//	evens := slices.Filter([]int{1, 2, 3, 4}, func(v int) bool { return v%2 == 0 })
+//	// => [2 4]
+func Filter[T any](in []T, keep func(T) bool) []T {
+	out := make([]T, 0, len(in))
+	for _, v := range in {
+		if keep(v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// Reduce folds in into a single value by calling accumulate for each element,
+// starting from initial.
+//
+//	sum := slices.Reduce([]int{1, 2, 3, 4}, 0, func(acc, v int) int { return acc + v })
+//	// => 10
+func Reduce[T, U any](in []T, initial U, accumulate func(acc U, v T) U) U {
+	result := initial
+	for _, v := range in {
+		result = accumulate(result, v)
+	}
+	return result
+}
+
+// ForEach calls fn for each element of in. Use this when you want the
+// iteration side-effects without building a new slice.
+func ForEach[T any](in []T, fn func(T)) {
+	for _, v := range in {
+		fn(v)
+	}
+}
+
+// Any returns true if predicate returns true for at least one element.
+func Any[T any](in []T, predicate func(T) bool) bool {
+	for _, v := range in {
+		if predicate(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// All returns true if predicate returns true for every element (vacuously
+// true for an empty slice).
+func All[T any](in []T, predicate func(T) bool) bool {
+	for _, v := range in {
+		if !predicate(v) {
+			return false
+		}
+	}
+	return true
+}
+```
+
+## Examples
+
+```go
+package main
+
+import (
+	"fmt"
+	"strings"
+
+	"yourmodule/slices"
+)
+
+type User struct {
+	Name   string
+	Age    int
+	Active bool
+}
+
+func main() {
+	users := []User{
+		{"Alice", 30, true},
+		{"Bob", 17, false},
+		{"Carol", 25, true},
+		{"Dave", 15, true},
+	}
+
+	// Map: extract names
+	names := slices.Map(users, func(u User) string { return u.Name })
+	fmt.Println(names) // [Alice Bob Carol Dave]
+
+	// Filter: active adults only
+	activeAdults := slices.Filter(users, func(u User) bool {
+		return u.Active && u.Age >= 18
+	})
+	fmt.Println(activeAdults) // [{Alice 30 true} {Carol 25 true}]
+
+	// Reduce: sum of ages
+	totalAge := slices.Reduce(users, 0, func(acc int, u User) int {
+		return acc + u.Age
+	})
+	fmt.Println(totalAge) // 87
+
+	// Compose: names of active adults, uppercased
+	result := slices.Map(
+		slices.Filter(users, func(u User) bool { return u.Active && u.Age >= 18 }),
+		func(u User) string { return strings.ToUpper(u.Name) },
+	)
+	fmt.Println(result) // [ALICE CAROL]
+
+	// Any / All predicates
+	fmt.Println(slices.Any(users, func(u User) bool { return u.Age < 18 })) // true
+	fmt.Println(slices.All(users, func(u User) bool { return u.Age > 0 }))  // true
+}
+```
+
+## How it works
+
+Go 1.18 type parameters let the compiler instantiate a separate, type-safe version of each function at compile time — no `interface{}` boxing, no reflection, no runtime type assertions. The syntax `[T, U any]` declares two unconstrained type variables:
+
+- `T` is the element type of the input slice.
+- `U` is the element type of the output slice (for `Map`) or the accumulator type (for `Reduce`).
+
+Because both are inferred from the arguments at the call site, callers rarely need to write explicit type arguments.
+
+## Notes
+
+- `Map` pre-allocates the output slice to `len(in)` to avoid repeated `append` growth.
+- `Filter` pre-allocates with `cap = len(in)` (worst case: all elements pass) then slices back down. For very large slices where few elements pass, swap for a `nil` initial slice and `append`.
+- `Map` returns `nil` when given a `nil` input, mirroring Go's own `append` and `copy` conventions for nil slices.
+- Requires Go 1.18 or later. Add `go 1.18` (or higher) to your `go.mod`.
+- The standard library's `slices` package (Go 1.21+) covers `Contains`, `Index`, and sorting; these helpers complement it for transform-oriented pipelines.
