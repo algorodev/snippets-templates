@@ -1,0 +1,161 @@
+---
+title: semantic-release Config
+description: A semantic-release configuration for fully automated versioning and npm publishing based on Conventional Commits. Generates changelogs, creates GitHub releases, and publishes in one pipeline.
+category: configs
+language: javascript
+tags: [semantic-release, release, versioning, npm, automation]
+---
+
+A `release.config.js` that wires up semantic-release end-to-end: it reads Conventional Commits to determine the next version, writes `CHANGELOG.md`, creates a tagged GitHub release with release notes, and publishes to npm — all from a single CI run.
+
+## Usage
+
+```javascript
+// release.config.js
+/** @type {import('semantic-release').GlobalConfig} */
+export default {
+  branches: [
+    "main",
+    { name: "beta", prerelease: true },
+    { name: "alpha", prerelease: true },
+  ],
+
+  plugins: [
+    // 1. Analyse commits to determine the release type (patch/minor/major)
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        preset: "conventionalcommits",
+        releaseRules: [
+          { type: "feat", release: "minor" },
+          { type: "fix", release: "patch" },
+          { type: "perf", release: "patch" },
+          { type: "revert", release: "patch" },
+          { breaking: true, release: "major" },
+          // Anything else (docs, chore, ci, …) does NOT trigger a release
+        ],
+      },
+    ],
+
+    // 2. Generate release notes in Conventional Commits format
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        preset: "conventionalcommits",
+        presetConfig: {
+          types: [
+            { type: "feat", section: "Features" },
+            { type: "fix", section: "Bug Fixes" },
+            { type: "perf", section: "Performance Improvements" },
+            { type: "revert", section: "Reverts" },
+            { type: "docs", section: "Documentation", hidden: false },
+            { type: "refactor", section: "Code Refactoring", hidden: false },
+          ],
+        },
+      },
+    ],
+
+    // 3. Append the new release notes to CHANGELOG.md and commit it
+    [
+      "@semantic-release/changelog",
+      {
+        changelogFile: "CHANGELOG.md",
+      },
+    ],
+
+    // 4. Bump package.json version and publish to npm
+    [
+      "@semantic-release/npm",
+      {
+        // Set to true to skip npm publish (e.g. for private packages or
+        // monorepo roots that should not be published)
+        npmPublish: true,
+      },
+    ],
+
+    // 5. Commit the changelog and bumped package.json back to the repo
+    [
+      "@semantic-release/git",
+      {
+        assets: ["CHANGELOG.md", "package.json"],
+        message:
+          "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}",
+      },
+    ],
+
+    // 6. Create a GitHub release and attach the generated release notes
+    "@semantic-release/github",
+  ],
+};
+```
+
+## How it works
+
+semantic-release runs the plugins in order. Each plugin handles one stage of the release pipeline:
+
+1. **commit-analyzer** reads commits since the last release tag and decides whether a release is needed and what kind (patch / minor / major). No qualifying commits → pipeline exits early with no release.
+2. **release-notes-generator** builds a human-readable changelog entry from those commits.
+3. **changelog** prepends the entry to `CHANGELOG.md`.
+4. **npm** rewrites `"version"` in `package.json` and runs `npm publish`.
+5. **git** opens a commit with the updated files so the bumped version is tracked in source control.
+6. **github** creates a release on GitHub, attaches the release notes, and tags the commit.
+
+## Notes
+
+Install the required packages:
+
+```bash
+npm install -D semantic-release \
+  @semantic-release/changelog \
+  @semantic-release/commit-analyzer \
+  @semantic-release/git \
+  @semantic-release/github \
+  @semantic-release/npm \
+  @semantic-release/release-notes-generator \
+  conventional-changelog-conventionalcommits
+```
+
+Set up the required CI secrets — semantic-release needs write access to both npm and GitHub:
+
+| Secret | Used by |
+|--------|---------|
+| `NPM_TOKEN` | `@semantic-release/npm` to publish |
+| `GITHUB_TOKEN` | `@semantic-release/github` to create releases (automatically injected in GitHub Actions) |
+
+A minimal GitHub Actions workflow that triggers semantic-release on every push to `main`:
+
+```yaml
+# .github/workflows/release.yml
+name: Release
+
+on:
+  push:
+    branches: [main, beta, alpha]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - run: npm ci
+
+      - run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+```
+
+`fetch-depth: 0` is required so semantic-release can walk the full commit history to find the previous release tag. `persist-credentials: false` avoids token conflicts when `@semantic-release/git` pushes back.
