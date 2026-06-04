@@ -1,0 +1,73 @@
+---
+title: Promise Pool
+description: Runs an array of async tasks with a configurable concurrency limit, collecting results in order. Prevents overwhelming downstream APIs while maximising throughput.
+category: snippets
+language: typescript
+tags: [async, utils, concurrency, promise]
+---
+
+Processes a list of async tasks while keeping at most `concurrency` tasks running at any one time, returning results in the original input order once all tasks complete.
+
+## Usage
+
+```typescript
+async function promisePool<T>(
+  tasks: (() => Promise<T>)[],
+  concurrency: number
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length)
+  let index = 0
+
+  async function worker(): Promise<void> {
+    while (index < tasks.length) {
+      const taskIndex = index++
+      results[taskIndex] = await tasks[taskIndex]()
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, tasks.length) },
+    () => worker()
+  )
+
+  await Promise.all(workers)
+  return results
+}
+
+export default promisePool
+```
+
+## Options
+
+| Parameter     | Type                   | Description                                                  |
+| ------------- | ---------------------- | ------------------------------------------------------------ |
+| `tasks`       | `(() => Promise<T>)[]` | Array of thunks — zero-argument functions that return a promise. |
+| `concurrency` | `number`               | Maximum number of tasks to run in parallel at any moment.    |
+
+## Examples
+
+```typescript
+// Resize 200 images with at most 5 running at once
+const imageKeys = await listAllImageKeys()
+
+const resized = await promisePool(
+  imageKeys.map((key) => () => resizeImage(key, { width: 800 })),
+  5
+)
+
+console.log(`Resized ${resized.length} images`)
+```
+
+```typescript
+// Scrape pages while respecting a rate limit
+const urls = ['https://example.com/page/1', /* ... */]
+
+const pages = await promisePool(
+  urls.map((url) => () => fetch(url).then((r) => r.text())),
+  3
+)
+```
+
+## How it works
+
+`promisePool` spawns exactly `Math.min(concurrency, tasks.length)` worker coroutines. Each worker pulls the next unstarted task index from a shared counter, awaits it, stores the result at the matching position in the pre-allocated `results` array, and repeats until no tasks remain. Because `index` increments synchronously before any `await`, there are no race conditions between workers. `Promise.all` waits for every worker to drain the queue before the function returns.
