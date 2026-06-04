@@ -1,0 +1,145 @@
+---
+title: useLocalStorageState Hook
+description: A useState-compatible hook that persists state to localStorage, syncing across tabs via the storage event. Supports a custom serialiser/deserialiser for non-JSON types.
+category: snippets
+language: typescript
+tags: [react, hooks, storage, state]
+---
+
+A drop-in replacement for `useState` that persists its value to `localStorage` and keeps every open tab in sync via the `storage` event. Pass a custom serialiser to store values that are not JSON-serialisable, such as `Date` objects or `Map` instances.
+
+## Usage
+
+```typescript
+import { useState, useEffect, useCallback, useRef } from 'react'
+
+interface Serialiser<T> {
+  read: (raw: string) => T
+  write: (value: T) => string
+}
+
+const jsonSerialiser: Serialiser<unknown> = {
+  read: JSON.parse,
+  write: JSON.stringify,
+}
+
+type SetValue<T> = (value: T | ((prev: T) => T)) => void
+
+function useLocalStorageState<T>(
+  key: string,
+  initialValue: T,
+  serialiser: Serialiser<T> = jsonSerialiser as Serialiser<T>
+): [T, SetValue<T>] {
+  const serialiserRef = useRef(serialiser)
+
+  useEffect(() => {
+    serialiserRef.current = serialiser
+  })
+
+  const readFromStorage = useCallback((): T => {
+    if (typeof window === 'undefined') return initialValue
+    try {
+      const raw = window.localStorage.getItem(key)
+      return raw !== null ? serialiserRef.current.read(raw) : initialValue
+    } catch {
+      return initialValue
+    }
+  }, [key, initialValue])
+
+  const [state, setStateRaw] = useState<T>(readFromStorage)
+
+  const setState: SetValue<T> = useCallback(
+    (value) => {
+      setStateRaw((prev) => {
+        const next = value instanceof Function ? value(prev) : value
+        try {
+          window.localStorage.setItem(key, serialiserRef.current.write(next))
+        } catch {
+          // Quota exceeded or private-browsing restriction — state still updates in memory.
+        }
+        return next
+      })
+    },
+    [key]
+  )
+
+  // Sync across tabs
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage) return
+      if (event.key !== key) return
+
+      try {
+        const next =
+          event.newValue !== null
+            ? serialiserRef.current.read(event.newValue)
+            : initialValue
+        setStateRaw(next)
+      } catch {
+        // Ignore malformed values written by other tabs.
+      }
+    }
+
+    window.addEventListener('storage', update)
+
+    return () => window.removeEventListener('storage', update)
+
+    function update(event: StorageEvent) {
+      onStorage(event)
+    }
+  }, [key, initialValue])
+
+  return [state, setState]
+}
+
+export default useLocalStorageState
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `key` | `string` | required | The `localStorage` key to read/write |
+| `initialValue` | `T` | required | Value used when the key is absent or unreadable |
+| `serialiser` | `Serialiser<T>` | `JSON` | Custom `{ read, write }` pair for non-JSON types |
+
+## Examples
+
+```typescript
+// Basic usage — identical API to useState
+const [count, setCount] = useLocalStorageState('count', 0)
+
+// Functional update
+setCount((n) => n + 1)
+```
+
+```typescript
+// Storing a Date with a custom serialiser
+const dateSerialiser = {
+  read: (s: string) => new Date(s),
+  write: (d: Date) => d.toISOString(),
+}
+
+const [lastSeen, setLastSeen] = useLocalStorageState(
+  'last-seen',
+  new Date(),
+  dateSerialiser
+)
+```
+
+```typescript
+// Storing a Map
+const mapSerialiser = {
+  read: (s: string) => new Map<string, number>(JSON.parse(s)),
+  write: (m: Map<string, number>) => JSON.stringify([...m]),
+}
+
+const [scores, setScores] = useLocalStorageState('scores', new Map(), mapSerialiser)
+```
+
+## Notes
+
+- The hook is SSR-safe: `typeof window === 'undefined'` guards every storage access.
+- Cross-tab sync relies on the `storage` event, which only fires in tabs _other_ than the one that wrote the value. The writing tab already has the updated in-memory state.
+- If `localStorage.setItem` throws (e.g. quota exceeded), the in-memory React state still updates so the UI does not break. A console warning in development mode can be added inside the catch block if desired.
+- The `serialiserRef` pattern ensures the latest serialiser is always used without adding it to dependency arrays and causing unnecessary re-subscriptions.
