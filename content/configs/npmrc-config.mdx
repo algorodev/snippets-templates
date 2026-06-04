@@ -1,0 +1,66 @@
+---
+title: .npmrc Config
+description: A project-level .npmrc file with common settings for registry, exact versions, and engine strict mode. Ensures consistent installs across different developer machines and CI.
+category: configs
+language: toml
+tags: [npm, npmrc, package-manager, config]
+---
+
+A project-level `.npmrc` that locks down package manager behaviour — exact versions by default, strict engine checking, and a clean audit/fund setup for CI pipelines.
+
+## Usage
+
+```toml
+# Registry
+registry=https://registry.npmjs.org/
+
+# Always save exact versions instead of ranges (e.g. "1.2.3" not "^1.2.3")
+save-exact=true
+
+# Enforce the "engines" field in package.json — fail if Node/npm version is outside range
+engine-strict=true
+
+# Fail the install if any package has an unmet peer dependency
+# (npm v7+ installs peers automatically, but this catches mismatches)
+legacy-peer-deps=false
+
+# Speed up installs: skip optional dependencies that are not needed on this platform
+# Set to true if you have platform-specific optional deps (e.g. esbuild, sharp)
+# optional=false
+
+# Audit and funding
+# Disable audit prompts in CI to keep output clean (run `npm audit` as a separate step)
+audit=false
+fund=false
+
+# Cache
+# Prefer the cache directory on the same drive as the project for speed on Windows
+# cache=.npm-cache
+
+# Logging
+loglevel=warn
+```
+
+## Options
+
+| Key | Default | What it does |
+|-----|---------|--------------|
+| `save-exact` | `false` | Writes exact versions (`1.2.3`) rather than caret ranges (`^1.2.3`) into `package.json` |
+| `engine-strict` | `false` | Aborts install if the current Node/npm version violates the `engines` field |
+| `legacy-peer-deps` | `false` | When `true`, reverts to npm v6 peer-dep behaviour and silently skips conflicts |
+| `audit` | `true` | Runs a vulnerability audit after every install — disable in CI and run it separately |
+| `fund` | `true` | Prints funding messages after install — usually unwanted noise in CI |
+| `loglevel` | `notice` | Controls verbosity: `silent`, `error`, `warn`, `notice`, `http`, `timing`, `info`, `verbose`, `silly` |
+
+## Notes
+
+`.npmrc` is read by npm, pnpm, and (partially) Yarn from the project root. Settings in a project-level `.npmrc` take precedence over the user-level `~/.npmrc` but not over environment variables or command-line flags.
+
+If you use a private registry for scoped packages, add scope-specific entries instead of overriding the global registry:
+
+```toml
+@myorg:registry=https://npm.pkg.github.com/
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+```
+
+The `${NODE_AUTH_TOKEN}` syntax is expanded at install time from the environment, keeping credentials out of version control.
