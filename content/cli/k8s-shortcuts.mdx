@@ -1,0 +1,123 @@
+---
+title: Kubernetes Shortcuts
+description: Commonly needed kubectl aliases for switching contexts and namespaces, tailing pod logs, exec-ing into pods, and watching resource states.
+category: cli
+language: bash
+tags: [cloud, kubernetes, kubectl, devops]
+---
+
+Add these aliases to your `~/.bashrc` or `~/.zshrc` to speed up day-to-day Kubernetes operations. They cover the most common workflows: context and namespace switching, log tailing, shell access, and live resource watching.
+
+## Usage
+
+```bash
+# ── Context & namespace ──────────────────────────────────────────────────────
+
+# List and switch contexts
+alias kctx='kubectl config get-contexts'
+alias kuse='kubectl config use-context'        # usage: kuse my-cluster
+
+# Get/set the current namespace
+alias kns='kubectl config view --minify --output "jsonpath={..namespace}"'
+function ksetns() {
+  kubectl config set-context --current --namespace="$1"
+}
+
+# ── Cluster info ─────────────────────────────────────────────────────────────
+
+alias k='kubectl'
+alias kgp='kubectl get pods'
+alias kgpa='kubectl get pods --all-namespaces'
+alias kgn='kubectl get nodes -o wide'
+alias kgs='kubectl get svc'
+alias kgd='kubectl get deployments'
+alias kgi='kubectl get ingress'
+alias kge='kubectl get events --sort-by=.lastTimestamp'
+
+# ── Describe ─────────────────────────────────────────────────────────────────
+
+alias kdp='kubectl describe pod'              # usage: kdp my-pod
+alias kdd='kubectl describe deployment'
+alias kdn='kubectl describe node'
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+
+# Tail logs for a pod (optionally specify container with -c)
+alias klogs='kubectl logs -f --tail=100'      # usage: klogs my-pod
+alias klogsa='kubectl logs -f --tail=100 --all-containers=true'
+
+# Previous (crashed) container logs
+alias klogsp='kubectl logs --previous'
+
+# ── Exec ─────────────────────────────────────────────────────────────────────
+
+# Open a shell inside a running pod
+function ksh() {
+  local pod="$1"
+  local shell="${2:-sh}"
+  kubectl exec -it "$pod" -- "$shell"
+}
+
+# Run a one-off command in a pod
+function kexec() {
+  kubectl exec -it "$1" -- "${@:2}"
+}
+
+# ── Watch ────────────────────────────────────────────────────────────────────
+
+alias kwatch='kubectl get pods -w'
+alias kwatchall='kubectl get pods --all-namespaces -w'
+
+# Watch with a short refresh (requires watch utility)
+function kwp() {
+  watch -n2 kubectl get pods "${@}"
+}
+
+# ── Apply / delete ───────────────────────────────────────────────────────────
+
+alias kaf='kubectl apply -f'                  # usage: kaf manifest.yaml
+alias kdf='kubectl delete -f'
+alias kdelpod='kubectl delete pod --grace-period=0 --force'
+
+# ── Port-forward ─────────────────────────────────────────────────────────────
+
+# usage: kpf my-pod 8080:80
+alias kpf='kubectl port-forward'
+
+# ── Rollout ──────────────────────────────────────────────────────────────────
+
+alias kroll='kubectl rollout status deployment'
+alias kundo='kubectl rollout undo deployment'  # usage: kundo my-deploy
+```
+
+## Examples
+
+```bash
+# Switch to a different cluster context
+kuse staging-us-east
+
+# Set default namespace for current context
+ksetns kube-system
+
+# Tail logs for a specific pod
+klogs my-api-pod-7d9f4b-xkzp2
+
+# Get a shell into a running container
+ksh my-api-pod-7d9f4b-xkzp2 bash
+
+# Watch pod rollout after a deploy
+kroll my-api
+
+# Force-delete a stuck terminating pod
+kdelpod stuck-pod-abc123
+
+# Port-forward a service to localhost
+kpf svc/my-api 3000:80
+```
+
+## Notes
+
+- These aliases assume `kubectl` is already configured and pointing at a cluster. Run `kubectl cluster-info` to verify.
+- For multi-cluster workflows, consider pairing with [`kubectx` / `kubens`](https://github.com/ahmetb/kubectx) — they provide interactive fuzzy-search for context and namespace switching.
+- The `ksh` function defaults to `sh` because many minimal images do not ship `bash`. Pass `bash` explicitly when it is available.
+- Add `export KUBECONFIG=~/.kube/config` to your shell profile if `kubectl` cannot find your config file.
