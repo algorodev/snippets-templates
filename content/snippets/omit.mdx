@@ -1,0 +1,44 @@
+---
+title: Omit Object Keys
+description: Returns a new object with the specified keys removed from the source object. Infers the return type as the source type minus the omitted keys.
+category: snippets
+language: typescript
+tags: [object, utils, keys, filter]
+---
+
+Removes one or more keys from an object without mutating the original, with the return type automatically narrowed to exclude the omitted properties.
+
+## Usage
+
+```typescript
+function omit<T extends object, K extends keyof T>(
+  obj: T,
+  keys: K[]
+): Omit<T, K> {
+  const result = { ...obj }
+  for (const key of keys) {
+    delete result[key]
+  }
+  return result
+}
+
+export default omit
+```
+
+## Examples
+
+```typescript
+const user = { id: 1, name: 'Alice', password: 'secret', role: 'admin' }
+
+const publicUser = omit(user, ['password'])
+// { id: 1, name: 'Alice', role: 'admin' }
+
+const minimal = omit(user, ['password', 'role'])
+// { id: 1, name: 'Alice' }
+```
+
+## Notes
+
+- The original object is never mutated; a shallow copy is made first.
+- TypeScript infers the return type as `Omit<T, K>`, so omitted keys are not accessible on the result without a type assertion.
+- For deep omission of nested keys, combine with `flattenObj` and a key-filter on dot-notation paths.
