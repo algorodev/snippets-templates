@@ -1,0 +1,122 @@
+---
+title: useCopyToClipboard Hook
+description: Provides a copy function and a boolean isCopied state that resets after a configurable timeout. Falls back to the legacy execCommand API for older browsers.
+category: snippets
+language: typescript
+tags: [react, hooks, clipboard, browser]
+---
+
+Wraps the async Clipboard API with an automatic "copied" confirmation state, falling back to the deprecated `document.execCommand('copy')` path so the hook works across all browsers.
+
+## Usage
+
+```typescript
+import { useCallback, useRef, useState } from 'react'
+
+interface UseCopyToClipboardOptions {
+  /** How long (ms) the `isCopied` flag stays true. Default: 2000 */
+  timeout?: number
+}
+
+interface UseCopyToClipboardReturn {
+  copy: (text: string) => Promise<boolean>
+  isCopied: boolean
+}
+
+function useCopyToClipboard(
+  options: UseCopyToClipboardOptions = {}
+): UseCopyToClipboardReturn {
+  const { timeout = 2000 } = options
+  const [isCopied, setIsCopied] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const copy = useCallback(
+    async (text: string): Promise<boolean> => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+      }
+
+      let success = false
+
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text)
+          success = true
+        } else {
+          // Legacy fallback for older browsers
+          const textarea = document.createElement('textarea')
+          textarea.value = text
+          textarea.style.cssText =
+            'position:fixed;top:-9999px;left:-9999px;opacity:0'
+          document.body.appendChild(textarea)
+          textarea.focus()
+          textarea.select()
+          success = document.execCommand('copy')
+          document.body.removeChild(textarea)
+        }
+      } catch {
+        success = false
+      }
+
+      if (success) {
+        setIsCopied(true)
+        timerRef.current = setTimeout(() => {
+          setIsCopied(false)
+          timerRef.current = null
+        }, timeout)
+      }
+
+      return success
+    },
+    [timeout]
+  )
+
+  return { copy, isCopied }
+}
+
+export { useCopyToClipboard }
+export type { UseCopyToClipboardOptions, UseCopyToClipboardReturn }
+```
+
+## Examples
+
+```typescript
+import { useCopyToClipboard } from './use-copy-to-clipboard'
+
+function CopyButton({ text }: { text: string }) {
+  const { copy, isCopied } = useCopyToClipboard({ timeout: 1500 })
+
+  return (
+    <button onClick={() => copy(text)}>
+      {isCopied ? 'Copied!' : 'Copy'}
+    </button>
+  )
+}
+
+function CodeBlock({ code }: { code: string }) {
+  const { copy, isCopied } = useCopyToClipboard()
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <pre><code>{code}</code></pre>
+      <button
+        onClick={() => copy(code)}
+        style={{ position: 'absolute', top: 8, right: 8 }}
+        aria-label={isCopied ? 'Copied' : 'Copy code'}
+      >
+        {isCopied ? '✓' : 'Copy'}
+      </button>
+    </div>
+  )
+}
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `timeout` | `number` | `2000` | Milliseconds before `isCopied` resets to `false` |
+
+## How it works
+
+The `copy` function first tries `navigator.clipboard.writeText`, which is the modern async Clipboard API available in all current browsers over HTTPS. If that throws or is unavailable, it creates a hidden `<textarea>`, selects its content, and calls `document.execCommand('copy')` as a fallback. On success, `isCopied` flips to `true` and a timeout is queued to reset it. Any previously pending reset timer is cleared before scheduling a new one, so rapid successive calls always give the full timeout window.
