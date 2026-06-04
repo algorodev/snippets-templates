@@ -1,0 +1,69 @@
+---
+title: Is Element In Viewport
+description: Returns true if a DOM element is fully or partially visible within the current viewport. Accepts a threshold option (0–1) for partial visibility.
+category: snippets
+language: typescript
+tags: [dom, utils, viewport, visibility]
+---
+
+Uses `getBoundingClientRect` to compare the element's position against the viewport dimensions. A `threshold` of `0` (default) returns `true` if even one pixel is visible; `1` requires the entire element to be in view.
+
+## Usage
+
+```typescript
+function isInViewport(element: Element, threshold: number = 0): boolean {
+  if (typeof window === 'undefined') return false
+
+  const rect = element.getBoundingClientRect()
+  const windowHeight = window.innerHeight || document.documentElement.clientHeight
+  const windowWidth = window.innerWidth || document.documentElement.clientWidth
+
+  const verticalVisible =
+    rect.top <= windowHeight * (1 - threshold) &&
+    rect.bottom >= windowHeight * threshold
+
+  const horizontalVisible =
+    rect.left <= windowWidth * (1 - threshold) &&
+    rect.right >= windowWidth * threshold
+
+  return verticalVisible && horizontalVisible
+}
+
+export default isInViewport
+```
+
+## Options
+
+| Parameter   | Type     | Default | Description                                                                 |
+| ----------- | -------- | ------- | --------------------------------------------------------------------------- |
+| `element`   | `Element` | —      | The DOM element to check.                                                   |
+| `threshold` | `number` | `0`    | Fraction of the element (0–1) that must be visible to return `true`.        |
+
+## Examples
+
+```typescript
+const card = document.querySelector('.card')!
+
+// Any pixel visible
+isInViewport(card)           // true / false
+
+// At least 50% visible
+isInViewport(card, 0.5)      // true / false
+
+// Fully in view
+isInViewport(card, 1)        // true / false
+
+// Lazy-load images when they enter the viewport
+window.addEventListener('scroll', () => {
+  document.querySelectorAll('img[data-src]').forEach((img) => {
+    if (isInViewport(img)) {
+      ;(img as HTMLImageElement).src = (img as HTMLElement).dataset.src!
+    }
+  })
+})
+```
+
+## Notes
+
+- For a production lazy-loading solution prefer `IntersectionObserver`, which is more performant than a scroll-event listener. This utility is useful when you need a one-off synchronous check (e.g. inside a click handler or an animation loop).
+- The function returns `false` in non-browser environments (SSR/Node) rather than throwing.
