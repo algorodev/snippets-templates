@@ -1,0 +1,54 @@
+---
+title: Prettier Config (Minimal)
+description: A minimal Prettier configuration that only overrides the most opinionated defaults. Great for teams that want Prettier's defaults with just a few tweaks.
+category: configs
+language: json
+tags: [prettier, formatting, code-style, minimal]
+---
+
+Only overrides the Prettier defaults that most teams want different. Everything else stays at the Prettier-blessed default, which reduces config churn as Prettier evolves.
+
+## Usage
+
+```json
+{
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "all"
+}
+```
+
+**Install:**
+
+```bash
+npm install -D prettier
+```
+
+Save as `.prettierrc` at the project root. That's it — Prettier's defaults handle the rest.
+
+## What the defaults give you
+
+Prettier's out-of-the-box defaults are already well-chosen. The three overrides above address the most common team preferences:
+
+| Override | Prettier default | This config |
+|----------|-----------------|-------------|
+| `semi` | `true` | `false` — no trailing semicolons |
+| `singleQuote` | `false` (double) | `true` — single quotes in JS/TS |
+| `trailingComma` | `"all"` since v3 | `"all"` (explicit for clarity) |
+
+The remaining defaults worth knowing:
+
+| Option | Default value |
+|--------|--------------|
+| `printWidth` | `80` |
+| `tabWidth` | `2` |
+| `useTabs` | `false` |
+| `bracketSpacing` | `true` |
+| `arrowParens` | `"always"` |
+| `endOfLine` | `"lf"` |
+
+## Notes
+
+- If your team is happy with double quotes, remove `singleQuote` entirely — fewer lines means fewer points of contention in code review.
+- Pair with a `.prettierignore` listing `node_modules`, `dist`, and lock files to avoid formatting generated output.
+- This config composes cleanly with `prettier-plugin-tailwindcss` — add a `"plugins"` key only when needed rather than pre-emptively.
