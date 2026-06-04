@@ -1,0 +1,130 @@
+---
+title: QR Code Generator
+description: Generate a QR code for any URL or string and display it directly in the terminal or save it as a PNG file.
+category: cli
+language: bash
+tags: [misc, qr-code, utilities, productivity]
+---
+
+Add this function to your `~/.zshrc` or `~/.bashrc` to generate QR codes in the terminal or export them as PNG files. It uses `qrencode` (available via Homebrew or apt) and renders ASCII art inline so you never have to leave the terminal.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+qr() {
+  local text="" output="" size=10 margin=2
+
+  # Parse flags
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -o|--output)
+        output="$2"; shift 2 ;;
+      -s|--size)
+        size="$2"; shift 2 ;;
+      -m|--margin)
+        margin="$2"; shift 2 ;;
+      -h|--help)
+        echo "Usage: qr [options] <text|url>"
+        echo ""
+        echo "Options:"
+        echo "  -o, --output <file>   Save as PNG instead of printing to terminal"
+        echo "  -s, --size   <n>      Module pixel size for PNG output (default: 10)"
+        echo "  -m, --margin <n>      Quiet zone modules (default: 2)"
+        echo ""
+        echo "Examples:"
+        echo "  qr https://example.com"
+        echo "  qr -o code.png https://example.com"
+        echo "  qr \"Hello, World!\""
+        return 0 ;;
+      *)
+        text="$1"; shift ;;
+    esac
+  done
+
+  # Read from stdin if no text argument given
+  if [[ -z "$text" ]]; then
+    text=$(cat)
+  fi
+
+  if [[ -z "$text" ]]; then
+    echo "Error: no input provided." >&2
+    echo "Usage: qr [options] <text|url>" >&2
+    return 1
+  fi
+
+  # Check for qrencode
+  if ! command -v qrencode &>/dev/null; then
+    echo "qrencode is not installed." >&2
+    echo "" >&2
+    if [[ "$(uname)" == "Darwin" ]]; then
+      echo "Install it with:  brew install qrencode" >&2
+    else
+      echo "Install it with:  sudo apt-get install qrencode" >&2
+    fi
+    return 1
+  fi
+
+  if [[ -n "$output" ]]; then
+    # Save to PNG
+    qrencode \
+      --size="$size" \
+      --margin="$margin" \
+      --output="$output" \
+      -- "$text" \
+      && echo "QR code saved to: $output"
+  else
+    # Print UTF8 block characters in the terminal
+    qrencode \
+      --margin="$margin" \
+      --type=UTF8 \
+      -- "$text"
+  fi
+}
+```
+
+After adding the function, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# Display a QR code for a URL in the terminal
+qr https://example.com
+
+# Generate from a string
+qr "Hello, World!"
+
+# Save as a PNG file
+qr -o ~/Desktop/my-link.png https://example.com
+
+# Larger PNG (bigger modules)
+qr -s 20 -o ~/Desktop/my-link.png https://example.com
+
+# Pipe a URL into the function
+pbpaste | qr          # macOS: encode whatever is on the clipboard
+echo "wifi:T:WPA;S:MyNetwork;P:MyPassword;;" | qr   # Wi-Fi QR code
+```
+
+## Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `-o / --output <file>` | — | Save as PNG instead of printing to terminal |
+| `-s / --size <n>` | `10` | Pixel size of each module in PNG output |
+| `-m / --margin <n>` | `2` | Width of the quiet zone (in modules) |
+
+## How it works
+
+`qrencode` encodes the input string according to the QR Code specification and renders it either as UTF-8 block characters (`▄`, `▀`, `█`, spaces) for terminal output, or as a PNG image. The `-m` margin adds the required "quiet zone" around the code so scanners can detect its boundaries.
+
+## Notes
+
+- Install `qrencode` before using: `brew install qrencode` (macOS) or `sudo apt-get install qrencode` (Debian/Ubuntu).
+- Terminal display quality depends on your font and terminal emulator. A font with full Unicode block element coverage (e.g. a Nerd Font or JetBrains Mono) gives the best results.
+- For Wi-Fi sharing, use the format: `wifi:T:WPA;S:<SSID>;P:<password>;;`
+- QR codes have built-in error correction. The default level is `M` (15% recovery). For logos or damaged codes, use `qrencode -l H` for 30% recovery at the cost of a denser code.
