@@ -1,0 +1,101 @@
+---
+title: Deep Merge Objects
+description: Recursively merges two or more plain objects, with later sources overriding earlier ones for scalar values. Arrays are replaced rather than concatenated by default.
+category: snippets
+language: typescript
+tags: [object, utils, merge, deep]
+---
+
+Recursively merges plain objects so nested keys are combined rather than overwritten wholesale. Later sources win on scalar conflicts; arrays are replaced by default.
+
+## Usage
+
+```typescript
+type PlainObject = Record<string, unknown>
+
+function isPlainObject(value: unknown): value is PlainObject {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  )
+}
+
+function deepMerge<T extends PlainObject>(...sources: Partial<T>[]): T {
+  const result: PlainObject = {}
+
+  for (const source of sources) {
+    if (!isPlainObject(source)) continue
+
+    for (const key of Object.keys(source)) {
+      const sourceVal = source[key]
+      const resultVal = result[key]
+
+      if (isPlainObject(sourceVal) && isPlainObject(resultVal)) {
+        result[key] = deepMerge(resultVal, sourceVal)
+      } else {
+        result[key] = sourceVal
+      }
+    }
+  }
+
+  return result as T
+}
+
+export default deepMerge
+```
+
+## Examples
+
+```typescript
+const defaults = {
+  theme: { color: 'blue', size: 'md' },
+  features: { darkMode: false, animations: true },
+  timeout: 3000,
+}
+
+const userConfig = {
+  theme: { color: 'red' },
+  features: { darkMode: true },
+}
+
+const config = deepMerge(defaults, userConfig)
+// => {
+//   theme: { color: 'red', size: 'md' },
+//   features: { darkMode: true, animations: true },
+//   timeout: 3000,
+// }
+
+// Merge three sources — rightmost wins on conflicts
+const base = { a: 1, b: { x: 10, y: 20 } }
+const mid  = { b: { x: 99 }, c: 3 }
+const top  = { b: { y: 42 } }
+
+deepMerge(base, mid, top)
+// => { a: 1, b: { x: 99, y: 42 }, c: 3 }
+
+// Arrays are replaced, not concatenated
+deepMerge({ tags: ['a', 'b'] }, { tags: ['c'] })
+// => { tags: ['c'] }
+```
+
+## Options
+
+To concatenate arrays instead of replacing them, swap the array branch for a concat:
+
+```typescript
+if (Array.isArray(sourceVal) && Array.isArray(resultVal)) {
+  result[key] = [...resultVal, ...sourceVal]
+} else if (isPlainObject(sourceVal) && isPlainObject(resultVal)) {
+  result[key] = deepMerge(resultVal, sourceVal)
+} else {
+  result[key] = sourceVal
+}
+```
+
+## Notes
+
+- Only plain objects (`{}`) trigger recursive merging. Class instances, Dates, Maps, Sets, and arrays are treated as scalars and replaced entirely.
+- Does not mutate any of the source objects.
+- Prototype pollution is avoided because only own enumerable keys are iterated.
