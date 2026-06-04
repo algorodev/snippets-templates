@@ -1,0 +1,135 @@
+---
+title: Vitest Config
+description: A Vitest configuration for unit testing TypeScript projects with jsdom or node environments. Includes path alias resolution to match Vite project config.
+category: configs
+language: javascript
+tags: [vitest, testing, typescript, unit-test]
+---
+
+Drop-in Vitest configuration that mirrors your Vite setup — same path aliases, same environment, with coverage reporting and global test APIs included.
+
+## Usage
+
+```javascript
+// vitest.config.ts
+import { defineConfig } from 'vitest/config'
+import { resolve } from 'path'
+
+export default defineConfig({
+  test: {
+    // Use 'jsdom' for browser-like environments (React, DOM APIs)
+    // Use 'node' for server-side or pure logic tests
+    environment: 'jsdom',
+
+    // Make describe/it/expect available globally without importing
+    globals: true,
+
+    // Run a setup file before each test suite
+    setupFiles: ['./src/test/setup.ts'],
+
+    // Files to include as tests
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+
+    // Files to exclude
+    exclude: ['node_modules', 'dist', 'e2e'],
+
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov', 'html'],
+      reportsDirectory: './coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'src/test/**',
+        'src/**/*.d.ts',
+        'src/main.tsx',
+      ],
+      thresholds: {
+        statements: 80,
+        branches: 75,
+        functions: 80,
+        lines: 80,
+      },
+    },
+
+    // Show test results inline with diffs
+    reporters: ['verbose'],
+
+    // Timeout per test in milliseconds
+    testTimeout: 5000,
+
+    // Retry flaky tests up to N times
+    retry: 0,
+  },
+
+  resolve: {
+    alias: {
+      // Mirror the aliases in your vite.config.ts
+      '@': resolve(__dirname, './src'),
+      '@components': resolve(__dirname, './src/components'),
+      '@utils': resolve(__dirname, './src/utils'),
+    },
+  },
+})
+```
+
+**Setup file (`src/test/setup.ts`):**
+
+```typescript
+import '@testing-library/jest-dom'
+
+// Reset all mocks after each test
+afterEach(() => {
+  vi.clearAllMocks()
+})
+```
+
+**Install:**
+
+```bash
+npm install -D vitest @vitest/coverage-v8 jsdom @testing-library/jest-dom
+# If testing React components:
+npm install -D @testing-library/react @testing-library/user-event
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui"
+  }
+}
+```
+
+**Add types to `tsconfig.json`:**
+
+```json
+{
+  "compilerOptions": {
+    "types": ["vitest/globals"]
+  }
+}
+```
+
+## Options
+
+| Field | Value | Effect |
+|-------|-------|--------|
+| `environment` | `"jsdom"` \| `"node"` \| `"happy-dom"` | Runtime environment for tests |
+| `globals` | `true` | Injects `describe`, `it`, `expect`, `vi` without imports |
+| `setupFiles` | string[] | Runs before each test file (ideal for global mocks and matchers) |
+| `coverage.provider` | `"v8"` \| `"istanbul"` | Coverage instrumentation engine |
+| `coverage.thresholds` | object | Fails the run if coverage drops below these values |
+| `retry` | number | Re-runs failing tests up to N additional times |
+
+## Notes
+
+- `vitest` runs in watch mode by default; use `vitest run` for a single CI pass.
+- The `resolve.alias` block must duplicate the aliases from `vite.config.ts` so that the same `@/` imports that work in the app also resolve correctly in tests.
+- `happy-dom` is a faster alternative to `jsdom` but has less complete browser API coverage — prefer it for speed-sensitive suites that do not need full DOM fidelity.
+- Install `@vitest/ui` (`npm install -D @vitest/ui`) to get a browser-based test explorer at `localhost:51204`.
+- If you use TypeScript path aliases, also add them to `compilerOptions.paths` in `tsconfig.json` to prevent editor errors.
