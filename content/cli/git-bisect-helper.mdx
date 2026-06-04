@@ -1,0 +1,137 @@
+---
+title: Git Bisect Helper
+description: Wrapper that automates git bisect sessions by accepting a test command and running the binary search until the first bad commit is found.
+category: cli
+language: bash
+tags: [git, bisect, debugging, automation]
+---
+
+`git bisect` is the fastest way to find which commit introduced a bug, but the manual flow is error-prone. This wrapper accepts a known-good ref, a known-bad ref, and a test command, then drives the entire binary search automatically and prints the culprit commit.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`.
+
+```bash
+# Automated git bisect driver
+#
+# Usage:
+#   git-bisect-run <good-ref> <bad-ref> <test-command> [test-args…]
+#
+# Exit-code contract for <test-command>:
+#   0        → this commit is GOOD (bug not present)
+#   1-124    → this commit is BAD  (bug present)
+#   125      → skip this commit (e.g. it does not compile)
+#   126-127  → bisect is aborted (reserved by git)
+#
+# Examples:
+#   git-bisect-run v2.1.0 HEAD "npm test -- --testPathPattern=auth"
+#   git-bisect-run abc1234 HEAD "./scripts/repro.sh"
+#   git-bisect-run main~50 main "make test"
+git-bisect-run() {
+  if [ "$#" -lt 3 ]; then
+    echo "Usage: git-bisect-run <good-ref> <bad-ref> <test-command> [args…]"
+    return 1
+  fi
+
+  local good_ref="$1"
+  local bad_ref="$2"
+  shift 2
+  local test_cmd=("$@")
+
+  # Validate that we are inside a git repository
+  if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    echo "Error: not inside a git repository."
+    return 1
+  fi
+
+  # Resolve refs to full SHAs so the summary is unambiguous
+  local good_sha bad_sha
+  good_sha=$(git rev-parse --verify "$good_ref" 2>/dev/null) || {
+    echo "Error: cannot resolve good ref '$good_ref'."
+    return 1
+  }
+  bad_sha=$(git rev-parse --verify "$bad_ref" 2>/dev/null) || {
+    echo "Error: cannot resolve bad ref '$bad_ref'."
+    return 1
+  }
+
+  local commits_to_test
+  commits_to_test=$(git rev-list --count "${good_sha}..${bad_sha}" 2>/dev/null)
+
+  echo "Starting bisect between:"
+  echo "  good: $good_ref ($good_sha)"
+  echo "  bad:  $bad_ref ($bad_sha)"
+  echo "  test: ${test_cmd[*]}"
+  echo "  commits to search: ~$((commits_to_test > 0 ? $(echo "l($commits_to_test)/l(2)" | bc -l | awk '{printf "%d", $1+1}') : 0)) steps"
+  echo ""
+
+  # Clean up any interrupted bisect session
+  git bisect reset > /dev/null 2>&1
+
+  git bisect start
+  git bisect good "$good_sha"
+  git bisect bad  "$bad_sha"
+
+  # Run the automated search; git bisect run exits 0 on success
+  if git bisect run "${test_cmd[@]}"; then
+    echo ""
+    echo "Bisect complete. First bad commit:"
+    echo "──────────────────────────────────"
+    git show --no-patch --format="%H%n%an <%ae>%n%ad%n%n%s%n%b" HEAD
+    echo "──────────────────────────────────"
+  else
+    echo ""
+    echo "Bisect did not complete cleanly. Inspect the output above."
+  fi
+
+  # Always clean up
+  git bisect reset
+}
+
+# Print a short log of the bisect range for planning
+git-bisect-log() {
+  if [ "$#" -lt 2 ]; then
+    echo "Usage: git-bisect-log <good-ref> <bad-ref>"
+    return 1
+  fi
+
+  local good_ref="$1"
+  local bad_ref="$2"
+
+  echo "Commits in range ${good_ref}..${bad_ref}:"
+  git log --oneline "${good_ref}..${bad_ref}"
+}
+```
+
+## Examples
+
+```bash
+# Find the commit that broke a Jest test suite
+git-bisect-run v3.0.0 HEAD "npx jest --testPathPattern=checkout --passWithNoTests"
+
+# Find a regression using a custom reproduction script
+# (script exits 0 = passes, 1 = reproduces the bug)
+git-bisect-run main~100 main "./scripts/repro.sh"
+
+# Find when a Makefile target started failing
+git-bisect-run 1.2.0 1.5.0 make test
+
+# Preview the commits in a range before bisecting
+git-bisect-log v3.0.0 HEAD
+```
+
+## How it works
+
+1. `git bisect start` puts git into bisect mode.
+2. Marking `good` and `bad` tells git the boundaries of the search range.
+3. `git bisect run <cmd>` checks out the midpoint commit and runs `<cmd>`. Based on the exit code, git marks that commit good or bad and moves to the next midpoint — log₂(N) steps total.
+4. When the range narrows to a single commit, git prints it and exits.
+5. `git bisect reset` returns HEAD to where it was before the session.
+
+## Notes
+
+- The test command must be **deterministic** and **self-contained** at every commit in the range. Flaky tests will produce false results.
+- If some commits fail to build, have your test script return `125` for those so git skips them rather than marking them bad.
+- Avoid commands that modify the working tree irreversibly (e.g. `npm install` without a lockfile); they can corrupt the checkout at intermediate commits.
+- For expensive test suites, narrow the range first with `git-bisect-log` to estimate the number of steps (log₂ of the commit count).
