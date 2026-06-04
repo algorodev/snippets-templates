@@ -1,0 +1,148 @@
+---
+title: Paginate Query (Python)
+description: A reusable pagination helper that wraps a list or SQLAlchemy query, returning a typed dataclass with items, total count, page, and has_next fields.
+category: snippets
+language: python
+tags: [utils, pagination, database]
+---
+
+A single `paginate` function that works with plain Python lists and SQLAlchemy `Query` objects alike, returning a typed `Page` dataclass so callers always get a consistent structure.
+
+## Usage
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import ceil
+from typing import Generic, Sequence, TypeVar, Union
+
+T = TypeVar("T")
+
+try:
+    from sqlalchemy.orm import Query as SAQuery  # optional dependency
+    _SA_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _SA_AVAILABLE = False
+    SAQuery = None  # type: ignore[assignment,misc]
+
+
+@dataclass
+class Page(Generic[T]):
+    """A single page of results."""
+
+    items: list[T]
+    """The items on the current page."""
+
+    total: int
+    """Total number of items across all pages."""
+
+    page: int
+    """The current 1-based page number."""
+
+    page_size: int
+    """Maximum number of items per page."""
+
+    has_next: bool
+    """True when there is at least one more page after this one."""
+
+    @property
+    def total_pages(self) -> int:
+        """Total number of pages."""
+        return ceil(self.total / self.page_size) if self.page_size else 0
+
+
+def paginate(
+    source: Union[Sequence[T], "SAQuery[T]"],
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> Page[T]:
+    """Paginate a list or SQLAlchemy query.
+
+    Args:
+        source: A Python sequence (list, tuple, etc.) or a SQLAlchemy Query.
+        page: 1-based page number (default: 1).
+        page_size: Number of items per page (default: 20).
+
+    Returns:
+        A :class:`Page` dataclass with items and metadata.
+
+    Raises:
+        ValueError: If ``page`` or ``page_size`` are less than 1.
+    """
+    if page < 1:
+        raise ValueError(f"page must be >= 1, got {page}")
+    if page_size < 1:
+        raise ValueError(f"page_size must be >= 1, got {page_size}")
+
+    offset = (page - 1) * page_size
+
+    if _SA_AVAILABLE and isinstance(source, SAQuery):
+        total: int = source.count()
+        items: list[T] = source.offset(offset).limit(page_size).all()
+    else:
+        seq = list(source)
+        total = len(seq)
+        items = seq[offset : offset + page_size]
+
+    has_next = offset + len(items) < total
+
+    return Page(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        has_next=has_next,
+    )
+```
+
+## Examples
+
+```python
+# --- Plain list ---
+numbers = list(range(1, 101))  # 1..100
+
+result = paginate(numbers, page=3, page_size=10)
+# Page(items=[21, 22, ..., 30], total=100, page=3, page_size=10, has_next=True)
+
+print(result.total_pages)  # 10
+print(result.has_next)     # True
+
+# Last page
+last = paginate(numbers, page=10, page_size=10)
+print(last.has_next)  # False
+
+
+# --- SQLAlchemy query ---
+from myapp.database import db
+from myapp.models import Post
+
+query = db.session.query(Post).filter(Post.published == True).order_by(Post.created_at.desc())
+page = paginate(query, page=2, page_size=25)
+
+for post in page.items:
+    print(post.title)
+
+print(f"Page {page.page} of {page.total_pages}")
+
+
+# --- FastAPI endpoint example ---
+from fastapi import APIRouter, Query as QParam
+
+router = APIRouter()
+
+@router.get("/posts")
+def list_posts(
+    page: int = QParam(1, ge=1),
+    page_size: int = QParam(20, ge=1, le=100),
+):
+    query = db.session.query(Post).order_by(Post.created_at.desc())
+    return paginate(query, page=page, page_size=page_size)
+```
+
+## Notes
+
+- When passed a SQLAlchemy `Query`, `paginate` issues two queries: one `COUNT` and one `SELECT ... LIMIT ... OFFSET`. If your ORM supports `select_count_estimate` or a window-function approach for large tables, consider wrapping those patterns instead.
+- For plain sequences the function materialises the full list once, so it is not suitable for lazily-evaluated generators on very large datasets — convert to a database-backed query in those cases.
+- `Page` is a `Generic[T]` dataclass, so type checkers will infer the correct item type automatically.
