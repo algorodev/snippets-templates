@@ -1,0 +1,190 @@
+---
+title: Retry With Backoff (Go)
+description: A generic retry function that re-runs a closure on error with configurable attempts and exponential backoff. Accepts a context for cancellation and deadline propagation.
+category: snippets
+language: go
+tags: [utils, retry, resilience, context]
+---
+
+Re-runs a fallible operation up to a maximum number of attempts, doubling the wait time between each failure. Context cancellation or deadline expiry stops the loop immediately and surfaces the context error.
+
+## Usage
+
+```go
+package retry
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"time"
+)
+
+// Config holds tuning parameters for the retry loop.
+type Config struct {
+	// MaxAttempts is the total number of tries (including the first call).
+	// Must be >= 1. Defaults to 3 if zero.
+	MaxAttempts int
+
+	// InitialDelay is the wait time before the second attempt.
+	// Subsequent delays are doubled. Defaults to 500ms if zero.
+	InitialDelay time.Duration
+
+	// MaxDelay caps the exponential growth. Defaults to 30s if zero.
+	MaxDelay time.Duration
+
+	// IsRetryable, when set, is called with the error from each failed
+	// attempt. Return false to stop retrying immediately (e.g. for
+	// permanent errors like 4xx HTTP responses).
+	IsRetryable func(err error) bool
+}
+
+func (c *Config) defaults() Config {
+	cfg := *c
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 3
+	}
+	if cfg.InitialDelay <= 0 {
+		cfg.InitialDelay = 500 * time.Millisecond
+	}
+	if cfg.MaxDelay <= 0 {
+		cfg.MaxDelay = 30 * time.Second
+	}
+	return cfg
+}
+
+// Do runs fn up to cfg.MaxAttempts times. It returns nil on the first
+// success, and the last error if all attempts are exhausted.
+// Context cancellation causes an immediate return with ctx.Err().
+func Do(ctx context.Context, cfg Config, fn func(ctx context.Context) error) error {
+	c := cfg.defaults()
+
+	var lastErr error
+	for attempt := 0; attempt < c.MaxAttempts; attempt++ {
+		// Bail out early if context is already done.
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("retry: context cancelled before attempt %d: %w", attempt+1, err)
+		}
+
+		lastErr = fn(ctx)
+		if lastErr == nil {
+			return nil
+		}
+
+		// Allow callers to mark certain errors as permanent.
+		if c.IsRetryable != nil && !c.IsRetryable(lastErr) {
+			return lastErr
+		}
+
+		// No more waits after the final attempt.
+		if attempt == c.MaxAttempts-1 {
+			break
+		}
+
+		delay := backoffDelay(c.InitialDelay, c.MaxDelay, attempt)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("retry: context cancelled during backoff: %w", ctx.Err())
+		case <-time.After(delay):
+		}
+	}
+
+	return fmt.Errorf("retry: all %d attempts failed: %w", c.MaxAttempts, lastErr)
+}
+
+// backoffDelay returns InitialDelay * 2^attempt, capped at MaxDelay.
+func backoffDelay(initial, max time.Duration, attempt int) time.Duration {
+	multiplier := math.Pow(2, float64(attempt))
+	delay := time.Duration(float64(initial) * multiplier)
+	if delay > max {
+		return max
+	}
+	return delay
+}
+
+// Permanent wraps an error to signal that retrying is pointless.
+// Use with IsRetryable to skip the backoff loop on known-permanent failures.
+func Permanent(err error) error {
+	return &permanentError{err: err}
+}
+
+type permanentError struct{ err error }
+
+func (e *permanentError) Error() string { return e.err.Error() }
+func (e *permanentError) Unwrap() error { return e.err }
+
+// IsPermanent reports whether err (or any error in its chain) was marked permanent.
+func IsPermanent(err error) bool {
+	var pe *permanentError
+	return errors.As(err, &pe)
+}
+```
+
+## Examples
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"time"
+
+	"yourmodule/retry"
+)
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Basic usage — 4 attempts, 200ms → 400ms → 800ms backoff.
+	cfg := retry.Config{
+		MaxAttempts:  4,
+		InitialDelay: 200 * time.Millisecond,
+	}
+
+	err := retry.Do(ctx, cfg, func(ctx context.Context) error {
+		resp, err := http.Get("https://api.example.com/data")
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		// Treat 4xx as permanent — no point retrying a bad request.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return retry.Permanent(fmt.Errorf("client error: %d", resp.StatusCode))
+		}
+		if resp.StatusCode >= 500 {
+			return fmt.Errorf("server error: %d", resp.StatusCode)
+		}
+		return nil
+	})
+
+	if err != nil {
+		if retry.IsPermanent(errors.Unwrap(err)) {
+			fmt.Println("permanent failure, not retrying:", err)
+		} else {
+			fmt.Println("all attempts failed:", err)
+		}
+	}
+}
+```
+
+## Options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `MaxAttempts` | `int` | `3` | Total tries including the first call. |
+| `InitialDelay` | `time.Duration` | `500ms` | Wait before attempt 2; doubles each round. |
+| `MaxDelay` | `time.Duration` | `30s` | Upper bound on any single wait. |
+| `IsRetryable` | `func(error) bool` | `nil` (always retry) | Return `false` to abort immediately on a given error. |
+
+## How it works
+
+1. Each failed attempt increments a counter and computes the next delay as `InitialDelay * 2^attempt`.
+2. The `select` statement waits for the delay timer or context cancellation, whichever comes first.
+3. Wrapping the last error with `%w` preserves the full error chain so callers can use `errors.Is` / `errors.As`.
+4. `Permanent` + `IsPermanent` provide a lightweight convention for non-retryable errors without requiring callers to define their own sentinel types.
