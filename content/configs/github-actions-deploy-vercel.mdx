@@ -1,0 +1,121 @@
+---
+title: "GitHub Actions: Deploy to Vercel"
+description: A GitHub Actions workflow for deploying a Next.js or static site to Vercel via the Vercel CLI. Handles preview deployments on PRs and production deployments on main.
+category: configs
+language: yaml
+tags: [github-actions, vercel, deployment, nextjs]
+---
+
+Separates preview and production deployments: pull requests get a unique preview URL posted as a PR comment, while pushes to `main` trigger a full production deployment — all via the Vercel CLI without the Vercel GitHub integration.
+
+## Usage
+
+```yaml
+name: Deploy to Vercel
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel environment info
+        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build project
+        run: vercel build ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy (preview)
+        if: github.event_name == 'pull_request'
+        id: deploy-preview
+        run: |
+          url=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "preview_url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.deploy-preview.outputs.preview_url }}';
+            const body = `### Preview deployment\n\n**URL:** ${url}\n\n_Deployed from commit \`${{ github.sha }}\`_`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.startsWith('### Preview deployment'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Deploy (production)
+        if: github.ref == 'refs/heads/main'
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+```
+
+## Options
+
+| Field | Default | Effect |
+|-------|---------|--------|
+| `on.push.branches` | `[main]` | Branch that triggers production deployments |
+| `node-version` | `20` | Must match the Node version configured in your Vercel project settings |
+| `vercel@latest` | latest | Pin to a specific version (e.g. `vercel@34`) for reproducible installs |
+
+## Setup
+
+Before using this workflow, retrieve your project and org IDs from Vercel and add them as repository secrets:
+
+```bash
+# Link your local project to Vercel (one-time)
+npx vercel link
+
+# The IDs are written to .vercel/project.json — copy them to GitHub secrets:
+# VERCEL_TOKEN      → your Vercel personal access token (vercel.com/account/tokens)
+# VERCEL_ORG_ID     → .vercel/project.json > orgId
+# VERCEL_PROJECT_ID → .vercel/project.json > projectId
+```
+
+Add all three values in GitHub under Settings → Secrets and variables → Actions.
+
+## Notes
+
+- `vercel pull` downloads environment variables and project settings so the build step has access to them locally inside the runner.
+- The PR comment step checks for an existing comment first and updates it instead of creating a new one on every push to the PR branch, keeping the PR timeline tidy.
+- If your project uses a monorepo, add `--cwd ./apps/web` to each `vercel` command to point the CLI at the correct package directory.
+- The `permissions: pull-requests: write` key is required so the `github-script` step can post and update PR comments.
