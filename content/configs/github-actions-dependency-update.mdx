@@ -1,0 +1,135 @@
+---
+title: "GitHub Actions: Dependency Update"
+description: A scheduled GitHub Actions workflow that runs npm-check-updates and opens a PR with dependency bumps. Configurable to target only patch, minor, or major updates.
+category: configs
+language: yaml
+tags: [github-actions, dependencies, automation, scheduled]
+---
+
+Runs on a weekly cron schedule, upgrades dependencies with `npm-check-updates`, and opens a pull request if anything changed. Supports filtering by semver level so you can keep major bumps separate from routine patch updates.
+
+## Usage
+
+```yaml
+# .github/workflows/dependency-update.yml
+name: Dependency Update
+
+on:
+  schedule:
+    # Every Monday at 08:00 UTC
+    - cron: '0 8 * * 1'
+  # Allow manual runs from the Actions tab
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Semver target (patch | minor | latest)'
+        required: false
+        default: 'minor'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-deps:
+    name: Update Dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+
+      - name: Install npm-check-updates
+        run: npm install -g npm-check-updates
+
+      - name: Determine semver target
+        id: target
+        run: |
+          # workflow_dispatch input takes precedence; fall back to 'minor' on schedule
+          TARGET="${{ github.event.inputs.target || 'minor' }}"
+          echo "value=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: Run ncu
+        id: ncu
+        run: |
+          ncu \
+            --target "${{ steps.target.outputs.value }}" \
+            --upgrade \
+            --packageFile package.json
+
+          # Capture whether package.json was actually modified
+          if git diff --quiet package.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install updated packages
+        if: steps.ncu.outputs.changed == 'true'
+        run: npm install
+
+      - name: Collect upgrade summary
+        if: steps.ncu.outputs.changed == 'true'
+        id: summary
+        run: |
+          DIFF=$(git diff package.json)
+          echo "diff<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$DIFF" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Open pull request
+        if: steps.ncu.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/dependency-update-${{ steps.target.outputs.value }}
+          delete-branch: true
+          commit-message: "chore(deps): bump ${{ steps.target.outputs.value }} dependencies"
+          title: "chore(deps): bump ${{ steps.target.outputs.value }} dependencies"
+          body: |
+            ## Dependency Update
+
+            Automated bump of **${{ steps.target.outputs.value }}** dependencies via `npm-check-updates`.
+
+            <details>
+            <summary>package.json diff</summary>
+
+            ```diff
+            ${{ steps.summary.outputs.diff }}
+            ```
+            </details>
+
+            > Triggered by: `${{ github.event_name }}`
+          labels: |
+            dependencies
+            automated
+```
+
+## Options
+
+| Input | Values | Description |
+|-------|--------|-------------|
+| `target` | `patch`, `minor`, `latest` | Which semver levels to upgrade. `patch` is safest; `latest` includes breaking changes. |
+
+Adjust the cron schedule to your preference:
+
+```yaml
+# Examples
+- cron: '0 8 * * 1'      # Every Monday at 08:00 UTC
+- cron: '0 6 1 * *'      # First day of every month at 06:00 UTC
+- cron: '0 9 * * 1,4'    # Monday and Thursday at 09:00 UTC
+```
+
+## Notes
+
+- The branch name includes the target level (`chore/dependency-update-minor`) so patch and minor PRs never collide.
+- `delete-branch: true` removes the update branch automatically after it is merged.
+- For monorepos with multiple `package.json` files, add a matrix strategy over the relevant workspace paths and pass `--packageFile` accordingly.
+- If you pin dependencies in `package.json` with exact versions (no `^` or `~`), `ncu --upgrade` will still bump them. Adjust with `--filterVersion` if needed.
+- To exclude specific packages, add `--reject package-name` to the `ncu` call.
