@@ -1,0 +1,35 @@
+---
+title: Shuffle Array
+description: Returns a new randomly shuffled copy of an array using the Fisher-Yates algorithm. Does not mutate the original array.
+category: snippets
+language: typescript
+tags: [array, utils, random]
+---
+
+Produces an unbiased random permutation of any array without touching the original, using the Fisher-Yates (Knuth) shuffle.
+
+```typescript
+function shuffle<T>(array: T[]): T[] {
+  const result = [...array]
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[result[i], result[j]] = [result[j], result[i]]
+  }
+  return result
+}
+
+export default shuffle
+```
+
+## Usage
+
+```typescript
+const deck = ['A', 'K', 'Q', 'J', '10']
+const shuffled = shuffle(deck)
+// deck is unchanged; shuffled is a new array in random order
+console.log(shuffled) // e.g. ['Q', 'A', '10', 'K', 'J']
+```
+
+## How it works
+
+The algorithm iterates from the last index down to 1. At each step it picks a random index from 0 to the current position (inclusive) and swaps the two elements. Because every possible permutation is equally likely to be selected, the shuffle is statistically unbiased. Spreading into a new array before the loop ensures the original input is never modified.
