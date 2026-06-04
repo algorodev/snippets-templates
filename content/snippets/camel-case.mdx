@@ -1,0 +1,45 @@
+---
+title: camelCase String
+description: Converts a string from snake_case, kebab-case, or space-separated words into camelCase. Handles leading/trailing separators and consecutive separators correctly.
+category: snippets
+language: typescript
+tags: [string, utils, formatting, case]
+---
+
+Normalises any of the common word-separator conventions — underscores, hyphens, or spaces — into a single camelCase string, collapsing runs of consecutive separators along the way.
+
+## Usage
+
+```typescript
+function camelCase(input: string): string {
+  return input
+    .trim()
+    .replace(/[-_\s]+(.)?/g, (_, char) => (char ? char.toUpperCase() : ''))
+    .replace(/^(.)/, (char) => char.toLowerCase())
+}
+
+export default camelCase
+```
+
+## Examples
+
+```typescript
+camelCase('hello_world')         // 'helloWorld'
+camelCase('hello-world')         // 'helloWorld'
+camelCase('hello world')         // 'helloWorld'
+camelCase('foo__bar--baz')       // 'fooBarBaz'
+camelCase('  leading spaces')    // 'leadingSpaces'
+camelCase('_private_field_')     // 'privateField'
+camelCase('already camelCase')   // 'alreadyCamelCase'
+```
+
+## How it works
+
+1. `trim()` removes surrounding whitespace before any separator logic runs.
+2. The first `replace` matches any run of `-`, `_`, or whitespace characters optionally followed by a single non-separator character. When that trailing character exists it is capitalised; if the separator was at the end of the string it is simply removed.
+3. The second `replace` lowercases only the very first character, so strings that already start with an uppercase letter (`XMLParser`) are safely normalised to `xMLParser` rather than left with a capital first letter.
+
+## Notes
+
+- This function does not handle `PascalCase` or `SCREAMING_SNAKE_CASE` input — use a dedicated case library (e.g. `change-case`) if you need to round-trip those forms.
+- The output is a plain `string`; TypeScript's template-literal types are not inferred.
