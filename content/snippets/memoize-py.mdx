@@ -1,0 +1,145 @@
+---
+title: Memoize Decorator (Python)
+description: Caches function results by argument fingerprint with an optional TTL and maximum cache size. Works with positional and keyword arguments and unhashable types via repr fallback.
+category: snippets
+language: python
+tags: [utils, decorator, cache, performance]
+---
+
+A `@memoize` decorator that stores return values keyed by a fingerprint of the call arguments. Supports an optional time-to-live (TTL) so stale entries expire automatically, a maximum cache size with LRU eviction, and a `repr`-based fallback so calls with unhashable arguments (lists, dicts) are still cached.
+
+## Usage
+
+```python
+import functools
+import time
+from collections import OrderedDict
+from typing import Any, Callable, TypeVar
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def memoize(
+    ttl: float | None = None,
+    max_size: int | None = 128,
+) -> Callable[[F], F]:
+    """Cache the return value of a function keyed by its call arguments.
+
+    Args:
+        ttl: Time-to-live in seconds. Cached entries older than this are
+             recomputed on the next call. ``None`` means entries never expire.
+        max_size: Maximum number of entries to keep. Oldest entries are evicted
+                  when the limit is reached (LRU). ``None`` means unlimited.
+
+    Returns:
+        A decorator that wraps the target function with caching.
+
+    Example::
+
+        @memoize(ttl=60, max_size=256)
+        def fetch_user(user_id: int) -> dict:
+            ...
+    """
+
+    def decorator(func: F) -> F:
+        # OrderedDict preserves insertion order for LRU eviction
+        cache: OrderedDict[str, tuple[Any, float]] = OrderedDict()
+
+        def _make_key(args: tuple, kwargs: dict) -> str:
+            try:
+                return str(hash((args, tuple(sorted(kwargs.items())))))
+            except TypeError:
+                # Fallback for unhashable types (lists, dicts, etc.)
+                return repr(args) + repr(sorted(kwargs.items()))
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            key = _make_key(args, kwargs)
+            now = time.monotonic()
+
+            if key in cache:
+                value, ts = cache[key]
+                if ttl is None or now - ts < ttl:
+                    # Move to end to mark as recently used
+                    cache.move_to_end(key)
+                    return value
+                # Entry expired — remove it
+                del cache[key]
+
+            result = func(*args, **kwargs)
+            cache[key] = (result, now)
+
+            if max_size is not None and len(cache) > max_size:
+                # Evict the least-recently-used entry (first item)
+                cache.popitem(last=False)
+
+            return result
+
+        def cache_clear() -> None:
+            cache.clear()
+
+        def cache_info() -> dict[str, Any]:
+            return {"size": len(cache), "max_size": max_size, "ttl": ttl}
+
+        wrapper.cache_clear = cache_clear  # type: ignore[attr-defined]
+        wrapper.cache_info = cache_info    # type: ignore[attr-defined]
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+```
+
+## Examples
+
+```python
+# Basic usage — cache forever
+@memoize()
+def fibonacci(n: int) -> int:
+    if n < 2:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
+
+fibonacci(35)  # fast after the first call
+
+# With TTL — re-fetch after 30 seconds
+@memoize(ttl=30)
+def get_exchange_rate(base: str, quote: str) -> float:
+    # ... HTTP call ...
+    return 1.08
+
+get_exchange_rate("USD", "EUR")  # cached for 30 s
+get_exchange_rate("USD", "EUR")  # served from cache
+
+# With unhashable argument
+@memoize(max_size=64)
+def process_config(config: dict) -> str:
+    return ",".join(f"{k}={v}" for k, v in sorted(config.items()))
+
+process_config({"debug": True, "level": 2})  # repr fallback key
+
+# Inspect and clear
+fibonacci.cache_info()
+# {"size": 36, "max_size": 128, "ttl": None}
+
+fibonacci.cache_clear()
+fibonacci.cache_info()
+# {"size": 0, "max_size": 128, "ttl": None}
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `ttl` | `float \| None` | `None` | Seconds before a cached entry is considered stale. `None` = never expires. |
+| `max_size` | `int \| None` | `128` | Maximum number of cached entries. Oldest entry evicted when full. `None` = unlimited. |
+
+## How it works
+
+1. A cache key is derived by hashing `(args, sorted(kwargs.items()))`. If any argument is unhashable, `repr()` is used as a fallback — ensuring broad compatibility at the cost of slower key generation.
+2. Each entry stores the return value alongside a `time.monotonic()` timestamp. On every cache hit the timestamp is compared against `ttl`; expired entries are deleted and the function is re-called.
+3. Entries are stored in an `OrderedDict`. On every hit the entry is moved to the tail (`move_to_end`). When `max_size` is exceeded the head entry (least recently used) is popped — a simple O(1) LRU strategy without an external dependency.
+
+## Notes
+
+- Thread safety: the implementation is not thread-safe. For concurrent use, protect `cache` access with a `threading.Lock` or switch to `functools.lru_cache` (which is thread-safe) when TTL is not required.
+- For async functions, replace the body of `wrapper` with an `async def` variant and `await func(...)`.
+- `functools.lru_cache` from the standard library is faster for pure hash-keyed caching without TTL — prefer it when those constraints are acceptable.
