@@ -1,0 +1,53 @@
+---
+title: Create Number Range
+description: Generates an array of numbers between a start and end value with an optional step. Supports both ascending and descending ranges.
+category: snippets
+language: typescript
+tags: [array, utils, number, sequence]
+---
+
+Creates a numeric sequence from `start` to `end` (exclusive) with a configurable step, automatically handling both ascending and descending directions.
+
+```typescript
+function range(start: number, end: number, step: number = 1): number[] {
+  if (step === 0) throw new RangeError('step must not be zero')
+
+  const result: number[] = []
+  const ascending = end > start
+
+  if (ascending) {
+    const s = Math.abs(step)
+    for (let i = start; i < end; i += s) result.push(i)
+  } else {
+    const s = Math.abs(step)
+    for (let i = start; i > end; i -= s) result.push(i)
+  }
+
+  return result
+}
+
+export default range
+```
+
+## Usage
+
+```typescript
+range(0, 5)        // [0, 1, 2, 3, 4]
+range(1, 10, 2)    // [1, 3, 5, 7, 9]
+range(5, 0)        // [5, 4, 3, 2, 1]
+range(10, 0, 3)    // [10, 7, 4, 1]
+```
+
+## Options
+
+| Parameter | Type     | Default | Description                              |
+|-----------|----------|---------|------------------------------------------|
+| `start`   | `number` | —       | First value in the sequence              |
+| `end`     | `number` | —       | Upper (or lower) bound, exclusive        |
+| `step`    | `number` | `1`     | Absolute distance between each value     |
+
+## Notes
+
+- `end` is always exclusive, matching the behaviour of Python's `range` and `Array.from`.
+- Passing a negative `step` is allowed — the sign is ignored and direction is inferred from `start`/`end`.
+- A `step` of `0` throws a `RangeError` to prevent an infinite loop.
