@@ -1,0 +1,116 @@
+---
+title: Git Undo Helpers
+description: Safe undo aliases for common mistakes: uncommit, unstage, discard a file, and recover a dropped stash using the reflog.
+category: cli
+language: bash
+tags: [git, undo, safety, productivity]
+---
+
+Shell functions and git aliases that cover the four most common "oh no" moments: undoing a commit, unstaging a file, discarding working-tree changes, and recovering a stash you thought was gone.
+
+## Usage
+
+```bash
+# ── Git aliases (add to ~/.gitconfig under [alias]) ──────────────────────────
+
+[alias]
+  # Undo the last commit but keep all changes staged
+  uncommit  = reset --soft HEAD~1
+
+  # Undo the last commit and leave changes unstaged (default "undo" behaviour)
+  undo      = reset HEAD~1 --mixed
+
+  # Unstage a file (move it back from index to working tree)
+  unstage   = restore --staged
+
+  # Discard working-tree changes in a file (IRREVERSIBLE without reflog)
+  discard   = restore
+
+  # Amend the last commit message without changing any files
+  reword    = commit --amend --only
+
+  # Undo a pushed commit safely with a new revert commit
+  revert-last = revert HEAD --no-edit
+
+
+# ── Shell functions (add to ~/.bashrc or ~/.zshrc) ────────────────────────────
+
+# Recover the most recently dropped stash
+stash-recover() {
+  # Lists the last 20 dangling blob/commit objects and finds stash entries
+  local sha
+  sha=$(git fsck --no-reflog 2>/dev/null \
+    | awk '/dangling commit/ { print $3 }' \
+    | while read -r ref; do
+        git show --no-patch --format="%H %s" "$ref" 2>/dev/null
+      done \
+    | grep -i "WIP\|stash" \
+    | head -1 \
+    | awk '{print $1}')
+
+  if [[ -z "$sha" ]]; then
+    echo "No recoverable stash found. Try: git reflog stash"
+    return 1
+  fi
+
+  git stash apply "$sha" && echo "Applied dropped stash $sha"
+}
+
+# Undo N commits but keep all changes (defaults to 1)
+uncommit() {
+  local n="${1:-1}"
+  git reset --soft "HEAD~$n"
+  echo "Undid $n commit(s). Changes are staged and ready to re-commit."
+}
+
+# Safely discard changes in a file, with a confirmation prompt
+discard-file() {
+  local file="${1:?Provide a file path}"
+  read -rp "Discard all changes to '$file'? [y/N] " confirm
+  [[ "$confirm" =~ ^[Yy]$ ]] && git restore "$file" && echo "Discarded $file"
+}
+```
+
+## Examples
+
+```bash
+# Undo the last commit, keep changes staged
+git uncommit
+
+# Undo the last 3 commits, keep changes unstaged
+uncommit 3
+
+# Unstage a file you accidentally added
+git unstage src/config.ts
+
+# Unstage everything
+git unstage .
+
+# Discard local edits to a file (with prompt)
+discard-file src/config.ts
+
+# Discard without prompt (git alias)
+git discard src/config.ts
+
+# Recover the stash you just dropped
+stash-recover
+
+# Browse reflog to find any lost commit
+git reflog --all | grep -i stash
+```
+
+## How it works
+
+**`reset --soft HEAD~1`** moves the branch pointer back one commit but leaves the index and working tree untouched, so your changes stay staged.
+
+**`reset HEAD~1 --mixed`** (the default) also moves the pointer back but clears the index, leaving changes unstaged in the working tree.
+
+**`restore --staged <file>`** moves a file from the index back to the working tree without touching the committed history.
+
+**`stash-recover`** uses `git fsck --no-reflog` to find dangling commit objects that git has not yet garbage-collected. Stash entries are stored as commits, so a dropped stash shows up here for a while (until `git gc` runs).
+
+## Notes
+
+- `git discard <file>` is **irreversible** from the working tree. The reflog only tracks commits — uncommitted changes that are never staged cannot be recovered.
+- `uncommit` is safe to run multiple times in a row. Pass a count (`uncommit 3`) to undo several commits at once.
+- Run `git reflog expire --expire=now --all && git gc` to permanently remove dangling objects. After this, `stash-recover` will no longer find them.
