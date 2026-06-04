@@ -1,0 +1,381 @@
+---
+title: Python CLI Tool
+description: A Python CLI application template using Click with subcommands, rich terminal output via Rich, configuration file support, and packaging via pyproject.toml.
+category: templates
+language: python
+tags: [python, cli, click, rich, pyproject]
+---
+
+A well-structured Python CLI template built with Click subcommands, Rich-powered terminal output (tables, spinners, styled text), TOML config file support, and a `pyproject.toml` that makes the tool installable as a global command via `pip install -e .`.
+
+## Usage
+
+```python
+# src/mytool/cli.py
+import sys
+import click
+from mytool import __version__
+from mytool.commands import items, config as config_cmd
+from mytool.output import console
+
+
+@click.group()
+@click.version_option(__version__, prog_name="mytool")
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose output.")
+@click.pass_context
+def cli(ctx: click.Context, verbose: bool) -> None:
+    """mytool — a template CLI application."""
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+
+
+cli.add_command(items.items_group, name="items")
+cli.add_command(config_cmd.config_group, name="config")
+
+
+def main() -> None:
+    try:
+        cli(standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show()
+        sys.exit(exc.exit_code)
+    except click.Abort:
+        console.print("[yellow]Aborted.[/yellow]")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+```python
+# src/mytool/__init__.py
+__version__ = "0.1.0"
+```
+
+```python
+# src/mytool/output.py
+from rich.console import Console
+from rich.theme import Theme
+
+theme = Theme(
+    {
+        "info": "dim cyan",
+        "warning": "bold yellow",
+        "error": "bold red",
+        "success": "bold green",
+    }
+)
+
+console = Console(theme=theme)
+```
+
+```python
+# src/mytool/config.py
+from pathlib import Path
+from typing import Any
+import tomllib
+import tomli_w
+
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "mytool" / "config.toml"
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "general": {
+        "output_format": "table",  # table | json | csv
+        "color": True,
+    },
+    "api": {
+        "base_url": "https://api.example.com",
+        "timeout": 30,
+    },
+}
+
+
+def load_config(path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    if not path.exists():
+        return DEFAULT_CONFIG.copy()
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
+def save_config(cfg: dict[str, Any], path: Path = DEFAULT_CONFIG_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        tomli_w.dump(cfg, f)
+
+
+def get(key: str, path: Path = DEFAULT_CONFIG_PATH) -> Any:
+    """Read a dotted key, e.g. 'api.base_url'."""
+    cfg = load_config(path)
+    parts = key.split(".")
+    val: Any = cfg
+    for part in parts:
+        if not isinstance(val, dict) or part not in val:
+            return None
+        val = val[part]
+    return val
+```
+
+```python
+# src/mytool/commands/items.py
+import json
+import click
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from mytool.output import console
+from mytool.config import load_config
+
+# Simulated data store — replace with real API/DB calls
+_STORE: list[dict] = [
+    {"id": 1, "name": "Widget A", "status": "active"},
+    {"id": 2, "name": "Widget B", "status": "inactive"},
+]
+
+
+@click.group("items")
+def items_group() -> None:
+    """Manage items."""
+
+
+@items_group.command("list")
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+@click.pass_context
+def list_items(ctx: click.Context, fmt: str) -> None:
+    """List all items."""
+    cfg = load_config()
+    fmt = fmt or cfg.get("general", {}).get("output_format", "table")
+
+    with Progress(
+        SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True
+    ) as progress:
+        progress.add_task("Fetching items...", total=None)
+        items = _STORE  # replace with actual fetch
+
+    if fmt == "json":
+        console.print_json(json.dumps(items))
+        return
+
+    table = Table(title="Items", show_header=True, header_style="bold cyan")
+    table.add_column("ID", style="dim", width=6)
+    table.add_column("Name")
+    table.add_column("Status")
+
+    for item in items:
+        status_style = "green" if item["status"] == "active" else "red"
+        table.add_row(str(item["id"]), item["name"], f"[{status_style}]{item['status']}[/{status_style}]")
+
+    console.print(table)
+
+
+@items_group.command("add")
+@click.argument("name")
+@click.option("--status", default="active", type=click.Choice(["active", "inactive"]))
+@click.pass_context
+def add_item(ctx: click.Context, name: str, status: str) -> None:
+    """Add a new item."""
+    new_id = max((i["id"] for i in _STORE), default=0) + 1
+    _STORE.append({"id": new_id, "name": name, "status": status})
+    console.print(f"[success]Created item [bold]{name}[/bold] (id={new_id})[/success]")
+
+
+@items_group.command("delete")
+@click.argument("item_id", type=int)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def delete_item(item_id: int, yes: bool) -> None:
+    """Delete an item by ID."""
+    item = next((i for i in _STORE if i["id"] == item_id), None)
+    if not item:
+        console.print(f"[error]Item {item_id} not found.[/error]")
+        raise SystemExit(1)
+
+    if not yes:
+        click.confirm(f"Delete '{item['name']}'?", abort=True)
+
+    _STORE.remove(item)
+    console.print(f"[success]Deleted item {item_id}.[/success]")
+```
+
+```python
+# src/mytool/commands/config.py
+import click
+from mytool.config import load_config, save_config, DEFAULT_CONFIG_PATH
+from mytool.output import console
+
+
+@click.group("config")
+def config_group() -> None:
+    """View and edit configuration."""
+
+
+@config_group.command("show")
+def show_config() -> None:
+    """Print the current configuration."""
+    from rich.pretty import pprint
+    pprint(load_config())
+
+
+@config_group.command("set")
+@click.argument("key")
+@click.argument("value")
+def set_config(key: str, value: str) -> None:
+    """Set a configuration value (e.g. mytool config set api.timeout 60)."""
+    cfg = load_config()
+    parts = key.split(".")
+    node = cfg
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    # Coerce numeric strings
+    try:
+        node[parts[-1]] = int(value)
+    except ValueError:
+        try:
+            node[parts[-1]] = float(value)
+        except ValueError:
+            node[parts[-1]] = value
+    save_config(cfg)
+    console.print(f"[success]Set [bold]{key}[/bold] = {node[parts[-1]]}[/success]")
+
+
+@config_group.command("path")
+def config_path() -> None:
+    """Print the path to the config file."""
+    console.print(str(DEFAULT_CONFIG_PATH))
+```
+
+```toml
+# pyproject.toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mytool"
+version = "0.1.0"
+description = "A template Python CLI tool"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "tomli-w>=1.0",
+]
+
+[project.scripts]
+mytool = "mytool.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-click>=1.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mytool"]
+```
+
+## Options
+
+| Flag / Config key | Default | Description |
+|---|---|---|
+| `--verbose` / `-v` | off | Print debug-level output |
+| `--format table\|json` | `table` | Override output format for `items list` |
+| `general.output_format` | `table` | Persisted default output format |
+| `general.color` | `true` | Enable/disable Rich colour output |
+| `api.base_url` | `https://api.example.com` | Backend URL for real API calls |
+| `api.timeout` | `30` | HTTP request timeout in seconds |
+
+## Examples
+
+```bash
+# List items as a table
+mytool items list
+
+# List items as JSON
+mytool items list --format json
+
+# Add an item
+mytool items add "New Widget" --status active
+
+# Delete without confirmation prompt
+mytool items delete 2 --yes
+
+# Change a config value
+mytool config set api.base_url https://staging.example.com
+mytool config show
+```
+
+## README
+
+### What this includes
+
+- Click command group with `items` and `config` subcommands
+- Rich-powered output: tables with colour-coded status, spinner during fetch, styled `console.print`
+- Custom colour theme (`info`, `warning`, `error`, `success`)
+- TOML config file at `~/.config/mytool/config.toml` with dotted-key get/set
+- `pyproject.toml` entry point so `mytool` is available as a shell command after install
+- Hatchling build backend — no `setup.py` needed
+
+### Prerequisites
+
+- Python 3.11+
+- `pip` or `uv`
+
+### Create this template
+
+```bash
+# 1. Create the project directory
+mkdir my-cli-tool && cd my-cli-tool
+
+# 2. Set up a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 3. Install dependencies
+pip install click rich tomli-w hatchling
+
+# 4. Create the source layout
+mkdir -p src/mytool/commands
+touch src/mytool/__init__.py
+touch src/mytool/cli.py
+touch src/mytool/output.py
+touch src/mytool/config.py
+touch src/mytool/commands/__init__.py
+touch src/mytool/commands/items.py
+touch src/mytool/commands/config.py
+
+# 5. Copy each file from above into the corresponding path
+
+# 6. Install the package in editable mode
+pip install -e .
+
+# 7. Run it
+mytool --help
+mytool items list
+```
+
+### Project structure
+
+```
+my-cli-tool/
+├── src/
+│   └── mytool/
+│       ├── __init__.py          # Package version
+│       ├── cli.py               # Root Click group & main() entry point
+│       ├── output.py            # Shared Rich console + theme
+│       ├── config.py            # TOML config load/save/get
+│       └── commands/
+│           ├── __init__.py
+│           ├── items.py         # `mytool items` subcommands
+│           └── config.py        # `mytool config` subcommands
+├── tests/
+├── pyproject.toml
+└── README.md
+```
+
+### First things to customize
+
+- `pyproject.toml` — change `name`, `description`, and the `[project.scripts]` entry point key from `mytool` to your command name
+- `src/mytool/__init__.py` — bump `__version__` as you release
+- `src/mytool/commands/items.py` — replace `_STORE` with real API or database calls
+- `src/mytool/config.py` — update `DEFAULT_CONFIG` with your own settings keys
+- `src/mytool/output.py` — adjust the Rich `Theme` colours to match your branding
