@@ -1,0 +1,74 @@
+---
+title: Truncate String
+description: Truncates a string to a specified length and appends a customizable ellipsis suffix. Avoids cutting in the middle of words when the word-safe option is enabled.
+category: snippets
+language: typescript
+tags: [string, utils, formatting]
+---
+
+Shortens a string to fit a maximum length while keeping it readable — optionally snapping to the nearest word boundary so the cut never lands mid-word.
+
+## Usage
+
+```typescript
+interface TruncateOptions {
+  /** Maximum character length of the returned string, including the suffix. */
+  maxLength: number
+  /** Appended when the string is cut. Defaults to '…'. */
+  suffix?: string
+  /** When true, snaps the cut to the nearest preceding word boundary. Defaults to false. */
+  wordSafe?: boolean
+}
+
+function truncate(input: string, options: TruncateOptions): string {
+  const { maxLength, suffix = '…', wordSafe = false } = options
+
+  if (input.length <= maxLength) return input
+
+  const cutAt = maxLength - suffix.length
+
+  if (cutAt <= 0) return suffix.slice(0, maxLength)
+
+  if (!wordSafe) return input.slice(0, cutAt) + suffix
+
+  const lastSpace = input.lastIndexOf(' ', cutAt)
+  const boundary = lastSpace > 0 ? lastSpace : cutAt
+
+  return input.slice(0, boundary).trimEnd() + suffix
+}
+
+export default truncate
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxLength` | `number` | — | Maximum length of the result, suffix included |
+| `suffix` | `string` | `'…'` | String appended after the cut |
+| `wordSafe` | `boolean` | `false` | Snap the cut to the nearest preceding space |
+
+## Examples
+
+```typescript
+truncate('The quick brown fox', { maxLength: 10 })
+// 'The quick…'
+
+truncate('The quick brown fox', { maxLength: 10, wordSafe: true })
+// 'The quick…'
+
+truncate('Superlongwordwithoutspaces', { maxLength: 10 })
+// 'Superlong…'
+
+truncate('Hello!', { maxLength: 20 })
+// 'Hello!'  — returned unchanged
+
+truncate('Hello, world!', { maxLength: 8, suffix: ' [more]' })
+// ' [more]'  — suffix fits exactly
+```
+
+## Notes
+
+- The `maxLength` budget includes the suffix, so the visible text portion is `maxLength - suffix.length` characters.
+- When `wordSafe` is `true` and the string has no spaces before the cut point, it falls back to a hard cut at `maxLength - suffix.length`.
+- Passing a `suffix` longer than `maxLength` returns as many suffix characters as fit within `maxLength`.
