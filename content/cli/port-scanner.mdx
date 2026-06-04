@@ -1,0 +1,136 @@
+---
+title: Local Port Scanner
+description: List all open TCP and UDP ports on localhost alongside the owning process name, with optional filtering by port range.
+category: cli
+language: bash
+tags: [system, networking, ports, security]
+---
+
+See every open port on your machine — TCP and UDP — plus the process that owns each one, without installing third-party tools. Supports optional port-range filtering so you can narrow the output to just the range you care about.
+
+## Usage
+
+```bash
+# All open TCP + UDP ports (macOS / Linux auto-detected)
+portscan() {
+  local low="${1:-1}"
+  local high="${2:-65535}"
+
+  if [[ "$(uname)" == "Darwin" ]]; then
+    _portscan_macos "$low" "$high"
+  else
+    _portscan_linux "$low" "$high"
+  fi
+}
+```
+
+## Shell function version
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+_portscan_macos() {
+  local low=$1 high=$2
+  printf "%-8s %-7s %-6s %-22s %s\n" "PROTO" "PORT" "PID" "PROCESS" "ADDRESS"
+  printf "%-8s %-7s %-6s %-22s %s\n" "-----" "----" "---" "-------" "-------"
+
+  # lsof -i lists all network files; -P keeps numeric ports; -n skips DNS
+  sudo lsof -iTCP -iUDP -P -n -sTCP:LISTEN 2>/dev/null \
+    | awk -v lo="$low" -v hi="$high" '
+        NR == 1 { next }  # skip lsof header
+        {
+          proto = $5          # TCP or UDP
+          pid   = $2
+          proc  = $1
+          addr  = $9          # *:port or 127.0.0.1:port
+          n     = split(addr, a, ":")
+          port  = a[n] + 0
+          if (port >= lo && port <= hi)
+            printf "%-8s %-7s %-6s %-22s %s\n", proto, port, pid, proc, addr
+        }
+      ' \
+    | sort -k2 -n
+}
+
+_portscan_linux() {
+  local low=$1 high=$2
+  printf "%-8s %-7s %-6s %-22s %s\n" "PROTO" "PORT" "PID" "PROCESS" "ADDRESS"
+  printf "%-8s %-7s %-6s %-22s %s\n" "-----" "----" "---" "-------" "-------"
+
+  # ss -tulnp: TCP+UDP, listening, numeric, show process
+  ss -tulnp 2>/dev/null \
+    | awk -v lo="$low" -v hi="$high" '
+        NR == 1 { next }
+        {
+          proto = $1
+          addr  = $5                     # local address
+          n     = split(addr, a, ":")
+          port  = a[n] + 0
+          proc  = $NF                    # users:(("node",pid=1234,...))
+          gsub(/users:\(\("/, "", proc)
+          gsub(/".*/, "",  proc)
+          pid_field = $NF
+          match(pid_field, /pid=([0-9]+)/, m)
+          pid = m[1] ? m[1] : "-"
+          if (port >= lo && port <= hi)
+            printf "%-8s %-7s %-6s %-22s %s\n", proto, port, pid, proc, addr
+        }
+      ' \
+    | sort -k2 -n
+}
+
+# ── public entry point ────────────────────────────────────────────────────────
+
+portscan() {
+  local low="${1:-1}"
+  local high="${2:-65535}"
+
+  if ! [[ "$low" =~ ^[0-9]+$ && "$high" =~ ^[0-9]+$ ]]; then
+    echo "Usage: portscan [low_port] [high_port]" >&2
+    return 1
+  fi
+
+  if (( low > high )); then
+    echo "Error: low_port ($low) must be <= high_port ($high)" >&2
+    return 1
+  fi
+
+  if [[ "$(uname)" == "Darwin" ]]; then
+    _portscan_macos "$low" "$high"
+  else
+    _portscan_linux "$low" "$high"
+  fi
+}
+```
+
+## Examples
+
+```bash
+# All open ports
+portscan
+
+# Only well-known ports (0–1023)
+portscan 1 1023
+
+# Development range
+portscan 3000 9999
+
+# Check a specific port
+portscan 8080 8080
+```
+
+## Options
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `low_port` | `1` | Start of the port range to display |
+| `high_port` | `65535` | End of the port range to display |
+
+## Notes
+
+- On macOS, `lsof` may require `sudo` to show PIDs owned by other users; without it, the PID column may be blank for system processes.
+- On Linux, `ss` is part of `iproute2` and available on virtually every distribution. If absent, substitute `netstat -tulnp` with the same awk logic.
+- UDP "open" means a socket is bound, not necessarily listening for connections in the TCP sense.
+- To watch ports in real time (e.g., during a deploy) run `watch -n 2 portscan 3000 9999`.
