@@ -1,0 +1,85 @@
+---
+title: usePrevious Hook
+description: Stores and returns the value from the previous render cycle. Useful for comparing before and after values in effects.
+category: snippets
+language: typescript
+tags: [react, hooks, state]
+---
+
+Uses a `ref` to capture the value passed on the previous render and returns it, giving you a "snapshot" of what a prop or state variable was before the latest update.
+
+## Usage
+
+```typescript
+import { usePrevious } from '@/hooks/use-previous'
+
+export default function Counter() {
+  const [count, setCount] = useState(0)
+  const prevCount = usePrevious(count)
+
+  return (
+    <div>
+      <p>Now: {count} — Before: {prevCount ?? 'n/a'}</p>
+      <button onClick={() => setCount(c => c + 1)}>Increment</button>
+    </div>
+  )
+}
+```
+
+```typescript
+import { useRef, useEffect } from 'react'
+
+export function usePrevious<T>(value: T): T | undefined {
+  const ref = useRef<T | undefined>(undefined)
+
+  useEffect(() => {
+    ref.current = value
+  })
+
+  return ref.current
+}
+```
+
+## How it works
+
+React runs `useEffect` **after** the render is committed to the DOM. The sequence for each render is:
+
+1. Component renders — `ref.current` still holds the value from the **previous** render.
+2. Return value (`ref.current`) is used by the caller in the current render.
+3. After paint, `useEffect` fires and writes the **current** `value` into `ref.current`.
+
+Because `ref` mutations are synchronous inside the effect but the render already completed by then, the hook always hands back one render behind.
+
+## Examples
+
+Detect direction of a numeric change:
+
+```typescript
+const prevScore = usePrevious(score)
+const increased = prevScore !== undefined && score > prevScore
+```
+
+Trigger an animation only when a prop changes to a specific value:
+
+```typescript
+const prevStatus = usePrevious(status)
+
+useEffect(() => {
+  if (prevStatus !== 'loading' && status === 'loading') {
+    startSpinner()
+  }
+}, [status, prevStatus])
+```
+
+Track the previous route in Next.js:
+
+```typescript
+const pathname = usePathname()
+const prevPathname = usePrevious(pathname)
+```
+
+## Notes
+
+- Returns `undefined` on the very first render because there is no previous value yet. Type the consumer accordingly (e.g. `prevCount ?? 0`).
+- The effect has no dependency array, so it runs after every render — this is intentional and required for the hook to work correctly.
+- For object or array values, the returned reference is the same object from the previous render, not a deep clone.
