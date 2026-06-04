@@ -1,0 +1,130 @@
+---
+title: useKeyPress Hook
+description: Returns true while a specified keyboard key is held down, resetting on keyup. Supports modifier key combinations and an optional element target.
+category: snippets
+language: typescript
+tags: [react, hooks, keyboard, events]
+---
+
+Attaches `keydown` / `keyup` listeners and returns a boolean that is `true` only while the target key (and any required modifiers) are all held simultaneously.
+
+## Usage
+
+```typescript
+import { useKeyPress } from '@/hooks/use-key-press'
+
+export default function ShortcutDemo() {
+  const saving = useKeyPress('s', { meta: true })
+
+  return <p>{saving ? 'Saving…' : 'Press ⌘S to save'}</p>
+}
+```
+
+```typescript
+import { useState, useEffect, RefObject } from 'react'
+
+interface ModifierOptions {
+  /** Require the Meta key (⌘ on macOS, ⊞ on Windows) */
+  meta?: boolean
+  /** Require the Ctrl key */
+  ctrl?: boolean
+  /** Require the Alt / Option key */
+  alt?: boolean
+  /** Require the Shift key */
+  shift?: boolean
+  /** Element to attach the listener to. Defaults to window. */
+  target?: RefObject<HTMLElement>
+}
+
+export function useKeyPress(
+  targetKey: string,
+  options: ModifierOptions = {}
+): boolean {
+  const { meta = false, ctrl = false, alt = false, shift = false, target } = options
+  const [pressed, setPressed] = useState(false)
+
+  useEffect(() => {
+    const element: EventTarget = target?.current ?? window
+
+    function downHandler(event: Event) {
+      const e = event as KeyboardEvent
+      if (
+        e.key === targetKey &&
+        e.metaKey === meta &&
+        e.ctrlKey === ctrl &&
+        e.altKey === alt &&
+        e.shiftKey === shift
+      ) {
+        setPressed(true)
+      }
+    }
+
+    function upHandler(event: Event) {
+      const e = event as KeyboardEvent
+      if (e.key === targetKey) {
+        setPressed(false)
+      }
+    }
+
+    function blurHandler() {
+      // Reset when the window loses focus so the key never gets "stuck".
+      setPressed(false)
+    }
+
+    element.addEventListener('keydown', downHandler)
+    element.addEventListener('keyup', upHandler)
+    window.addEventListener('blur', blurHandler)
+
+    return () => {
+      element.removeEventListener('keydown', downHandler)
+      element.removeEventListener('keyup', upHandler)
+      window.removeEventListener('blur', blurHandler)
+    }
+  }, [targetKey, meta, ctrl, alt, shift, target])
+
+  return pressed
+}
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `meta` | `boolean` | `false` | Require ⌘ / ⊞ to also be held. |
+| `ctrl` | `boolean` | `false` | Require Ctrl to also be held. |
+| `alt` | `boolean` | `false` | Require Alt / Option to also be held. |
+| `shift` | `boolean` | `false` | Require Shift to also be held. |
+| `target` | `RefObject<HTMLElement>` | `window` | Scope the listener to a specific element. |
+
+## Examples
+
+Single key — toggle a modal on `Escape`:
+
+```typescript
+const escPressed = useKeyPress('Escape')
+
+useEffect(() => {
+  if (escPressed) closeModal()
+}, [escPressed])
+```
+
+Modifier combo — Ctrl+Z undo:
+
+```typescript
+const undoing = useKeyPress('z', { ctrl: true })
+```
+
+Scoped to a specific element:
+
+```typescript
+const inputRef = useRef<HTMLInputElement>(null)
+const enterPressed = useKeyPress('Enter', { target: inputRef })
+
+return <input ref={inputRef} />
+```
+
+## Notes
+
+- Key names follow the [`KeyboardEvent.key`](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key/Key_Values) spec (`'ArrowUp'`, `'Enter'`, `' '` for Space, etc.).
+- The `blur` cleanup prevents keys from appearing permanently pressed when the user Alt-Tabs away.
+- This hook does **not** call `preventDefault`. Do that inside the effect that consumes the returned boolean if you need to suppress browser defaults.
