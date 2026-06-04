@@ -1,0 +1,113 @@
+---
+title: Renovate Config
+description: A Renovate configuration for automated dependency updates with grouped PRs, automerge for minor and patch updates, and scheduled runs. Reduces dependency maintenance toil.
+category: configs
+language: json
+tags: [renovate, dependencies, automation, security]
+---
+
+Renovate opens PRs automatically when your dependencies release new versions. This config groups related packages, automerges safe updates, and runs on a schedule so your PR inbox stays manageable.
+
+## Usage
+
+```json
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "UTC",
+  "schedule": ["before 6am on Monday"],
+  "prHourlyLimit": 5,
+  "prConcurrentLimit": 10,
+  "rebaseWhen": "behind-base-branch",
+  "labels": ["dependencies"],
+  "assignees": [],
+  "reviewers": [],
+  "packageRules": [
+    {
+      "description": "Automerge non-major updates for devDependencies",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "automergeType": "squash"
+    },
+    {
+      "description": "Group all ESLint packages",
+      "matchPackagePatterns": ["^eslint"],
+      "groupName": "ESLint packages"
+    },
+    {
+      "description": "Group all Prettier packages",
+      "matchPackagePatterns": ["^prettier"],
+      "groupName": "Prettier packages"
+    },
+    {
+      "description": "Group all TypeScript packages",
+      "matchPackageNames": ["typescript"],
+      "matchPackagePatterns": ["^@typescript-eslint/", "^ts-"],
+      "groupName": "TypeScript packages"
+    },
+    {
+      "description": "Group all testing packages",
+      "matchPackagePatterns": ["^@testing-library/", "^vitest", "^jest", "^playwright"],
+      "groupName": "Testing packages"
+    },
+    {
+      "description": "Group all GitHub Actions",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "automerge": true
+    },
+    {
+      "description": "Pin Docker base images — major bumps need manual review",
+      "matchManagers": ["dockerfile"],
+      "pinDigests": true
+    },
+    {
+      "description": "Require approval for major updates to production dependencies",
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"],
+    "automerge": true
+  },
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Renovate Dependency Dashboard"
+}
+```
+
+**Enable Renovate:**
+
+```bash
+# Option 1 — GitHub App (recommended): install at https://github.com/apps/renovate
+# then add renovate.json to your repo root.
+
+# Option 2 — self-hosted via npx
+npx renovate --token $GITHUB_TOKEN owner/repo
+```
+
+## Options
+
+| Field | Purpose |
+|-------|---------|
+| `extends: ["config:recommended"]` | Inherits Renovate's curated defaults — a safe baseline |
+| `schedule` | Cron-style or natural language schedule for when PRs are opened |
+| `prHourlyLimit` | Max PRs Renovate opens per hour — prevents a flood on first run |
+| `prConcurrentLimit` | Max open Renovate PRs at any one time |
+| `automerge` | Merges the PR automatically once CI passes |
+| `automergeType: "squash"` | Squash-merges automerged PRs to keep history clean |
+| `dependencyDashboardApproval` | Gates the PR on a checkbox in the Dependency Dashboard issue |
+| `vulnerabilityAlerts` | Opens a PR immediately for any CVE regardless of schedule |
+| `pinDigests` | Locks Docker/GitHub Actions to a specific SHA for reproducibility |
+
+## Notes
+
+- The Dependency Dashboard is a GitHub issue Renovate keeps updated with every pending update — use it to approve gated PRs and see what is queued.
+- `vulnerabilityAlerts` ignores the schedule so security patches land as fast as possible.
+- For monorepos, add a `"matchFileNames"` filter inside a `packageRule` to scope rules to specific workspaces.
+- If automerge is too aggressive initially, remove it from the devDependencies rule and re-add once you trust your CI coverage.
