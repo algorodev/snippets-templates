@@ -1,0 +1,78 @@
+---
+title: Sleep / Delay
+description: Returns a promise that resolves after a specified number of milliseconds, providing a typed async sleep utility. Supports optional AbortSignal for cancellation.
+category: snippets
+language: typescript
+tags: [async, utils, timing]
+---
+
+Pauses async execution for a given duration and supports early cancellation via an `AbortSignal`, making it safe to use inside cancellable workflows.
+
+## Usage
+
+```typescript
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason)
+      return
+    }
+
+    const timer = setTimeout(resolve, ms)
+
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        reject(signal.reason)
+      },
+      { once: true }
+    )
+  })
+}
+
+export default sleep
+```
+
+## Options
+
+| Parameter | Type          | Default     | Description                                                          |
+| --------- | ------------- | ----------- | -------------------------------------------------------------------- |
+| `ms`      | `number`      | —           | Duration to wait in milliseconds.                                    |
+| `signal`  | `AbortSignal` | `undefined` | Optional signal; rejects with `signal.reason` when abort is fired.  |
+
+## Examples
+
+```typescript
+// Simple delay between retries
+async function pollStatus(jobId: string): Promise<string> {
+  while (true) {
+    const { status } = await fetchJobStatus(jobId)
+    if (status !== 'pending') return status
+    await sleep(2_000)
+  }
+}
+```
+
+```typescript
+// Cancellable sleep inside an AbortController-managed workflow
+async function runWithTimeout(ms: number): Promise<void> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(new Error('Timed out')), ms)
+
+  try {
+    await sleep(5_000, controller.signal)
+    console.log('Completed before timeout')
+  } catch (err) {
+    console.error(err) // "Timed out" if controller aborted first
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+```
+
+## Notes
+
+- Passing `0` resolves on the next event-loop tick, similar to `setImmediate` or `queueMicrotask` but compatible with all environments.
+- If the `AbortSignal` is already in the aborted state when `sleep` is called, the returned promise rejects immediately without scheduling a timer.
+- For Node.js projects that prefer the built-in, `timers/promises` exports a compatible `setTimeout` — but the snippet above is portable across browsers, Deno, Bun, and the edge runtime.
