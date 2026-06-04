@@ -1,0 +1,67 @@
+---
+title: Mask String
+description: Partially masks a string by replacing middle characters with a mask character, preserving a configurable number of leading and trailing characters. Ideal for displaying sensitive data like API keys or card numbers.
+category: snippets
+language: typescript
+tags: [string, utils, security, formatting]
+---
+
+Replaces the middle portion of a string with a repeated mask character while keeping a configurable number of characters visible at the start and end. Useful for displaying API keys, card numbers, tokens, and other sensitive values without full exposure.
+
+## Usage
+
+```typescript
+function maskString(
+  value: string,
+  opts: {
+    visibleStart?: number
+    visibleEnd?: number
+    maskChar?: string
+    minMaskLength?: number
+  } = {}
+): string {
+  const {
+    visibleStart = 4,
+    visibleEnd = 4,
+    maskChar = '*',
+    minMaskLength = 3,
+  } = opts
+
+  if (value.length <= visibleStart + visibleEnd) {
+    return maskChar.repeat(Math.max(value.length, minMaskLength))
+  }
+
+  const start = value.slice(0, visibleStart)
+  const end = value.slice(value.length - visibleEnd)
+  const maskLength = Math.max(value.length - visibleStart - visibleEnd, minMaskLength)
+
+  return `${start}${maskChar.repeat(maskLength)}${end}`
+}
+
+export default maskString
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `visibleStart` | `number` | `4` | Characters to reveal at the start |
+| `visibleEnd` | `number` | `4` | Characters to reveal at the end |
+| `maskChar` | `string` | `'*'` | Character used for masking |
+| `minMaskLength` | `number` | `3` | Minimum number of mask characters, even for short strings |
+
+## Examples
+
+```typescript
+maskString('sk-abcdefghijklmnopqrst')
+// 'sk-a**************opqrst' — API key
+
+maskString('4111111111111111', { visibleStart: 0, visibleEnd: 4 })
+// '************1111' — card number, last four only
+
+maskString('secret', { visibleStart: 2, visibleEnd: 2 })
+// 'se**et'
+
+maskString('hi', { visibleStart: 4, visibleEnd: 4 })
+// '***' — string too short, returns minMaskLength mask
+```
