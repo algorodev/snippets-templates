@@ -1,0 +1,186 @@
+---
+title: useGeolocation Hook
+description: Requests the browser's geolocation and returns coordinates, accuracy, and error state. Supports watch mode for continuous position tracking.
+category: snippets
+language: typescript
+tags: [react, hooks, geolocation, browser]
+---
+
+A thin wrapper around the Geolocation API that handles permission, one-shot lookups, and live position watching with a single hook call.
+
+## Usage
+
+```typescript
+import { useCallback, useEffect, useReducer } from 'react'
+
+interface GeolocationCoords {
+  latitude: number
+  longitude: number
+  altitude: number | null
+  accuracy: number
+  altitudeAccuracy: number | null
+  heading: number | null
+  speed: number | null
+}
+
+interface GeolocationState {
+  coords: GeolocationCoords | null
+  loading: boolean
+  error: GeolocationPositionError | null
+  timestamp: number | null
+}
+
+type GeolocationAction =
+  | { type: 'loading' }
+  | { type: 'success'; payload: GeolocationPosition }
+  | { type: 'error'; payload: GeolocationPositionError }
+
+function geolocationReducer(
+  state: GeolocationState,
+  action: GeolocationAction,
+): GeolocationState {
+  switch (action.type) {
+    case 'loading':
+      return { coords: null, loading: true, error: null, timestamp: null }
+    case 'success': {
+      const { latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed } =
+        action.payload.coords
+      return {
+        coords: { latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed },
+        loading: false,
+        error: null,
+        timestamp: action.payload.timestamp,
+      }
+    }
+    case 'error':
+      return { coords: null, loading: false, error: action.payload, timestamp: null }
+  }
+}
+
+interface UseGeolocationOptions extends PositionOptions {
+  /** Continuously watch the position. Defaults to false. */
+  watch?: boolean
+  /** Only run when this is true. Defaults to true. */
+  enabled?: boolean
+}
+
+interface UseGeolocationReturn extends GeolocationState {
+  refresh: () => void
+}
+
+function useGeolocation(options: UseGeolocationOptions = {}): UseGeolocationReturn {
+  const { watch = false, enabled = true, ...positionOptions } = options
+
+  const [state, dispatch] = useReducer(geolocationReducer, {
+    coords: null,
+    loading: enabled,
+    error: null,
+    timestamp: null,
+  })
+
+  // Increment to manually trigger a re-fetch
+  const refresh = useCallback(() => dispatch({ type: 'loading' }), [])
+
+  useEffect(() => {
+    if (!enabled) return
+    if (!navigator.geolocation) {
+      dispatch({
+        type: 'error',
+        payload: {
+          code: 2,
+          message: 'Geolocation is not supported by this browser.',
+          PERMISSION_DENIED: 1,
+          POSITION_UNAVAILABLE: 2,
+          TIMEOUT: 3,
+        } as GeolocationPositionError,
+      })
+      return
+    }
+
+    dispatch({ type: 'loading' })
+
+    const onSuccess = (position: GeolocationPosition) =>
+      dispatch({ type: 'success', payload: position })
+
+    const onError = (error: GeolocationPositionError) =>
+      dispatch({ type: 'error', payload: error })
+
+    if (watch) {
+      const watchId = navigator.geolocation.watchPosition(onSuccess, onError, positionOptions)
+      return () => navigator.geolocation.clearWatch(watchId)
+    } else {
+      navigator.geolocation.getCurrentPosition(onSuccess, onError, positionOptions)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watch, enabled, state.loading])
+
+  return { ...state, refresh }
+}
+
+export { useGeolocation }
+export type { GeolocationCoords, GeolocationState, UseGeolocationOptions, UseGeolocationReturn }
+```
+
+## Examples
+
+```typescript
+// One-shot position lookup
+function CurrentLocation() {
+  const { coords, loading, error } = useGeolocation({ enableHighAccuracy: true })
+
+  if (loading) return <p>Locating…</p>
+  if (error) return <p>Error ({error.code}): {error.message}</p>
+  if (!coords) return null
+
+  return (
+    <p>
+      {coords.latitude.toFixed(5)}, {coords.longitude.toFixed(5)}
+      {' '}(±{Math.round(coords.accuracy)} m)
+    </p>
+  )
+}
+
+// Continuous tracking
+function LiveTracker() {
+  const { coords, error } = useGeolocation({ watch: true, enableHighAccuracy: true })
+
+  if (error) return <p>Could not track: {error.message}</p>
+
+  return (
+    <div>
+      <p>Lat: {coords?.latitude ?? '—'}</p>
+      <p>Lon: {coords?.longitude ?? '—'}</p>
+      <p>Speed: {coords?.speed != null ? `${coords.speed.toFixed(1)} m/s` : '—'}</p>
+    </div>
+  )
+}
+
+// Lazy — only fetch when the user clicks
+function OnDemandLocation() {
+  const [enabled, setEnabled] = useState(false)
+  const { coords, loading, refresh } = useGeolocation({ enabled })
+
+  return (
+    <div>
+      <button onClick={() => { setEnabled(true); refresh() }} disabled={loading}>
+        {loading ? 'Getting location…' : 'Get my location'}
+      </button>
+      {coords && <p>{coords.latitude}, {coords.longitude}</p>}
+    </div>
+  )
+}
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `watch` | `boolean` | `false` | Use `watchPosition` instead of `getCurrentPosition` |
+| `enabled` | `boolean` | `true` | Set to `false` to skip running until ready |
+| `enableHighAccuracy` | `boolean` | `false` | Use GPS if available (slower, drains battery) |
+| `timeout` | `number` | `Infinity` | Maximum milliseconds to wait for a position |
+| `maximumAge` | `number` | `0` | Accept a cached position no older than this (ms) |
+
+## How it works
+
+The effect re-runs when `watch`, `enabled`, or `state.loading` changes. Calling `refresh()` dispatches a `loading` action, which updates `state.loading` and triggers a new `getCurrentPosition` call. In watch mode a `watchPosition` subscription is created and the returned cleanup function calls `clearWatch`, stopping updates when the component unmounts or options change.
