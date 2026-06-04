@@ -1,0 +1,56 @@
+---
+title: lint-staged Config
+description: A lint-staged configuration that runs ESLint and Prettier only on staged files before each commit. Prevents unformatted or broken code from entering the repository.
+category: configs
+language: javascript
+tags: [lint-staged, git-hooks, linting, formatting]
+---
+
+lint-staged intercepts `git commit`, filters the staged file list down to globs you care about, and runs the configured commands only on those files. This keeps pre-commit checks fast regardless of project size.
+
+## Usage
+
+```javascript
+// lint-staged.config.mjs
+export default {
+  // TypeScript and JavaScript: fix lint errors, then format
+  '**/*.{ts,tsx,js,jsx,mjs,cjs}': [
+    'eslint --fix --max-warnings=0',
+    'prettier --write',
+  ],
+
+  // Styles: format only (no ESLint for CSS/SCSS)
+  '**/*.{css,scss}': ['prettier --write'],
+
+  // Markup and data formats: format only
+  '**/*.{json,jsonc,yaml,yml,md,mdx,html}': ['prettier --write'],
+}
+```
+
+**Install dependencies:**
+
+```bash
+npm install -D lint-staged eslint prettier
+```
+
+**Wire it into Husky** (`.husky/pre-commit`):
+
+```bash
+npx lint-staged
+```
+
+## Options
+
+| Option | Description |
+|---|---|
+| `--fix` | Auto-fix fixable ESLint violations in place |
+| `--max-warnings=0` | Treat any ESLint warning as a hard failure |
+| `--write` | Overwrite files with Prettier-formatted output |
+| `--concurrent false` | Run tasks serially (useful when tools conflict) |
+
+## Notes
+
+- lint-staged automatically re-adds files to the Git index after a tool rewrites them in place, so `--fix` and `--write` changes are included in the commit without a second `git add`.
+- Passing `--max-warnings=0` to ESLint is recommended: warnings that never fail tend to accumulate. If a rule is worth having, it should block commits.
+- The `mjs` extension enables top-level `export default` without adding `"type": "module"` to `package.json`. Alternatively, place the config in `package.json` under the `"lint-staged"` key.
+- For monorepos, lint-staged resolves each file against the nearest `package.json`, so per-package ESLint and Prettier configs are picked up automatically.
