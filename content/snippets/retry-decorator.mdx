@@ -1,0 +1,173 @@
+---
+title: Retry Decorator (Python)
+description: A configurable decorator that retries a function on specified exceptions with exponential backoff and jitter. Supports both sync and async functions via asyncio detection.
+category: snippets
+language: python
+tags: [utils, decorator, retry, resilience]
+---
+
+A single `@retry` decorator that transparently handles both synchronous and `async` functions, retrying on configurable exceptions with exponential backoff and full jitter to avoid thundering-herd pressure.
+
+## Usage
+
+```python
+from __future__ import annotations
+
+import asyncio
+import functools
+import logging
+import random
+import time
+from typing import Callable, Sequence, Type, TypeVar
+
+F = TypeVar("F", bound=Callable)
+
+logger = logging.getLogger(__name__)
+
+
+def retry(
+    exceptions: type[BaseException] | tuple[type[BaseException], ...] = Exception,
+    *,
+    max_attempts: int = 3,
+    base_delay: float = 0.5,
+    max_delay: float = 60.0,
+    backoff_factor: float = 2.0,
+    jitter: bool = True,
+    on_retry: Callable[[BaseException, int], None] | None = None,
+) -> Callable[[F], F]:
+    """Retry a sync or async function on specified exceptions.
+
+    Args:
+        exceptions: Exception type or tuple of types to catch and retry.
+        max_attempts: Total number of attempts, including the first call (default: 3).
+        base_delay: Seconds to wait before the first retry (default: 0.5).
+        max_delay: Upper bound on any single delay in seconds (default: 60.0).
+        backoff_factor: Multiplier applied to the delay after each failure (default: 2.0).
+        jitter: When True, multiply the computed delay by a random value in [0, 1]
+                to spread retries across time (default: True).
+        on_retry: Optional callback(exc, attempt_number) called before each retry.
+
+    Returns:
+        A decorator that can be applied to sync or async callables.
+    """
+
+    def _compute_delay(attempt: int) -> float:
+        delay = min(base_delay * (backoff_factor ** attempt), max_delay)
+        return delay * random.random() if jitter else delay
+
+    def decorator(func: F) -> F:
+        if asyncio.iscoroutinefunction(func):
+
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                last_exc: BaseException
+                for attempt in range(max_attempts):
+                    try:
+                        return await func(*args, **kwargs)
+                    except exceptions as exc:
+                        last_exc = exc
+                        if attempt == max_attempts - 1:
+                            raise
+                        delay = _compute_delay(attempt)
+                        if on_retry is not None:
+                            on_retry(exc, attempt + 1)
+                        logger.debug(
+                            "%s attempt %d/%d failed (%s). Retrying in %.2fs.",
+                            func.__qualname__,
+                            attempt + 1,
+                            max_attempts,
+                            exc,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                raise last_exc  # unreachable but satisfies type checkers
+
+            return async_wrapper  # type: ignore[return-value]
+
+        else:
+
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                last_exc: BaseException
+                for attempt in range(max_attempts):
+                    try:
+                        return func(*args, **kwargs)
+                    except exceptions as exc:
+                        last_exc = exc
+                        if attempt == max_attempts - 1:
+                            raise
+                        delay = _compute_delay(attempt)
+                        if on_retry is not None:
+                            on_retry(exc, attempt + 1)
+                        logger.debug(
+                            "%s attempt %d/%d failed (%s). Retrying in %.2fs.",
+                            func.__qualname__,
+                            attempt + 1,
+                            max_attempts,
+                            exc,
+                            delay,
+                        )
+                        time.sleep(delay)
+                raise last_exc  # unreachable but satisfies type checkers
+
+            return sync_wrapper  # type: ignore[return-value]
+
+    return decorator
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `exceptions` | `type \| tuple[type, ...]` | `Exception` | Exception(s) that trigger a retry |
+| `max_attempts` | `int` | `3` | Total call attempts (1 original + N-1 retries) |
+| `base_delay` | `float` | `0.5` | Initial delay in seconds |
+| `max_delay` | `float` | `60.0` | Maximum delay cap in seconds |
+| `backoff_factor` | `float` | `2.0` | Multiplier applied to the delay each retry |
+| `jitter` | `bool` | `True` | Randomise delay to reduce thundering herd |
+| `on_retry` | `callable \| None` | `None` | Hook called with `(exc, attempt)` before sleeping |
+
+## Examples
+
+```python
+import httpx
+
+# Retry any exception up to 5 times
+@retry(max_attempts=5)
+def fetch_config(url: str) -> dict:
+    response = httpx.get(url, timeout=5)
+    response.raise_for_status()
+    return response.json()
+
+
+# Retry only transient network/HTTP errors, not value errors
+@retry(
+    (httpx.TransportError, httpx.HTTPStatusError),
+    max_attempts=4,
+    base_delay=1.0,
+    max_delay=30.0,
+)
+def post_event(payload: dict) -> None:
+    httpx.post("https://api.example.com/events", json=payload).raise_for_status()
+
+
+# Async function — same decorator, no changes needed
+@retry(max_attempts=3, base_delay=0.2)
+async def async_fetch(session: httpx.AsyncClient, url: str) -> bytes:
+    response = await session.get(url)
+    response.raise_for_status()
+    return response.content
+
+
+# Log every retry attempt
+def log_retry(exc: BaseException, attempt: int) -> None:
+    print(f"Retry #{attempt} after: {exc}")
+
+@retry(Exception, max_attempts=3, on_retry=log_retry)
+def unstable_operation() -> str:
+    ...
+```
+
+## How it works
+
+`retry` inspects the wrapped function with `asyncio.iscoroutinefunction` at decoration time and builds either an `async` or a regular wrapper accordingly. Each failed attempt computes a delay as `min(base_delay * backoff_factor^attempt, max_delay)`, then optionally multiplies by `random.random()` (full jitter) before sleeping. `functools.wraps` preserves the original function's `__name__`, `__doc__`, and `__module__` so introspection and documentation tools see the unwrapped signature.
