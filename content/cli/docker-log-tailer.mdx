@@ -1,0 +1,128 @@
+---
+title: Docker Log Tailer
+description: Tail and optionally filter logs from one or multiple containers simultaneously, with colour-coded output per container.
+category: cli
+language: bash
+tags: [docker, logs, monitoring, debugging]
+---
+
+A shell script that streams logs from one or more Docker containers at once, prefixing each line with a colour-coded container name so you can follow multiple services in a single terminal.
+
+## Usage
+
+```bash
+#!/usr/bin/env bash
+# docker-log-tailer.sh — tail logs from one or more containers with colour-coded output
+# Usage: ./docker-log-tailer.sh [OPTIONS] <container> [container ...]
+# Options:
+#   -n <lines>   Number of historical lines to show (default: 50)
+#   -f <pattern> Grep filter applied to each line (optional)
+
+set -euo pipefail
+
+# ANSI colours for up to 8 simultaneous containers
+COLOURS=(
+  "\033[1;32m"  # bright green
+  "\033[1;34m"  # bright blue
+  "\033[1;33m"  # bright yellow
+  "\033[1;35m"  # bright magenta
+  "\033[1;36m"  # bright cyan
+  "\033[1;31m"  # bright red
+  "\033[1;37m"  # bright white
+  "\033[0;33m"  # dark yellow
+)
+RESET="\033[0m"
+
+TAIL_LINES=50
+FILTER=""
+
+usage() {
+  echo "Usage: $0 [-n lines] [-f pattern] <container> [container ...]" >&2
+  exit 1
+}
+
+while getopts ":n:f:" opt; do
+  case $opt in
+    n) TAIL_LINES="$OPTARG" ;;
+    f) FILTER="$OPTARG" ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+[[ $# -lt 1 ]] && usage
+
+PIDS=()
+
+tail_container() {
+  local container="$1"
+  local colour="$2"
+  local label
+  label=$(printf "%-20s" "$container")
+
+  if [[ -n "$FILTER" ]]; then
+    docker logs -f --tail="$TAIL_LINES" "$container" 2>&1 \
+      | grep --line-buffered "$FILTER" \
+      | while IFS= read -r line; do
+          printf "${colour}[%s]${RESET} %s\n" "$label" "$line"
+        done
+  else
+    docker logs -f --tail="$TAIL_LINES" "$container" 2>&1 \
+      | while IFS= read -r line; do
+          printf "${colour}[%s]${RESET} %s\n" "$label" "$line"
+        done
+  fi
+}
+
+# Spawn a background tail for each container
+for i in "$@"; do
+  colour="${COLOURS[$((${#PIDS[@]} % ${#COLOURS[@]}))]}"
+  tail_container "$i" "$colour" &
+  PIDS+=($!)
+done
+
+# Clean up child processes on Ctrl-C
+cleanup() {
+  echo ""
+  echo "Stopping tails..."
+  for pid in "${PIDS[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null
+  exit 0
+}
+
+trap cleanup INT TERM
+
+wait
+```
+
+## Examples
+
+```bash
+# Tail a single container
+./docker-log-tailer.sh my_api
+
+# Tail three containers at once
+./docker-log-tailer.sh web api db
+
+# Show only the last 100 lines and filter for "ERROR"
+./docker-log-tailer.sh -n 100 -f ERROR web api
+
+# Use with docker compose service names
+./docker-log-tailer.sh -f "POST /upload" nginx api
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-n <lines>` | `50` | How many historical log lines to show before streaming |
+| `-f <pattern>` | _(none)_ | Grep pattern to filter output lines |
+
+## Notes
+
+- Container names must match `docker ps --format '{{.Names}}'` — use those exact names, not image names.
+- Colours cycle when you pass more than 8 containers.
+- `stderr` from each container is merged with `stdout` via `2>&1` so you never miss error output.
+- Install `ccze` or `lnav` for richer syntax highlighting if you need more advanced log analysis.
