@@ -1,0 +1,78 @@
+---
+title: Hex To HSL
+description: Converts a CSS hex color string directly to an HSL object. Combines hex-to-rgb and rgb-to-hsl parsing into a single convenient function.
+category: snippets
+language: typescript
+tags: [color, utils, conversion]
+---
+
+Parses a 3- or 6-digit hex color string and returns an `{ h, s, l }` object with hue in degrees (0–360) and saturation/lightness as percentages (0–100). Useful as a building block for color manipulation utilities.
+
+## Usage
+
+```typescript
+interface HSL {
+  h: number
+  s: number
+  l: number
+}
+
+function hexToHsl(hex: string): HSL {
+  const clean = hex.replace('#', '')
+  const full = clean.length === 3
+    ? clean.split('').map((c) => c + c).join('')
+    : clean
+
+  const int = parseInt(full, 16)
+  let r = ((int >> 16) & 255) / 255
+  let g = ((int >> 8) & 255) / 255
+  let b = (int & 255) / 255
+
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+
+  if (max === min) {
+    return { h: 0, s: 0, l: Math.round(l * 100) }
+  }
+
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+
+  let h: number
+  switch (max) {
+    case r:
+      h = ((g - b) / d + (g < b ? 6 : 0)) / 6
+      break
+    case g:
+      h = ((b - r) / d + 2) / 6
+      break
+    default:
+      h = ((r - g) / d + 4) / 6
+  }
+
+  return {
+    h: Math.round(h * 360),
+    s: Math.round(s * 100),
+    l: Math.round(l * 100),
+  }
+}
+
+export default hexToHsl
+```
+
+## Examples
+
+```typescript
+hexToHsl('#336699')  // { h: 210, s: 50, l: 40 }
+hexToHsl('#ff0000')  // { h: 0,   s: 100, l: 50 }
+hexToHsl('#ffffff')  // { h: 0,   s: 0,   l: 100 }
+hexToHsl('#000')     // { h: 0,   s: 0,   l: 0 }
+```
+
+## How it works
+
+1. The hex string is normalised — the `#` prefix is stripped and shorthand 3-digit values (`#rgb`) are expanded to 6 digits.
+2. The 24-bit integer is bit-shifted to extract R, G, and B channels, then each is divided by 255 to get a 0–1 range.
+3. The HSL lightness is the average of the channel max and min. Saturation is derived from the delta relative to that lightness, and hue is computed from which channel is dominant.
+4. The returned values are rounded and scaled: `h` to 0–360, `s` and `l` to 0–100, matching CSS `hsl()` syntax directly.
