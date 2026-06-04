@@ -1,0 +1,255 @@
+---
+title: Next.js Blog (App Router)
+description: A production-ready blog starter built with the Next.js App Router, MDX for content, and Tailwind CSS for styling. Includes RSS feed generation, syntax highlighting, and SEO metadata.
+category: templates
+language: TypeScript
+tags: [next.js, blog, app-router, mdx, tailwind]
+repo: https://github.com/vercel/next.js/tree/canary/examples/blog
+---
+
+A full-featured blog starter using the Next.js App Router with MDX-powered posts, Tailwind CSS v4 styling, Shiki syntax highlighting, and automatic RSS feed and sitemap generation.
+
+## Usage
+
+```typescript
+// app/blog/[slug]/page.tsx
+import { notFound } from 'next/navigation'
+import { getPostBySlug, getAllPosts } from '@/lib/posts'
+import type { Metadata } from 'next'
+
+interface Props {
+  params: Promise<{ slug: string }>
+}
+
+export async function generateStaticParams() {
+  const posts = await getAllPosts()
+  return posts.map((post) => ({ slug: post.slug }))
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params
+  const post = await getPostBySlug(slug)
+  if (!post) return {}
+
+  return {
+    title: post.title,
+    description: post.description,
+    openGraph: {
+      title: post.title,
+      description: post.description,
+      type: 'article',
+      publishedTime: post.date,
+    },
+  }
+}
+
+export default async function PostPage({ params }: Props) {
+  const { slug } = await params
+  const post = await getPostBySlug(slug)
+  if (!post) notFound()
+
+  return (
+    <article className="prose prose-neutral mx-auto max-w-2xl px-4 py-12">
+      <header className="mb-8">
+        <h1 className="text-3xl font-bold">{post.title}</h1>
+        <time className="text-sm text-neutral-500" dateTime={post.date}>
+          {new Date(post.date).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          })}
+        </time>
+      </header>
+      <post.content />
+    </article>
+  )
+}
+```
+
+```typescript
+// lib/posts.ts
+import fs from 'fs/promises'
+import path from 'path'
+import { compileMDX } from 'next-mdx-remote/rsc'
+import rehypePrettyCode from 'rehype-pretty-code'
+
+export interface Post {
+  slug: string
+  title: string
+  description: string
+  date: string
+  tags: string[]
+  content: React.ComponentType
+}
+
+const POSTS_DIR = path.join(process.cwd(), 'content/posts')
+
+export async function getAllPosts(): Promise<Omit<Post, 'content'>[]> {
+  const files = await fs.readdir(POSTS_DIR)
+  const posts = await Promise.all(
+    files
+      .filter((f) => f.endsWith('.mdx'))
+      .map(async (file) => {
+        const slug = file.replace(/\.mdx$/, '')
+        const raw = await fs.readFile(path.join(POSTS_DIR, file), 'utf-8')
+        const { frontmatter } = await compileMDX<Omit<Post, 'slug' | 'content'>>({
+          source: raw,
+          options: { parseFrontmatter: true },
+        })
+        return { slug, ...frontmatter }
+      })
+  )
+  return posts.sort((a, b) => (a.date < b.date ? 1 : -1))
+}
+
+export async function getPostBySlug(slug: string): Promise<Post | null> {
+  const filePath = path.join(POSTS_DIR, `${slug}.mdx`)
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8')
+    const { content, frontmatter } = await compileMDX<Omit<Post, 'slug' | 'content'>>({
+      source: raw,
+      options: {
+        parseFrontmatter: true,
+        mdxOptions: {
+          rehypePlugins: [
+            [rehypePrettyCode, { theme: 'github-dark-dimmed' }],
+          ],
+        },
+      },
+    })
+    return { slug, ...frontmatter, content }
+  } catch {
+    return null
+  }
+}
+```
+
+```typescript
+// app/feed.xml/route.ts
+import { getAllPosts } from '@/lib/posts'
+
+export async function GET() {
+  const posts = await getAllPosts()
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://example.com'
+
+  const items = posts
+    .map(
+      (post) => `
+    <item>
+      <title><![CDATA[${post.title}]]></title>
+      <description><![CDATA[${post.description}]]></description>
+      <link>${siteUrl}/blog/${post.slug}</link>
+      <pubDate>${new Date(post.date).toUTCString()}</pubDate>
+      <guid>${siteUrl}/blog/${post.slug}</guid>
+    </item>`
+    )
+    .join('\n')
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>My Blog</title>
+    <link>${siteUrl}</link>
+    <description>Latest posts</description>
+    <atom:link href="${siteUrl}/feed.xml" rel="self" type="application/rss+xml"/>
+    ${items}
+  </channel>
+</rss>`
+
+  return new Response(xml, {
+    headers: { 'Content-Type': 'application/xml' },
+  })
+}
+```
+
+## README
+
+### What this includes
+
+- **App Router** — file-system routing with layouts, Server Components, and dynamic `[slug]` routes
+- **MDX content** — posts authored in `.mdx` files with frontmatter (title, description, date, tags)
+- **Syntax highlighting** — Shiki via `rehype-pretty-code`, zero client-side JS
+- **SEO metadata** — per-post `generateMetadata` with Open Graph fields
+- **RSS feed** — `/feed.xml` route handler that generates a valid RSS 2.0 feed
+- **Sitemap** — `app/sitemap.ts` listing all post URLs for search engines
+- **Tailwind CSS v4** — utility-first styling with `@tailwindcss/typography` for prose
+- **Static generation** — `generateStaticParams` pre-renders all posts at build time
+
+### Prerequisites
+
+- Node.js 20.9 or later
+- npm, pnpm, yarn, or bun
+
+### Create this template
+
+```bash
+# 1. Scaffold a new Next.js app with TypeScript and Tailwind
+npx create-next-app@latest my-blog --typescript --tailwind --app --yes
+
+cd my-blog
+
+# 2. Install MDX, syntax highlighting, and RSS dependencies
+npm install next-mdx-remote rehype-pretty-code shiki
+
+# 3. Install Tailwind typography plugin
+npm install -D @tailwindcss/typography
+
+# 4. Create the content directory for posts
+mkdir -p content/posts
+
+# 5. Add a sample post
+cat > content/posts/hello-world.mdx << 'EOF'
+---
+title: Hello, World
+description: My first blog post.
+date: "2026-06-03"
+tags: [meta]
+---
+
+Welcome to my blog. This post is written in **MDX**.
+
+```typescript
+console.log("Hello, World!")
+```
+EOF
+
+# 6. Start the development server
+npm run dev
+```
+
+### Project structure
+
+```
+my-blog/
+  app/
+    layout.tsx              # Root layout with nav and footer
+    page.tsx                # Homepage — lists recent posts
+    blog/
+      page.tsx              # Blog index — all posts
+      [slug]/
+        page.tsx            # Individual post page
+    feed.xml/
+      route.ts              # RSS feed route handler
+    sitemap.ts              # Next.js sitemap export
+  content/
+    posts/
+      hello-world.mdx       # MDX post files live here
+  lib/
+    posts.ts                # getAllPosts / getPostBySlug helpers
+  components/
+    PostCard.tsx            # Post preview card
+    Header.tsx              # Site nav
+  public/
+  next.config.ts
+  tailwind.config.ts
+  tsconfig.json
+```
+
+### First things to customize
+
+- `app/layout.tsx` — update the site name, nav links, and footer
+- `app/page.tsx` — adjust the homepage hero and number of featured posts
+- `lib/posts.ts` — change `POSTS_DIR` if you move content elsewhere
+- `app/feed.xml/route.ts` — replace the hardcoded `<title>` and `<description>` with your blog name
+- `.env.local` — set `NEXT_PUBLIC_SITE_URL=https://yourdomain.com` for correct RSS and OG URLs
+- `tailwind.config.ts` — add your brand colors and custom fonts
