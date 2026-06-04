@@ -1,0 +1,155 @@
+---
+title: ESLint Flat Config for Next.js
+description: ESLint flat config with Next.js core web vitals rules and React support. Handles app router and pages router conventions out of the box.
+category: configs
+language: javascript
+tags: [eslint, nextjs, react, linting, flat-config]
+---
+
+ESLint v9 flat config for Next.js projects. Includes Core Web Vitals enforcement, React hooks rules, and separate rule sets for the App Router (`app/`) and Pages Router (`pages/`) directories.
+
+## Usage
+
+```javascript
+// eslint.config.mjs
+import { dirname } from 'path'
+import { fileURLToPath } from 'url'
+import { FlatCompat } from '@eslint/eslintrc'
+import js from '@eslint/js'
+import globals from 'globals'
+import tseslint from 'typescript-eslint'
+import reactHooks from 'eslint-plugin-react-hooks'
+import jsxA11y from 'eslint-plugin-jsx-a11y'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+// FlatCompat bridges legacy shareable configs that haven't migrated to flat config yet
+const compat = new FlatCompat({
+  baseDirectory: __dirname,
+})
+
+export default tseslint.config(
+  // ── Ignored paths ────────────────────────────────────────────────
+  {
+    ignores: [
+      '.next/**',
+      'out/**',
+      'dist/**',
+      'node_modules/**',
+      'next.config.*',
+    ],
+  },
+
+  // ── Next.js core rules via compat (next + core-web-vitals) ───────
+  ...compat.extends('next/core-web-vitals'),
+
+  // ── Base JS recommended ──────────────────────────────────────────
+  js.configs.recommended,
+
+  // ── TypeScript ───────────────────────────────────────────────────
+  ...tseslint.configs.recommendedTypeChecked,
+
+  // ── Main config ──────────────────────────────────────────────────
+  {
+    files: ['**/*.{ts,tsx,js,jsx,mjs}'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      globals: {
+        ...globals.browser,
+        ...globals.node, // Next.js runs in both environments
+      },
+      parserOptions: {
+        project: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    plugins: {
+      'react-hooks': reactHooks,
+      'jsx-a11y': jsxA11y,
+    },
+    rules: {
+      // React hooks
+      ...reactHooks.configs.recommended.rules,
+
+      // Accessibility
+      ...jsxA11y.configs.recommended.rules,
+
+      // TypeScript
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports', fixStyle: 'inline-type-imports' }],
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: { attributes: false } }],
+
+      // Next.js specific
+      '@next/next/no-html-link-for-pages': 'error',
+
+      // General
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      'prefer-const': 'error',
+      'no-var': 'error',
+    },
+  },
+
+  // ── App Router: Server Components ────────────────────────────────
+  // Server Components can use async/await at the top level and don't
+  // need the "use client" directive, so relax browser-only globals.
+  {
+    files: ['app/**/*.{ts,tsx}'],
+    ignores: ['app/**/*.client.{ts,tsx}'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      // Server Components cannot use hooks — but we can't statically detect
+      // "use client" here, so keep hooks rules enabled and rely on the
+      // react-hooks plugin to surface misuse at runtime lint.
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['next/navigation'],
+          importNames: ['useRouter', 'usePathname', 'useSearchParams'],
+          message: 'Router hooks are only available in Client Components. Add "use client" at the top of the file.',
+        }],
+      }],
+    },
+  },
+
+  // ── Pages Router ─────────────────────────────────────────────────
+  {
+    files: ['pages/**/*.{ts,tsx}'],
+    rules: {
+      // getStaticProps / getServerSideProps are valid async exports
+      '@typescript-eslint/require-await': 'off',
+    },
+  },
+
+  // ── API routes ───────────────────────────────────────────────────
+  {
+    files: ['pages/api/**/*.{ts,js}', 'app/api/**/route.{ts,js}'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      'no-console': 'off', // server-side logging is acceptable in API routes
+    },
+  },
+)
+```
+
+**Install dependencies:**
+
+```bash
+npm install -D eslint @eslint/js @eslint/eslintrc globals typescript-eslint \
+  eslint-plugin-react-hooks eslint-plugin-jsx-a11y eslint-config-next
+```
+
+## Notes
+
+- `FlatCompat` is required because `eslint-config-next` still ships as a legacy config. Once Next.js releases a native flat config export, you can replace the `compat.extends('next/core-web-vitals')` call with `...nextConfig` directly.
+- `@typescript-eslint/no-misused-promises` with `checksVoidReturn: { attributes: false }` prevents false positives when passing async event handlers to JSX props (e.g. `onClick={async () => { ... }}`).
+- The App Router override flags misuse of router hooks in Server Components — one of the most common mistakes when migrating from Pages Router.
+- For Tailwind CSS class sorting, add `eslint-plugin-tailwindcss` and extend the rules block with `'tailwindcss/classnames-order': 'warn'`.
