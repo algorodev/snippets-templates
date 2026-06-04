@@ -1,0 +1,139 @@
+---
+title: Fly.io Deploy Helper
+description: Shortcuts for flyctl deploy, scaling machine counts, tailing logs, and SSH-ing into a running instance with a single alias.
+category: cli
+language: bash
+tags: [cloud, fly.io, deploy, devops]
+---
+
+Add these aliases and functions to your `~/.zshrc` or `~/.bashrc` for fast Fly.io operations. Requires the `flyctl` CLI (`brew install flyctl` or `curl -L https://fly.io/install.sh | sh`).
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+# ── Aliases ───────────────────────────────────────────────────────
+
+# Deploy current app (reads fly.toml in the current directory)
+alias fdeploy='flyctl deploy'
+
+# Deploy without prompts — useful in CI-like local workflows
+alias ffast='flyctl deploy --no-cache --yes'
+
+# Show app status and machine health
+alias fstatus='flyctl status'
+
+# Show recent app logs (last 100 lines)
+alias flogs='flyctl logs'
+
+# Tail live logs (stream continuously)
+alias ftail='flyctl logs --tail'
+
+# Open the Fly.io dashboard for the current app in the browser
+alias fopen='flyctl dashboard'
+
+# ── Functions ─────────────────────────────────────────────────────
+
+# SSH into a running machine for the current app
+# Picks the first available machine or lets you choose with fzf
+# Usage: fssh [app-name]
+fssh() {
+  local app="${1:-$(flyctl info --json 2>/dev/null | grep '"Name"' | head -1 | sed 's/.*: "\(.*\)".*/\1/')}"
+
+  if [[ -z "$app" ]]; then
+    echo "Error: could not detect app name. Run inside a Fly project directory or pass the app name." >&2
+    echo "Usage: fssh [app-name]" >&2
+    return 1
+  fi
+
+  echo "Opening SSH session → $app"
+  flyctl ssh console --app "$app"
+}
+
+# Scale machine count up or down
+# Usage: fscale <count> [app-name]
+fscale() {
+  local count="${1:-}"
+  local app="${2:-}"
+
+  if [[ -z "$count" ]]; then
+    echo "Usage: fscale <machine-count> [app-name]" >&2
+    return 1
+  fi
+
+  local args=("--count" "$count")
+  [[ -n "$app" ]] && args+=("--app" "$app")
+
+  flyctl scale count "${args[@]}" \
+    && echo "Scaled to $count machine(s)${app:+ for $app}" \
+    || { echo "Error: scale command failed." >&2; return 1; }
+}
+
+# Show machine list with region and state
+# Usage: fmachines [app-name]
+fmachines() {
+  local app="${1:-}"
+  local args=()
+  [[ -n "$app" ]] && args+=("--app" "$app")
+
+  flyctl machines list "${args[@]}"
+}
+
+# Alias shortcuts
+alias fscale1='fscale 1'
+alias fscale2='fscale 2'
+alias fscale0='fscale 0'
+```
+
+After adding the aliases and functions, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# Deploy the current app
+fdeploy
+# ==> Verifying app config
+# --> Verified app config
+# ==> Building image
+# ...
+# ✓ Machine 1234abc [app] update finished
+
+# Tail live logs
+ftail
+# 2026-06-03T12:00:00Z app[1234abc] lax [info] Server started on port 8080
+# 2026-06-03T12:00:01Z app[1234abc] lax [info] GET /healthz 200
+
+# SSH into a running machine
+fssh
+# Opening SSH session → my-app
+# root@1234abc:/#
+
+# SSH into a specific app by name
+fssh my-other-app
+
+# Scale up to 3 machines
+fscale 3
+# Scaled to 3 machine(s)
+
+# Scale a specific app to 2
+fscale 2 my-app
+
+# List machines with region info
+fmachines
+# ID         STATE    REGION  CREATED
+# 1234abc    started  lax     2026-06-01
+# 5678def    started  iad     2026-06-01
+```
+
+## Notes
+
+- `flyctl deploy` reads `fly.toml` in the current directory. All functions that auto-detect the app name rely on this file being present.
+- `flyctl ssh console` opens an interactive shell using WireGuard. Run `flyctl wireguard create` if you haven't set up a VPN tunnel yet.
+- Scaling to 0 (`fscale0`) suspends all machines and stops billing for compute, but the app definition and volumes remain.
+- `--no-cache` in `ffast` forces a full Docker layer rebuild — useful when you suspect a stale cache is causing build issues.
+- For multi-region apps, pass `--region` to `flyctl deploy` or `flyctl machines run` to target a specific region.
