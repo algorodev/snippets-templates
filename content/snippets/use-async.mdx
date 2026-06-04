@@ -1,0 +1,177 @@
+---
+title: useAsync Hook
+description: Wraps an async function and tracks its status (idle, pending, fulfilled, rejected) with data and error state. Prevents state updates after unmount.
+category: snippets
+language: typescript
+tags: [react, hooks, async, state]
+---
+
+Turns any async function into a stateful, safe-to-call hook — tracking whether the promise is idle, in-flight, resolved, or rejected without ever updating state after the component unmounts.
+
+## Usage
+
+```typescript
+import { useCallback, useReducer, useRef, useEffect } from 'react'
+
+type Status = 'idle' | 'pending' | 'fulfilled' | 'rejected'
+
+interface AsyncState<T> {
+  status: Status
+  data: T | null
+  error: Error | null
+}
+
+type AsyncAction<T> =
+  | { type: 'pending' }
+  | { type: 'fulfilled'; payload: T }
+  | { type: 'rejected'; payload: Error }
+  | { type: 'reset' }
+
+function asyncReducer<T>(state: AsyncState<T>, action: AsyncAction<T>): AsyncState<T> {
+  switch (action.type) {
+    case 'pending':
+      return { status: 'pending', data: null, error: null }
+    case 'fulfilled':
+      return { status: 'fulfilled', data: action.payload, error: null }
+    case 'rejected':
+      return { status: 'rejected', data: null, error: action.payload }
+    case 'reset':
+      return { status: 'idle', data: null, error: null }
+  }
+}
+
+interface UseAsyncReturn<T, A extends unknown[]> extends AsyncState<T> {
+  execute: (...args: A) => Promise<T | undefined>
+  reset: () => void
+  isIdle: boolean
+  isPending: boolean
+  isFulfilled: boolean
+  isRejected: boolean
+}
+
+function useAsync<T, A extends unknown[] = []>(
+  asyncFn: (...args: A) => Promise<T>,
+): UseAsyncReturn<T, A> {
+  const [state, dispatch] = useReducer(asyncReducer<T>, {
+    status: 'idle',
+    data: null,
+    error: null,
+  })
+
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  // Keep a stable reference to asyncFn so `execute` identity stays constant
+  const asyncFnRef = useRef(asyncFn)
+  asyncFnRef.current = asyncFn
+
+  const execute = useCallback(async (...args: A): Promise<T | undefined> => {
+    dispatch({ type: 'pending' })
+
+    try {
+      const result = await asyncFnRef.current(...args)
+      if (mountedRef.current) {
+        dispatch({ type: 'fulfilled', payload: result })
+      }
+      return result
+    } catch (err) {
+      if (mountedRef.current) {
+        dispatch({
+          type: 'rejected',
+          payload: err instanceof Error ? err : new Error(String(err)),
+        })
+      }
+      return undefined
+    }
+  }, [])
+
+  const reset = useCallback(() => dispatch({ type: 'reset' }), [])
+
+  return {
+    ...state,
+    execute,
+    reset,
+    isIdle: state.status === 'idle',
+    isPending: state.status === 'pending',
+    isFulfilled: state.status === 'fulfilled',
+    isRejected: state.status === 'rejected',
+  }
+}
+
+export { useAsync }
+export type { Status, AsyncState, UseAsyncReturn }
+```
+
+## Examples
+
+```typescript
+// Trigger on button click
+interface User {
+  id: number
+  name: string
+  email: string
+}
+
+async function createUser(name: string, email: string): Promise<User> {
+  const res = await fetch('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email }),
+  })
+  if (!res.ok) throw new Error(`Failed: ${res.status}`)
+  return res.json()
+}
+
+function CreateUserForm() {
+  const { execute, isPending, isFulfilled, isRejected, data, error, reset } =
+    useAsync(createUser)
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    await execute(fd.get('name') as string, fd.get('email') as string)
+  }
+
+  if (isFulfilled && data) {
+    return (
+      <div>
+        <p>Created user #{data.id}</p>
+        <button onClick={reset}>Create another</button>
+      </div>
+    )
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input name="name" placeholder="Name" required />
+      <input name="email" type="email" placeholder="Email" required />
+      <button type="submit" disabled={isPending}>
+        {isPending ? 'Creating…' : 'Create'}
+      </button>
+      {isRejected && <p role="alert">Error: {error?.message}</p>}
+    </form>
+  )
+}
+
+// Fire immediately on mount with useEffect
+function AutoLoad({ id }: { id: number }) {
+  const { execute, isPending, data } = useAsync(
+    useCallback((id: number) => fetch(`/api/items/${id}`).then(r => r.json()), []),
+  )
+
+  useEffect(() => {
+    execute(id)
+  }, [execute, id])
+
+  return <div>{isPending ? 'Loading…' : JSON.stringify(data)}</div>
+}
+```
+
+## How it works
+
+A `useReducer` drives four discrete status transitions (`idle → pending → fulfilled | rejected`), keeping `data` and `error` mutually exclusive. A `mountedRef` is set to `false` in the effect cleanup so dispatches from in-flight promises after unmount are silently dropped. The `asyncFn` is held in a ref rather than a dependency so `execute` has a stable identity — safe to pass as a prop or include in dependency arrays.
