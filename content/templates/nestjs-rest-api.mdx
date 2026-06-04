@@ -1,0 +1,349 @@
+---
+title: NestJS REST API
+description: A scalable REST API built with NestJS following module-based architecture, featuring Swagger/OpenAPI documentation, JWT guards, and TypeORM with PostgreSQL.
+category: templates
+language: typescript
+tags: [nestjs, node.js, rest-api, typescript, typeorm]
+repo: https://github.com/nestjs/nest
+---
+
+A production-structured NestJS application with a `UsersModule` as the reference resource. Includes JWT authentication with Passport, TypeORM entity + repository, class-validator DTOs, and Swagger decorators that auto-generate OpenAPI docs at `/api`.
+
+## Usage
+
+```typescript
+// src/app.module.ts
+import { Module } from '@nestjs/common'
+import { ConfigModule, ConfigService } from '@nestjs/config'
+import { TypeOrmModule } from '@nestjs/typeorm'
+import { UsersModule } from './users/users.module'
+import { AuthModule } from './auth/auth.module'
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        url: config.get<string>('DATABASE_URL'),
+        autoLoadEntities: true,
+        synchronize: config.get('NODE_ENV') !== 'production', // use migrations in prod
+      }),
+    }),
+    AuthModule,
+    UsersModule,
+  ],
+})
+export class AppModule {}
+```
+
+```typescript
+// src/users/user.entity.ts
+import {
+  Entity, PrimaryGeneratedColumn, Column,
+  CreateDateColumn, UpdateDateColumn, BeforeInsert,
+} from 'typeorm'
+import * as bcrypt from 'bcrypt'
+
+@Entity('users')
+export class User {
+  @PrimaryGeneratedColumn('uuid')
+  id: string
+
+  @Column({ unique: true })
+  email: string
+
+  @Column()
+  name: string
+
+  @Column({ select: false })
+  password: string
+
+  @Column({ default: 'user' })
+  role: string
+
+  @CreateDateColumn()
+  createdAt: Date
+
+  @UpdateDateColumn()
+  updatedAt: Date
+
+  @BeforeInsert()
+  async hashPassword() {
+    this.password = await bcrypt.hash(this.password, 12)
+  }
+}
+```
+
+```typescript
+// src/users/dto/create-user.dto.ts
+import { ApiProperty } from '@nestjs/swagger'
+import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator'
+
+export class CreateUserDto {
+  @ApiProperty({ example: 'alice@example.com' })
+  @IsEmail()
+  email: string
+
+  @ApiProperty({ example: 'Alice' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(100)
+  name: string
+
+  @ApiProperty({ example: 'supersecret', minLength: 8 })
+  @IsString()
+  @MinLength(8)
+  password: string
+}
+```
+
+```typescript
+// src/users/users.service.ts
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common'
+import { InjectRepository } from '@nestjs/typeorm'
+import { Repository } from 'typeorm'
+import { User } from './user.entity'
+import { CreateUserDto } from './dto/create-user.dto'
+
+@Injectable()
+export class UsersService {
+  constructor(
+    @InjectRepository(User)
+    private readonly users: Repository<User>
+  ) {}
+
+  async create(dto: CreateUserDto): Promise<User> {
+    const exists = await this.users.findOne({ where: { email: dto.email } })
+    if (exists) throw new ConflictException('Email already in use')
+    const user = this.users.create(dto)
+    return this.users.save(user)
+  }
+
+  async findAll(): Promise<User[]> {
+    return this.users.find()
+  }
+
+  async findOne(id: string): Promise<User> {
+    const user = await this.users.findOne({ where: { id } })
+    if (!user) throw new NotFoundException(`User ${id} not found`)
+    return user
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    return this.users.findOne({ where: { email }, select: ['id', 'email', 'password', 'role'] })
+  }
+
+  async remove(id: string): Promise<void> {
+    const user = await this.findOne(id)
+    await this.users.remove(user)
+  }
+}
+```
+
+```typescript
+// src/users/users.controller.ts
+import {
+  Controller, Get, Post, Delete,
+  Param, Body, UseGuards, ParseUUIDPipe,
+} from '@nestjs/common'
+import {
+  ApiTags, ApiBearerAuth, ApiOperation,
+  ApiCreatedResponse, ApiOkResponse, ApiNotFoundResponse,
+} from '@nestjs/swagger'
+import { JwtAuthGuard } from '../auth/jwt-auth.guard'
+import { UsersService } from './users.service'
+import { CreateUserDto } from './dto/create-user.dto'
+import { User } from './user.entity'
+
+@ApiTags('users')
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+
+  @Post()
+  @ApiOperation({ summary: 'Register a new user' })
+  @ApiCreatedResponse({ type: User })
+  create(@Body() dto: CreateUserDto): Promise<User> {
+    return this.usersService.create(dto)
+  }
+
+  @Get()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: [User] })
+  findAll(): Promise<User[]> {
+    return this.usersService.findAll()
+  }
+
+  @Get(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: User })
+  @ApiNotFoundResponse()
+  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<User> {
+    return this.usersService.findOne(id)
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.usersService.remove(id)
+  }
+}
+```
+
+```typescript
+// src/auth/auth.service.ts
+import { Injectable, UnauthorizedException } from '@nestjs/common'
+import { JwtService } from '@nestjs/jwt'
+import * as bcrypt from 'bcrypt'
+import { UsersService } from '../users/users.service'
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly jwtService: JwtService,
+  ) {}
+
+  async login(email: string, password: string) {
+    const user = await this.usersService.findByEmail(email)
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      throw new UnauthorizedException('Invalid credentials')
+    }
+    const payload = { sub: user.id, email: user.email, role: user.role }
+    return { accessToken: this.jwtService.sign(payload) }
+  }
+}
+```
+
+```typescript
+// src/main.ts
+import { NestFactory } from '@nestjs/core'
+import { ValidationPipe } from '@nestjs/common'
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger'
+import { AppModule } from './app.module'
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule)
+
+  app.useGlobalPipes(
+    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })
+  )
+
+  const config = new DocumentBuilder()
+    .setTitle('My API')
+    .setDescription('REST API docs')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build()
+  const document = SwaggerModule.createDocument(app, config)
+  SwaggerModule.setup('api', app, document)
+
+  await app.listen(process.env.PORT ?? 3000)
+}
+bootstrap()
+```
+
+## How it works
+
+NestJS uses Angular-style decorators to declare modules, controllers, and providers. `TypeOrmModule.forRootAsync()` defers database connection until `ConfigService` is ready. The global `ValidationPipe` uses `class-validator` rules defined directly on DTOs — no manual validation code needed. `JwtAuthGuard` calls Passport's JWT strategy, which validates the Bearer token and attaches the decoded payload to `req.user`.
+
+## Notes
+
+- Enable TypeORM migrations for production: run `typeorm migration:generate` after schema changes and set `synchronize: false`.
+- Swap `@nestjs/jwt` + Passport for a third-party auth provider (Clerk, Auth.js) if you prefer managed auth.
+- Add `@nestjs/throttler` for rate limiting and `helmet` for HTTP security headers.
+
+## README
+
+### What this includes
+
+- Module-based architecture with `AppModule`, `AuthModule`, and `UsersModule`
+- TypeORM entity with `@BeforeInsert` bcrypt hashing
+- Class-validator DTOs with whitelist validation
+- JWT authentication via `@nestjs/passport` + `passport-jwt`
+- `JwtAuthGuard` applied per-route via `@UseGuards`
+- Swagger/OpenAPI auto-docs at `/api` with bearer auth
+- Global `ValidationPipe` with transform enabled
+- Async `TypeOrmModule` configuration from environment variables
+
+### Prerequisites
+
+- Node.js 20+
+- PostgreSQL instance (local Docker or managed, e.g. Neon, Supabase)
+- NestJS CLI: `npm i -g @nestjs/cli`
+
+### Create this template
+
+```bash
+# 1. Scaffold new project
+nest new my-nest-api
+cd my-nest-api
+
+# 2. Install dependencies
+npm install @nestjs/config @nestjs/typeorm typeorm pg
+npm install @nestjs/passport @nestjs/jwt passport passport-jwt bcrypt
+npm install @nestjs/swagger class-validator class-transformer
+npm install -D @types/passport-jwt @types/bcrypt
+
+# 3. Enable class-validator in tsconfig.json
+# "emitDecoratorMetadata": true (should already be set by NestJS CLI)
+
+# 4. Generate resource modules
+nest generate module users
+nest generate module auth
+nest generate controller users
+nest generate service users
+nest generate service auth
+
+# 5. Create src/ files as shown above
+
+# 6. Set up .env
+# DATABASE_URL=postgres://user:pass@localhost:5432/mydb
+# JWT_SECRET=change-me-in-production
+# JWT_EXPIRES_IN=7d
+# PORT=3000
+# NODE_ENV=development
+
+# 7. Start dev server
+npm run start:dev
+# Swagger UI: http://localhost:3000/api
+```
+
+### Project structure
+
+```
+my-nest-api/
+├── src/
+│   ├── app.module.ts
+│   ├── main.ts
+│   ├── auth/
+│   │   ├── auth.module.ts
+│   │   ├── auth.service.ts
+│   │   ├── jwt.strategy.ts
+│   │   └── jwt-auth.guard.ts
+│   └── users/
+│       ├── users.module.ts
+│       ├── users.controller.ts
+│       ├── users.service.ts
+│       ├── user.entity.ts
+│       └── dto/
+│           ├── create-user.dto.ts
+│           └── update-user.dto.ts
+├── .env
+├── tsconfig.json
+└── package.json
+```
+
+### First things to customize
+
+- `DATABASE_URL` in `.env` — point to your PostgreSQL instance
+- `JWT_SECRET` — use a long random string (32+ chars) in production
+- `user.entity.ts` — add/remove columns for your domain model
+- `AppModule` — import additional resource modules as you add them
+- `main.ts` `setTitle` / `setDescription` — update Swagger metadata
+- Switch `synchronize: true` to migrations before going to production
