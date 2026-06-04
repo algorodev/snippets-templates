@@ -1,0 +1,478 @@
+---
+title: Rust Actix Web API
+description: A high-performance REST API built with Actix Web 4 in Rust, featuring async handlers, SQLx for compile-time checked queries, and middleware for authentication and logging.
+category: templates
+language: Rust
+tags: [rust, actix-web, rest-api, sqlx, async]
+repo: https://github.com/actix/actix-web
+---
+
+A production-ready Rust REST API using Actix Web 4, SQLx with compile-time verified SQL queries against PostgreSQL, and JWT-based authentication — all async, all type-safe, with structured logging via `tracing`.
+
+## Usage
+
+```bash
+# Copy environment config
+cp .env.example .env
+
+# Run database migrations
+sqlx migrate run
+
+# Start the development server
+cargo run
+
+# Or with auto-reload
+cargo watch -x run
+```
+
+## How it works
+
+```toml
+# Cargo.toml
+[package]
+name = "actix-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+actix-web-httpauth = "0.8"
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "uuid", "chrono", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jsonwebtoken = "9"
+bcrypt = "0.15"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-actix-web = "0.7"
+thiserror = "1"
+```
+
+```rust
+// src/main.rs
+use actix_web::{middleware::Logger, web, App, HttpServer};
+use sqlx::postgres::PgPoolOptions;
+use tracing_actix_web::TracingLogger;
+
+mod config;
+mod db;
+mod errors;
+mod handlers;
+mod middleware;
+mod models;
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    let cfg = config::Config::from_env();
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&cfg.database_url)
+        .await
+        .expect("failed to connect to database");
+
+    sqlx::migrate!("./migrations").run(&pool).await.expect("migration failed");
+
+    let cfg = web::Data::new(cfg);
+    let pool = web::Data::new(pool);
+
+    tracing::info!("listening on 0.0.0.0:{}", cfg.port);
+
+    HttpServer::new(move || {
+        App::new()
+            .app_data(cfg.clone())
+            .app_data(pool.clone())
+            .wrap(TracingLogger::default())
+            .service(
+                web::scope("/api")
+                    .route("/health", web::get().to(handlers::health))
+                    .service(
+                        web::scope("/auth")
+                            .route("/register", web::post().to(handlers::auth::register))
+                            .route("/login", web::post().to(handlers::auth::login)),
+                    )
+                    .service(
+                        web::scope("/users")
+                            .wrap(middleware::auth::JwtAuth)
+                            .route("/me", web::get().to(handlers::users::me)),
+                    ),
+            )
+    })
+    .bind(format!("0.0.0.0:{}", cfg.port))?
+    .run()
+    .await
+}
+```
+
+```rust
+// src/config.rs
+#[derive(Clone)]
+pub struct Config {
+    pub port: u16,
+    pub database_url: String,
+    pub jwt_secret: String,
+}
+
+impl Config {
+    pub fn from_env() -> Self {
+        dotenvy::dotenv().ok();
+        Self {
+            port: std::env::var("PORT")
+                .unwrap_or_else(|_| "8080".into())
+                .parse()
+                .expect("PORT must be a number"),
+            database_url: std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
+            jwt_secret: std::env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
+        }
+    }
+}
+```
+
+```rust
+// src/models/user.rs
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct User {
+    pub id: Uuid,
+    pub email: String,
+    #[serde(skip_serializing)]
+    pub password_hash: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthResponse {
+    pub token: String,
+    pub user: UserPublic,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserPublic {
+    pub id: Uuid,
+    pub email: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<User> for UserPublic {
+    fn from(u: User) -> Self {
+        Self { id: u.id, email: u.email, created_at: u.created_at }
+    }
+}
+```
+
+```rust
+// src/handlers/auth.rs
+use actix_web::{web, HttpResponse};
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use crate::{
+    config::Config,
+    errors::AppError,
+    middleware::auth::create_jwt,
+    models::user::{AuthResponse, LoginRequest, RegisterRequest, User, UserPublic},
+};
+
+pub async fn register(
+    pool: web::Data<PgPool>,
+    cfg: web::Data<Config>,
+    body: web::Json<RegisterRequest>,
+) -> Result<HttpResponse, AppError> {
+    let hash = bcrypt::hash(&body.password, bcrypt::DEFAULT_COST)?;
+    let user = sqlx::query_as!(
+        User,
+        "INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)
+         RETURNING id, email, password_hash, created_at",
+        Uuid::new_v4(),
+        body.email,
+        hash,
+    )
+    .fetch_one(pool.get_ref())
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => AppError::Conflict("Email already registered".into()),
+        _ => AppError::Internal(e.into()),
+    })?;
+
+    let token = create_jwt(&cfg.jwt_secret, user.id)?;
+    Ok(HttpResponse::Created().json(AuthResponse { token, user: user.into() }))
+}
+
+pub async fn login(
+    pool: web::Data<PgPool>,
+    cfg: web::Data<Config>,
+    body: web::Json<LoginRequest>,
+) -> Result<HttpResponse, AppError> {
+    let user = sqlx::query_as!(
+        User,
+        "SELECT id, email, password_hash, created_at FROM users WHERE email = $1",
+        body.email,
+    )
+    .fetch_optional(pool.get_ref())
+    .await?
+    .ok_or(AppError::Unauthorized)?;
+
+    if !bcrypt::verify(&body.password, &user.password_hash)? {
+        return Err(AppError::Unauthorized);
+    }
+
+    let token = create_jwt(&cfg.jwt_secret, user.id)?;
+    Ok(HttpResponse::Ok().json(AuthResponse { token, user: user.into() }))
+}
+```
+
+```rust
+// src/middleware/auth.rs
+use actix_web::{
+    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
+    Error, HttpMessage,
+};
+use futures_util::future::{err, ok, LocalBoxFuture, Ready};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use serde::{Deserialize, Serialize};
+use std::future::Future;
+use uuid::Uuid;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Claims {
+    pub sub: Uuid,
+    pub exp: usize,
+}
+
+pub fn create_jwt(secret: &str, user_id: Uuid) -> Result<String, jsonwebtoken::errors::Error> {
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let exp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize
+        + 24 * 3600;
+    let claims = Claims { sub: user_id, exp };
+    encode(&Header::new(Algorithm::HS256), &claims, &EncodingKey::from_secret(secret.as_bytes()))
+}
+
+pub struct JwtAuth;
+
+impl<S, B> Transform<S, ServiceRequest> for JwtAuth
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type Transform = JwtAuthMiddleware<S>;
+    type InitError = ();
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ok(JwtAuthMiddleware { service })
+    }
+}
+
+pub struct JwtAuthMiddleware<S> {
+    service: S,
+}
+
+impl<S, B> Service<ServiceRequest> for JwtAuthMiddleware<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let secret = req
+            .app_data::<actix_web::web::Data<crate::config::Config>>()
+            .map(|c| c.jwt_secret.clone())
+            .unwrap_or_default();
+
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|t| t.to_owned());
+
+        match token {
+            None => Box::pin(err(actix_web::error::ErrorUnauthorized("missing token"))),
+            Some(t) => {
+                let key = DecodingKey::from_secret(secret.as_bytes());
+                match decode::<Claims>(&t, &key, &Validation::new(Algorithm::HS256)) {
+                    Err(_) => Box::pin(err(actix_web::error::ErrorUnauthorized("invalid token"))),
+                    Ok(data) => {
+                        req.extensions_mut().insert(data.claims);
+                        let fut = self.service.call(req);
+                        Box::pin(async move { fut.await })
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+```rust
+// src/errors.rs
+use actix_web::{HttpResponse, ResponseError};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error("not found")]
+    NotFound,
+    #[error("unauthorized")]
+    Unauthorized,
+    #[error("{0}")]
+    Conflict(String),
+    #[error("internal error")]
+    Internal(#[from] anyhow::Error),
+    #[error("database error")]
+    Database(#[from] sqlx::Error),
+    #[error("bcrypt error")]
+    Bcrypt(#[from] bcrypt::BcryptError),
+    #[error("jwt error")]
+    Jwt(#[from] jsonwebtoken::errors::Error),
+}
+
+impl ResponseError for AppError {
+    fn error_response(&self) -> HttpResponse {
+        let status = self.status_code();
+        HttpResponse::build(status).json(serde_json::json!({ "error": self.to_string() }))
+    }
+
+    fn status_code(&self) -> actix_web::http::StatusCode {
+        use actix_web::http::StatusCode;
+        match self {
+            AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::Unauthorized | AppError::Jwt(_) => StatusCode::UNAUTHORIZED,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+```
+
+```sql
+-- migrations/0001_create_users.sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE users (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email        TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+## README
+
+### What this includes
+
+- **Actix Web 4** — one of the fastest async Rust HTTP frameworks; actor model optional, handler-centric by default
+- **SQLx 0.7** — async, compile-time checked SQL queries with macros that verify queries against a live database at build time
+- **PostgreSQL** — relational backend with UUID primary keys and `TIMESTAMPTZ` columns
+- **SQLx migrations** — versioned SQL migration files run via `sqlx migrate run`
+- **JWT authentication** — `jsonwebtoken` crate for HS256 token signing; custom Actix middleware for route protection
+- **bcrypt** — password hashing with configurable cost factor
+- **tracing + tracing-actix-web** — structured async-aware logging with per-request trace IDs
+- **thiserror** — derive macro for clean, typed application errors that implement `ResponseError`
+- **dotenvy** — `.env` file loading for local development
+
+### Prerequisites
+
+- Rust 1.75+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- PostgreSQL 14+ running locally or via Docker
+- SQLx CLI: `cargo install sqlx-cli --no-default-features --features native-tls,postgres`
+- (Optional) cargo-watch: `cargo install cargo-watch`
+
+### Create this template
+
+```bash
+# 1. Create the project
+cargo new actix-api && cd actix-api
+
+# 2. Add dependencies to Cargo.toml (see the How it works section above)
+
+# 3. Create the directory layout
+mkdir -p src/handlers src/middleware src/models migrations
+
+# 4. Create environment file
+cat > .env.example <<'EOF'
+PORT=8080
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/actixdb
+JWT_SECRET=change-me-in-production
+RUST_LOG=info,actix_web=debug
+EOF
+cp .env.example .env
+
+# 5. Create the database
+createdb actixdb
+# or with Docker:
+# docker run -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=actixdb -p 5432:5432 -d postgres:16-alpine
+
+# 6. Run migrations
+sqlx migrate run
+
+# 7. Build offline query cache (required for compile-time checks in CI)
+cargo sqlx prepare
+
+# 8. Start the server
+cargo run
+```
+
+### Project structure
+
+```
+actix-api/
+├── migrations/
+│   └── 0001_create_users.sql     # Versioned SQL migrations
+├── src/
+│   ├── handlers/
+│   │   ├── mod.rs                # Re-exports and health handler
+│   │   ├── auth.rs               # /api/auth/register, /api/auth/login
+│   │   └── users.rs              # /api/users/me
+│   ├── middleware/
+│   │   └── auth.rs               # JWT extraction and Claims insertion
+│   ├── models/
+│   │   └── user.rs               # User struct + request/response types
+│   ├── config.rs                 # Config loaded from environment
+│   ├── errors.rs                 # AppError enum implementing ResponseError
+│   └── main.rs                   # App bootstrap, pool, router
+├── .sqlx/                        # Compile-time query cache (commit this)
+├── .env.example
+├── Cargo.toml
+└── Cargo.lock
+```
+
+### First things to customize
+
+- `.env` — Set a strong `JWT_SECRET` (`openssl rand -hex 32`) and your `DATABASE_URL`
+- `migrations/` — Add new `.sql` migration files for each schema change; run `sqlx migrate run`
+- `src/models/` — Add new structs with `sqlx::FromRow` and `serde::Serialize/Deserialize`
+- `src/handlers/` — Add resource handler modules and register them with `web::scope` in `main.rs`
+- `src/errors.rs` — Extend `AppError` with new variants as your domain grows
+- `Cargo.toml` — Add `validator` crate for input validation, `redis` for caching, or `lettre` for email
