@@ -1,0 +1,109 @@
+---
+title: useToggle Hook
+description: Manages a boolean state value with a stable toggle function and explicit set functions. Returns a tuple of [value, toggle, setTrue, setFalse].
+category: snippets
+language: typescript
+tags: [react, hooks, state, boolean]
+---
+
+Encapsulates a boolean flag with a memoised toggle and named setters so call sites stay readable and the same function references are returned on every render.
+
+## Usage
+
+```typescript
+import { useCallback, useState } from 'react'
+
+type UseToggleReturn = [
+  value: boolean,
+  toggle: () => void,
+  setTrue: () => void,
+  setFalse: () => void,
+]
+
+function useToggle(initialValue = false): UseToggleReturn {
+  const [value, setValue] = useState(initialValue)
+
+  const toggle = useCallback(() => {
+    setValue(v => !v)
+  }, [])
+
+  const setTrue = useCallback(() => {
+    setValue(true)
+  }, [])
+
+  const setFalse = useCallback(() => {
+    setValue(false)
+  }, [])
+
+  return [value, toggle, setTrue, setFalse]
+}
+
+export { useToggle }
+export type { UseToggleReturn }
+```
+
+## Examples
+
+```typescript
+import { useToggle } from './use-toggle'
+
+// Basic toggle
+function DarkModeSwitch() {
+  const [isDark, toggleDark] = useToggle(false)
+
+  return (
+    <button onClick={toggleDark}>
+      {isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+    </button>
+  )
+}
+
+// Using named setters for explicit open/close control
+function Modal({ children }: { children: React.ReactNode }) {
+  const [isOpen, , open, close] = useToggle(false)
+
+  return (
+    <>
+      <button onClick={open}>Open modal</button>
+      {isOpen && (
+        <div role="dialog" aria-modal="true">
+          <button onClick={close} aria-label="Close">✕</button>
+          {children}
+        </div>
+      )}
+    </>
+  )
+}
+
+// Passing setters as stable callbacks to child components
+function Accordion({ title, children }: { title: string; children: React.ReactNode }) {
+  const [isExpanded, toggleExpanded] = useToggle(false)
+
+  return (
+    <div>
+      <button
+        onClick={toggleExpanded}
+        aria-expanded={isExpanded}
+      >
+        {title}
+      </button>
+      {isExpanded && <div>{children}</div>}
+    </div>
+  )
+}
+```
+
+## API
+
+| Position | Name | Type | Description |
+|---|---|---|---|
+| `[0]` | `value` | `boolean` | The current boolean state |
+| `[1]` | `toggle` | `() => void` | Flips `value` to its opposite |
+| `[2]` | `setTrue` | `() => void` | Explicitly sets `value` to `true` |
+| `[3]` | `setFalse` | `() => void` | Explicitly sets `value` to `false` |
+
+## Notes
+
+- All three functions (`toggle`, `setTrue`, `setFalse`) are wrapped in `useCallback` with an empty dependency array, so they are referentially stable across renders. This makes them safe to pass as props to memoised child components without causing re-renders.
+- `toggle` uses the functional updater form `setValue(v => !v)` to avoid stale closure issues in concurrent rendering scenarios.
+- Destructure with placeholder commas to take only what you need: `const [isOpen, , open, close] = useToggle()`.
