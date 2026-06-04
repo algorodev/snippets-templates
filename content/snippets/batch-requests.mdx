@@ -1,0 +1,124 @@
+---
+title: Batch Async Requests
+description: Accumulates calls within a time window and dispatches them as a single batched request, then fans results back to each caller. Reduces round-trips to APIs that support batch endpoints.
+category: snippets
+language: typescript
+tags: [async, utils, batch, performance]
+---
+
+Collects individual calls made within a configurable time window, sends them together as one batched request, and resolves each caller's promise with its corresponding result.
+
+## Usage
+
+```typescript
+type BatcherOptions<TInput, TOutput> = {
+  /** How long (ms) to wait before flushing the current batch. */
+  windowMs?: number
+  /** Maximum batch size before an early flush is triggered. */
+  maxSize?: number
+  /** The function that receives the full batch and returns results in the same order. */
+  fetcher: (inputs: TInput[]) => Promise<TOutput[]>
+}
+
+function createBatcher<TInput, TOutput>(
+  options: BatcherOptions<TInput, TOutput>
+) {
+  const { windowMs = 10, maxSize = Infinity, fetcher } = options
+
+  type PendingItem = {
+    input: TInput
+    resolve: (value: TOutput) => void
+    reject: (reason: unknown) => void
+  }
+
+  let queue: PendingItem[] = []
+  let timer: ReturnType<typeof setTimeout> | null = null
+
+  async function flush() {
+    if (timer !== null) {
+      clearTimeout(timer)
+      timer = null
+    }
+
+    const batch = queue.splice(0)
+    if (batch.length === 0) return
+
+    try {
+      const results = await fetcher(batch.map((item) => item.input))
+      batch.forEach((item, i) => item.resolve(results[i]))
+    } catch (err) {
+      batch.forEach((item) => item.reject(err))
+    }
+  }
+
+  function add(input: TInput): Promise<TOutput> {
+    return new Promise<TOutput>((resolve, reject) => {
+      queue.push({ input, resolve, reject })
+
+      if (queue.length >= maxSize) {
+        flush()
+        return
+      }
+
+      if (timer === null) {
+        timer = setTimeout(flush, windowMs)
+      }
+    })
+  }
+
+  return { add, flush }
+}
+
+export default createBatcher
+```
+
+## Options
+
+| Parameter  | Type                                          | Default    | Description                                                     |
+| ---------- | --------------------------------------------- | ---------- | --------------------------------------------------------------- |
+| `fetcher`  | `(inputs: TInput[]) => Promise<TOutput[]>`    | —          | Receives the batched inputs and must return results in the same order. |
+| `windowMs` | `number`                                      | `10`       | Milliseconds to wait before dispatching the current batch.      |
+| `maxSize`  | `number`                                      | `Infinity` | Flush immediately once this many items are queued.              |
+
+## Examples
+
+```typescript
+// Batch individual user lookups into a single SQL / DataLoader-style query
+const userBatcher = createBatcher<number, { id: number; name: string }>({
+  windowMs: 20,
+  maxSize: 100,
+  fetcher: async (ids) => {
+    const rows = await db.query(
+      'SELECT id, name FROM users WHERE id = ANY($1)',
+      [ids]
+    )
+    // Return results in the same order as the input ids
+    return ids.map((id) => rows.find((r) => r.id === id)!)
+  },
+})
+
+// Callers are unaware of batching — they just await a single result
+const [alice, bob] = await Promise.all([
+  userBatcher.add(1),
+  userBatcher.add(2),
+])
+
+console.log(alice.name, bob.name)
+```
+
+```typescript
+// Batch translation API calls to stay within per-request limits
+const translateBatcher = createBatcher<string, string>({
+  windowMs: 50,
+  maxSize: 50,
+  fetcher: (texts) =>
+    translateAPI.translateBatch({ texts, targetLang: 'es' }).then((r) => r.translations),
+})
+
+const labels = ['Save', 'Cancel', 'Delete']
+const translated = await Promise.all(labels.map((l) => translateBatcher.add(l)))
+```
+
+## How it works
+
+`createBatcher` maintains a shared `queue` of pending items along with their `resolve`/`reject` callbacks. When `add` is called it pushes to the queue and, if no timer is running, schedules a `flush` after `windowMs`. If `maxSize` is reached before the timer fires, `flush` runs immediately. On flush the entire queue is spliced out atomically, preventing duplicated dispatches, and passed to `fetcher` as a single array. Results are distributed back to each caller by index, so the contract is that `fetcher` must return an array of the same length and order as its input.
