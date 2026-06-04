@@ -1,0 +1,290 @@
+---
+title: Fastify API
+description: A high-performance REST API built with Fastify, TypeScript, and automatic JSON schema validation using @fastify/type-provider-typebox. Includes plugin architecture, Swagger docs, and Drizzle ORM.
+category: templates
+language: TypeScript
+tags: [node.js, fastify, rest-api, typescript, swagger]
+---
+
+A high-performance Fastify REST API template that combines TypeBox schemas for compile-time and runtime validation in one pass, auto-generated Swagger docs via `@fastify/swagger`, Drizzle ORM for type-safe database queries, and Fastify's plugin system to keep the codebase modular and testable.
+
+## Usage
+
+```typescript
+// src/app.ts
+import Fastify from 'fastify'
+import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
+import sensible from '@fastify/sensible'
+import { usersPlugin } from './plugins/users'
+import { dbPlugin } from './plugins/db'
+
+export async function buildApp() {
+  const app = Fastify({
+    logger: {
+      level: process.env.LOG_LEVEL ?? 'info',
+      transport:
+        process.env.NODE_ENV === 'development'
+          ? { target: 'pino-pretty' }
+          : undefined,
+    },
+  }).withTypeProvider<TypeBoxTypeProvider>()
+
+  await app.register(sensible)
+
+  await app.register(swagger, {
+    openapi: {
+      info: { title: 'My API', version: '1.0.0' },
+      components: {
+        securitySchemes: {
+          bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        },
+      },
+    },
+  })
+
+  await app.register(swaggerUi, { routePrefix: '/docs' })
+  await app.register(dbPlugin)
+  await app.register(usersPlugin, { prefix: '/api/users' })
+
+  return app
+}
+```
+
+```typescript
+// src/plugins/db.ts
+import fp from 'fastify-plugin'
+import type { FastifyInstance } from 'fastify'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { Pool } from 'pg'
+import * as schema from '../db/schema'
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    db: ReturnType<typeof drizzle<typeof schema>>
+  }
+}
+
+async function dbPlugin(app: FastifyInstance) {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+
+  app.decorate('db', drizzle(pool, { schema }))
+
+  app.addHook('onClose', async () => {
+    await pool.end()
+  })
+}
+
+export default fp(dbPlugin, { name: 'db' })
+export { dbPlugin }
+```
+
+```typescript
+// src/db/schema.ts
+import { pgTable, text, timestamp, varchar } from 'drizzle-orm/pg-core'
+import { createId } from '@paralleldrive/cuid2'
+
+export const users = pgTable('users', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  name: varchar('name', { length: 100 }),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at')
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+})
+
+export type User = typeof users.$inferSelect
+export type NewUser = typeof users.$inferInsert
+```
+
+```typescript
+// src/plugins/users.ts
+import fp from 'fastify-plugin'
+import type { FastifyInstance } from 'fastify'
+import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
+import { Type } from '@sinclair/typebox'
+import { eq } from 'drizzle-orm'
+import { users } from '../db/schema'
+
+const UserParams = Type.Object({ id: Type.String() })
+
+const UserResponse = Type.Object({
+  id: Type.String(),
+  name: Type.Union([Type.String(), Type.Null()]),
+  email: Type.String(),
+  createdAt: Type.String(),
+})
+
+const UpdateUserBody = Type.Object({
+  name: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+  email: Type.Optional(Type.String({ format: 'email' })),
+})
+
+async function usersPlugin(app: FastifyInstance) {
+  const a = app.withTypeProvider<TypeBoxTypeProvider>()
+
+  a.get(
+    '/:id',
+    {
+      schema: {
+        tags: ['users'],
+        params: UserParams,
+        response: { 200: UserResponse },
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    async (request, reply) => {
+      const [user] = await app.db
+        .select()
+        .from(users)
+        .where(eq(users.id, request.params.id))
+        .limit(1)
+
+      if (!user) return reply.notFound('User not found')
+
+      return {
+        ...user,
+        createdAt: user.createdAt.toISOString(),
+      }
+    }
+  )
+
+  a.patch(
+    '/:id',
+    {
+      schema: {
+        tags: ['users'],
+        params: UserParams,
+        body: UpdateUserBody,
+        response: { 200: UserResponse },
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    async (request, reply) => {
+      const [updated] = await app.db
+        .update(users)
+        .set(request.body)
+        .where(eq(users.id, request.params.id))
+        .returning()
+
+      if (!updated) return reply.notFound('User not found')
+
+      return {
+        ...updated,
+        createdAt: updated.createdAt.toISOString(),
+      }
+    }
+  )
+}
+
+export default fp(usersPlugin, { name: 'users', dependencies: ['db'] })
+export { usersPlugin }
+```
+
+```typescript
+// src/server.ts
+import { buildApp } from './app'
+
+const start = async () => {
+  const app = await buildApp()
+
+  try {
+    await app.listen({
+      port: Number(process.env.PORT ?? 3000),
+      host: '0.0.0.0',
+    })
+  } catch (err) {
+    app.log.error(err)
+    process.exit(1)
+  }
+}
+
+start()
+```
+
+## Options
+
+| Environment variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | — | PostgreSQL connection string |
+| `PORT` | `3000` | HTTP port |
+| `LOG_LEVEL` | `info` | Pino log level (`trace`, `debug`, `info`, `warn`, `error`) |
+| `NODE_ENV` | — | Set to `development` to enable pino-pretty logging |
+
+## Notes
+
+- Swagger UI is available at `/docs` in all environments. Restrict or remove it in production if the API is not public.
+- Every route schema is both the OpenAPI spec source and the runtime JSON Schema validator — there is no duplication.
+- The `db` plugin uses `fastify-plugin` (`fp`) to break Fastify's encapsulation so `app.db` is available in all child plugins.
+
+## README
+
+### What this includes
+- Fastify 5 with TypeScript and TypeBox type provider for end-to-end type safety
+- `@fastify/swagger` + `@fastify/swagger-ui` generating live OpenAPI docs from route schemas
+- `@fastify/sensible` for semantic HTTP error helpers (`reply.notFound`, `reply.badRequest`, etc.)
+- Drizzle ORM with `drizzle-kit` for migrations against PostgreSQL
+- Plugin-based architecture using `fastify-plugin` for shared decorators
+- `pino-pretty` for readable development logs
+
+### Prerequisites
+- Node.js 20+
+- PostgreSQL database
+
+### Create this template
+
+```bash
+mkdir my-api && cd my-api
+npm init -y
+npm install fastify @fastify/type-provider-typebox @fastify/swagger @fastify/swagger-ui @fastify/sensible fastify-plugin
+npm install @sinclair/typebox
+npm install drizzle-orm pg @paralleldrive/cuid2
+npm install --save-dev typescript drizzle-kit @types/node @types/pg tsx pino-pretty
+npx tsc --init --strict --module nodenext --moduleresolution nodenext --target es2022 --outdir dist
+mkdir -p src/{plugins,db}
+touch src/app.ts src/server.ts src/db/schema.ts src/plugins/db.ts src/plugins/users.ts
+```
+
+```bash
+# Add to package.json scripts:
+# "dev":        "tsx watch src/server.ts"
+# "build":      "tsc"
+# "start":      "node dist/server.js"
+# "db:generate": "drizzle-kit generate"
+# "db:migrate":  "drizzle-kit migrate"
+# "db:studio":   "drizzle-kit studio"
+
+# Create drizzle.config.ts pointing to src/db/schema.ts
+# Set DATABASE_URL in .env
+npm run dev
+# Visit http://localhost:3000/docs
+```
+
+### Project structure
+
+```
+src/
+  plugins/
+    db.ts              # Drizzle + pg Pool, decorates app.db
+    users.ts           # /api/users routes with TypeBox schemas
+    auth.ts            # JWT verify hook (add your own)
+  db/
+    schema.ts          # Drizzle table definitions + inferred types
+  app.ts               # buildApp() — registers all plugins
+  server.ts            # listen() entry point
+drizzle.config.ts      # points drizzle-kit at src/db/schema.ts
+drizzle/               # generated migration SQL files
+.env
+```
+
+### First things to customize
+- Add your tables to `src/db/schema.ts` and run `npm run db:generate && npm run db:migrate`
+- Implement a JWT authentication hook in `src/plugins/auth.ts` using `app.addHook('onRequest', ...)` and register it before route plugins
+- Update the OpenAPI `info` block in `src/app.ts` (title, version, contact)
+- Remove or password-protect the `/docs` route before deploying publicly
+- Set `LOG_LEVEL=warn` in production to reduce log volume
