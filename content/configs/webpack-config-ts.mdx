@@ -1,0 +1,151 @@
+---
+title: Webpack Config for TypeScript
+description: A Webpack 5 configuration for TypeScript projects with ts-loader and asset handling. Includes HMR setup for development and optimized chunking for production.
+category: configs
+language: javascript
+tags: [webpack, typescript, build-tool, bundler]
+---
+
+Webpack 5 config with TypeScript compilation via ts-loader, environment-aware optimization, HMR for development, and vendor chunk splitting for production caching.
+
+## Usage
+
+```javascript
+// webpack.config.js
+const path = require('path')
+const HtmlWebpackPlugin = require('html-webpack-plugin')
+const MiniCssExtractPlugin = require('mini-css-extract-plugin')
+
+const isDev = process.env.NODE_ENV !== 'production'
+
+/** @type {import('webpack').Configuration} */
+module.exports = {
+  mode: isDev ? 'development' : 'production',
+  entry: './src/index.ts',
+  devtool: isDev ? 'eval-source-map' : 'source-map',
+
+  output: {
+    path: path.resolve(__dirname, 'dist'),
+    filename: isDev ? '[name].js' : '[name].[contenthash:8].js',
+    chunkFilename: isDev ? '[name].chunk.js' : '[name].[contenthash:8].chunk.js',
+    assetModuleFilename: 'assets/[hash][ext][query]',
+    clean: true,
+  },
+
+  resolve: {
+    extensions: ['.ts', '.tsx', '.js', '.jsx'],
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+    },
+  },
+
+  module: {
+    rules: [
+      {
+        test: /\.tsx?$/,
+        use: [
+          {
+            loader: 'ts-loader',
+            options: {
+              transpileOnly: isDev, // skip type checking in dev for speed
+              compilerOptions: {
+                sourceMap: true,
+              },
+            },
+          },
+        ],
+        exclude: /node_modules/,
+      },
+      {
+        test: /\.css$/,
+        use: [
+          isDev ? 'style-loader' : MiniCssExtractPlugin.loader,
+          'css-loader',
+        ],
+      },
+      {
+        test: /\.(png|jpg|jpeg|gif|webp|svg)$/i,
+        type: 'asset/resource',
+      },
+      {
+        test: /\.(woff|woff2|eot|ttf|otf)$/i,
+        type: 'asset/resource',
+      },
+    ],
+  },
+
+  plugins: [
+    new HtmlWebpackPlugin({
+      template: './public/index.html',
+      favicon: './public/favicon.ico',
+    }),
+    ...(!isDev
+      ? [
+          new MiniCssExtractPlugin({
+            filename: 'styles/[name].[contenthash:8].css',
+          }),
+        ]
+      : []),
+  ],
+
+  optimization: {
+    splitChunks: {
+      chunks: 'all',
+      cacheGroups: {
+        vendor: {
+          test: /[\\/]node_modules[\\/]/,
+          name: 'vendors',
+          chunks: 'all',
+        },
+      },
+    },
+    runtimeChunk: 'single',
+  },
+
+  devServer: {
+    static: path.resolve(__dirname, 'public'),
+    port: 3000,
+    hot: true,
+    open: true,
+    historyApiFallback: true,
+    compress: true,
+  },
+}
+```
+
+**Install:**
+
+```bash
+npm install -D webpack webpack-cli webpack-dev-server typescript ts-loader \
+  html-webpack-plugin mini-css-extract-plugin css-loader style-loader
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "build": "NODE_ENV=production webpack",
+    "dev": "webpack serve",
+    "build:analyze": "NODE_ENV=production WEBPACK_BUNDLE_ANALYZER=true webpack"
+  }
+}
+```
+
+## Options
+
+| Field | Value | Effect |
+|-------|-------|--------|
+| `transpileOnly` | `true` | Skips type checking in ts-loader for faster dev builds |
+| `contenthash` | in filename | Enables long-term caching of unchanged chunks |
+| `splitChunks.cacheGroups.vendor` | object | Splits `node_modules` into a separate `vendors` chunk |
+| `runtimeChunk: "single"` | — | Extracts webpack runtime into its own chunk |
+| `historyApiFallback` | `true` | Serves `index.html` for all 404s (required for client-side routing) |
+| `devtool` | `"eval-source-map"` | Fast rebuild source maps for development |
+
+## Notes
+
+- Setting `transpileOnly: true` in dev disables per-file type errors from ts-loader; run `tsc --noEmit` in a separate terminal or in CI to still catch type errors.
+- `MiniCssExtractPlugin` is only applied in production; `style-loader` is used in dev to enable HMR for CSS.
+- The `@` alias maps to `src/` — update `paths` in `tsconfig.json` to match so TypeScript resolves the same paths.
+- To add bundle analysis, install `webpack-bundle-analyzer` and add it to the plugins array conditionally on an env variable.
