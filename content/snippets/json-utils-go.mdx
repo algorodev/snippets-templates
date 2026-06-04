@@ -1,0 +1,189 @@
+---
+title: JSON Utilities (Go)
+description: Helper functions for marshalling to/from JSON with better error messages, pretty-printing, and generic unmarshalling into typed structs. Wraps encoding/json with convenience wrappers.
+category: snippets
+language: go
+tags: [utils, json, encoding]
+---
+
+Drop-in wrappers around `encoding/json` that surface field-level error context, add a one-call pretty-print helper, and provide a generic `Decode` function that returns a typed value directly instead of requiring a pre-allocated pointer.
+
+## Usage
+
+```go
+package jsonutil
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+)
+
+// Marshal encodes v to JSON. On error, the returned message includes the
+// Go type name so callers can identify the offending struct quickly.
+func Marshal(v any) ([]byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("jsonutil.Marshal(%T): %w", v, err)
+	}
+	return b, nil
+}
+
+// MarshalPretty encodes v to indented JSON (2-space indent).
+func MarshalPretty(v any) ([]byte, error) {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("jsonutil.MarshalPretty(%T): %w", v, err)
+	}
+	return b, nil
+}
+
+// Unmarshal decodes JSON data into v. On error the message includes the
+// byte offset and field name when available (json.UnmarshalTypeError).
+func Unmarshal(data []byte, v any) error {
+	if err := json.Unmarshal(data, v); err != nil {
+		var te *json.UnmarshalTypeError
+		if ok := isType(err, &te); ok {
+			return fmt.Errorf(
+				"jsonutil.Unmarshal: field %q (offset %d): expected %s, got %s",
+				te.Field, te.Offset, te.Type, te.Value,
+			)
+		}
+		var se *json.SyntaxError
+		if ok := isType(err, &se); ok {
+			return fmt.Errorf("jsonutil.Unmarshal: syntax error at offset %d: %w", se.Offset, err)
+		}
+		return fmt.Errorf("jsonutil.Unmarshal: %w", err)
+	}
+	return nil
+}
+
+// Decode is a generic helper that decodes JSON data and returns a typed
+// value, avoiding the need to declare a zero-value variable before calling
+// json.Unmarshal.
+//
+//	cfg, err := jsonutil.Decode[Config](data)
+func Decode[T any](data []byte) (T, error) {
+	var v T
+	if err := Unmarshal(data, &v); err != nil {
+		return v, err
+	}
+	return v, nil
+}
+
+// DecodeReader decodes JSON from a reader and returns a typed value.
+// It is useful for decoding http.Response.Body directly.
+//
+//	cfg, err := jsonutil.DecodeReader[Config](resp.Body)
+func DecodeReader[T any](r interface{ Read([]byte) (int, error) }) (T, error) {
+	var v T
+	buf := new(bytes.Buffer)
+	if _, err := buf.ReadFrom(wrappedReader{r}); err != nil {
+		return v, fmt.Errorf("jsonutil.DecodeReader: reading body: %w", err)
+	}
+	if err := Unmarshal(buf.Bytes(), &v); err != nil {
+		return v, err
+	}
+	return v, nil
+}
+
+// Pretty re-formats an already-encoded JSON byte slice with 2-space indentation.
+// Useful for logging or debug output.
+func Pretty(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, data, "", "  "); err != nil {
+		return nil, fmt.Errorf("jsonutil.Pretty: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// MustMarshal is like Marshal but panics on error. Only use in init() or tests.
+func MustMarshal(v any) []byte {
+	b, err := Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// isType is a convenience helper for errors.As without importing "errors".
+func isType[T error](err error, target *T) bool {
+	if err == nil {
+		return false
+	}
+	// Walk the error chain manually to avoid an import cycle in minimal builds.
+	type unwrapper interface{ Unwrap() error }
+	for {
+		if t, ok := err.(T); ok {
+			*target = t
+			return true
+		}
+		u, ok := err.(unwrapper)
+		if !ok {
+			return false
+		}
+		err = u.Unwrap()
+	}
+}
+
+// wrappedReader adapts a minimal reader interface so DecodeReader does not
+// import io (keeping the package dependency-free).
+type wrappedReader struct {
+	r interface{ Read([]byte) (int, error) }
+}
+
+func (w wrappedReader) Read(p []byte) (int, error) { return w.r.Read(p) }
+```
+
+## Examples
+
+```go
+package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+type User struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email,omitempty"`
+}
+
+func main() {
+	// Marshal with better errors
+	u := User{ID: 1, Name: "Alice", Email: "alice@example.com"}
+	data, err := Marshal(u)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(data))
+	// {"id":1,"name":"Alice","email":"alice@example.com"}
+
+	// Pretty-print existing JSON
+	pretty, _ := Pretty(data)
+	fmt.Println(string(pretty))
+
+	// Generic decode — no need to declare a User variable first
+	got, err := Decode[User](data)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(got.Name) // Alice
+
+	// Decode from a reader (e.g. http.Response.Body)
+	body := strings.NewReader(`{"id":2,"name":"Bob"}`)
+	bob, err := DecodeReader[User](body)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(bob.Name) // Bob
+}
+```
+
+## Notes
+
+- All functions are zero-dependency — only `encoding/json` and `bytes` from the standard library.
+- `MustMarshal` is intentionally unsafe; restrict its use to package-level `var` initialization or test helpers.
+- `DecodeReader` buffers the entire body before decoding. For streaming large payloads prefer `json.NewDecoder` directly.
