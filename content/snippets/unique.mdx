@@ -1,0 +1,60 @@
+---
+title: Unique Array Values
+description: Returns a new array with duplicate values removed, preserving the order of first occurrence. Supports a custom key selector for deduplicating arrays of objects.
+category: snippets
+language: typescript
+tags: [array, utils, dedup]
+---
+
+Removes duplicate values from an array while preserving the order in which each value first appears. Pass an optional key selector to deduplicate arrays of objects by a specific property or computed value.
+
+## Usage
+
+```typescript
+function unique<T>(array: T[], keySelector?: (item: T) => unknown): T[] {
+  const seen = new Set<unknown>()
+  return array.filter((item) => {
+    const key = keySelector ? keySelector(item) : item
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+export default unique
+```
+
+## Examples
+
+```typescript
+// Primitive values
+unique([1, 2, 2, 3, 1, 4])
+// → [1, 2, 3, 4]
+
+unique(['apple', 'banana', 'apple', 'cherry'])
+// → ['apple', 'banana', 'cherry']
+
+// Objects — deduplicate by a property
+const users = [
+  { id: 1, name: 'Alice' },
+  { id: 2, name: 'Bob' },
+  { id: 1, name: 'Alice (duplicate)' },
+]
+unique(users, (u) => u.id)
+// → [{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }]
+
+// Computed key
+const items = [
+  { category: 'fruit', label: 'Apple' },
+  { category: 'veg',   label: 'Carrot' },
+  { category: 'fruit', label: 'Banana' },
+]
+unique(items, (i) => i.category)
+// → [{ category: 'fruit', label: 'Apple' }, { category: 'veg', label: 'Carrot' }]
+```
+
+## Notes
+
+- Without a key selector the function uses strict equality (`===`) via `Set` membership, which correctly handles primitives but treats distinct object references as unequal.
+- The key selector receives the full item and can return any serialisable value — string, number, boolean, or a JSON-stringified composite.
+- Time complexity is O(n); the `Set` lookup and insertion are both O(1) amortised.
