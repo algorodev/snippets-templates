@@ -1,0 +1,47 @@
+---
+title: Get Page Scroll Percent
+description: Returns how far the user has scrolled down the page as a percentage from 0 to 100. Accounts for varying viewport and document heights.
+category: snippets
+language: typescript
+tags: [dom, utils, scroll, measurement]
+---
+
+Calculates scroll progress as a value between 0 and 100 by dividing the current scroll position by the maximum scrollable distance. Returns 0 in non-browser environments or when the page has no scrollable content.
+
+## Usage
+
+```typescript
+function getScrollPercent(): number {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return 0
+
+  const scrollTop = window.scrollY || document.documentElement.scrollTop
+  const docHeight = document.documentElement.scrollHeight
+  const winHeight = window.innerHeight
+  const scrollable = docHeight - winHeight
+
+  if (scrollable <= 0) return 0
+
+  return Math.min(100, Math.round((scrollTop / scrollable) * 100))
+}
+
+export default getScrollPercent
+```
+
+## Examples
+
+```typescript
+// Read once
+console.log(getScrollPercent()) // e.g. 42
+
+// Track scroll progress on every scroll event
+window.addEventListener('scroll', () => {
+  const percent = getScrollPercent()
+  progressBar.style.width = `${percent}%`
+})
+```
+
+## Notes
+
+- `scrollHeight - innerHeight` gives the total scrollable distance. Dividing `scrollY` by that value yields a 0–1 ratio, multiplied by 100 for a percentage.
+- `Math.min(100, ...)` guards against sub-pixel rounding that could produce values like 100.0001.
+- The check for `scrollable <= 0` prevents a division-by-zero when the document is shorter than the viewport.
