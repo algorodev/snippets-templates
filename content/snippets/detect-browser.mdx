@@ -1,0 +1,83 @@
+---
+title: Detect Browser
+description: Identifies the current browser and its major version from the user-agent string. Returns a typed object with name and version fields.
+category: snippets
+language: typescript
+tags: [dom, utils, browser, detection]
+---
+
+Parses `navigator.userAgent` to identify the running browser and extract its major version number. Returns a strongly-typed object so consuming code never deals with raw strings.
+
+## Usage
+
+```typescript
+type BrowserName =
+  | 'chrome'
+  | 'firefox'
+  | 'safari'
+  | 'edge'
+  | 'opera'
+  | 'ie'
+  | 'unknown'
+
+interface BrowserInfo {
+  name: BrowserName
+  version: number | null
+}
+
+function detectBrowser(): BrowserInfo {
+  const ua = navigator.userAgent
+  let name: BrowserName = 'unknown'
+  let versionStr: string | undefined
+
+  // Order matters: Edge and Opera ship with Chrome in the UA string
+  if (/edg(e|\/)/i.test(ua)) {
+    name = 'edge'
+    versionStr = ua.match(/edg(?:e|\/)([\d.]+)/i)?.[1]
+  } else if (/opr\//i.test(ua)) {
+    name = 'opera'
+    versionStr = ua.match(/opr\/([\d.]+)/i)?.[1]
+  } else if (/chrome\/[\d.]+/i.test(ua) && !/chromium/i.test(ua)) {
+    name = 'chrome'
+    versionStr = ua.match(/chrome\/([\d.]+)/i)?.[1]
+  } else if (/firefox\/[\d.]+/i.test(ua)) {
+    name = 'firefox'
+    versionStr = ua.match(/firefox\/([\d.]+)/i)?.[1]
+  } else if (/safari\//i.test(ua) && /version\//i.test(ua)) {
+    name = 'safari'
+    versionStr = ua.match(/version\/([\d.]+)/i)?.[1]
+  } else if (/trident\//i.test(ua)) {
+    name = 'ie'
+    versionStr = ua.match(/rv:([\d.]+)/i)?.[1]
+  }
+
+  const major = versionStr ? parseInt(versionStr.split('.')[0], 10) : null
+
+  return { name, version: isNaN(major!) ? null : major }
+}
+
+export default detectBrowser
+```
+
+## Examples
+
+```typescript
+const browser = detectBrowser()
+// e.g. { name: "chrome", version: 124 }
+
+if (browser.name === 'safari' && browser.version !== null && browser.version < 16) {
+  console.warn('Some features may not be available in this Safari version.')
+}
+
+// Display a badge
+const label = browser.version
+  ? `${browser.name} ${browser.version}`
+  : browser.name
+```
+
+## Notes
+
+- The detection order (Edge → Opera → Chrome → Firefox → Safari → IE) is intentional: Chromium-based Edge and Opera both include `Chrome/` in their UA strings.
+- `version` is the **major** version only (e.g. `124`, not `124.0.6367.78`).
+- User-agent strings can be spoofed; avoid using browser detection for feature detection — prefer `'IntersectionObserver' in window` style capability checks where possible.
+- This snippet is browser-only and assumes `navigator` is defined.
