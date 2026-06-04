@@ -1,0 +1,399 @@
+---
+title: Next.js Auth Starter
+description: A Next.js starter with authentication pre-configured using Auth.js (NextAuth v5), supporting OAuth providers, email magic links, and session management. Includes protected routes and middleware.
+category: templates
+language: TypeScript
+tags: [next.js, auth, nextauth, oauth, app-router]
+repo: https://github.com/nextauthjs/next-auth/tree/main/apps/examples/nextjs
+---
+
+A ready-to-go authentication setup using Auth.js v5 (NextAuth) with the App Router. Covers OAuth sign-in, email magic links, session access in both Server and Client Components, and route protection via middleware.
+
+## Usage
+
+```typescript
+// auth.ts  — central Auth.js config
+import NextAuth from "next-auth";
+import GitHub from "next-auth/providers/github";
+import Google from "next-auth/providers/google";
+import Resend from "next-auth/providers/resend";
+import { PrismaAdapter } from "@auth/prisma-adapter";
+import { prisma } from "@/lib/prisma";
+
+export const { handlers, signIn, signOut, auth } = NextAuth({
+  adapter: PrismaAdapter(prisma),
+  providers: [
+    GitHub({
+      clientId: process.env.AUTH_GITHUB_ID!,
+      clientSecret: process.env.AUTH_GITHUB_SECRET!,
+    }),
+    Google({
+      clientId: process.env.AUTH_GOOGLE_ID!,
+      clientSecret: process.env.AUTH_GOOGLE_SECRET!,
+    }),
+    Resend({
+      apiKey: process.env.AUTH_RESEND_KEY!,
+      from: "noreply@yourdomain.com",
+    }),
+  ],
+  pages: {
+    signIn: "/login",
+    error: "/auth/error",
+    verifyRequest: "/auth/verify",
+  },
+  callbacks: {
+    session({ session, user }) {
+      session.user.id = user.id;
+      return session;
+    },
+  },
+});
+```
+
+```typescript
+// app/api/auth/[...nextauth]/route.ts
+import { handlers } from "@/auth";
+export const { GET, POST } = handlers;
+```
+
+```typescript
+// middleware.ts — protect routes
+import { auth } from "@/auth";
+import { NextResponse } from "next/server";
+
+export default auth((req) => {
+  const isLoggedIn = !!req.auth;
+  const isOnDashboard = req.nextUrl.pathname.startsWith("/dashboard");
+  const isOnAuth = req.nextUrl.pathname.startsWith("/login");
+
+  if (isOnDashboard && !isLoggedIn) {
+    return NextResponse.redirect(new URL("/login", req.url));
+  }
+
+  if (isOnAuth && isLoggedIn) {
+    return NextResponse.redirect(new URL("/dashboard", req.url));
+  }
+
+  return NextResponse.next();
+});
+
+export const config = {
+  matcher: ["/dashboard/:path*", "/login"],
+};
+```
+
+```typescript
+// app/login/page.tsx — sign-in page
+import { signIn } from "@/auth";
+import { AuthError } from "next-auth";
+import { redirect } from "next/navigation";
+
+export default function LoginPage({
+  searchParams,
+}: {
+  searchParams: { callbackUrl?: string; error?: string };
+}) {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center p-4">
+      <div className="w-full max-w-sm space-y-6 rounded-2xl border border-gray-200 bg-white p-8 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Sign in</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Choose how you want to continue
+          </p>
+        </div>
+
+        {searchParams.error && (
+          <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+            {searchParams.error === "OAuthAccountNotLinked"
+              ? "This email is already linked to another provider."
+              : "Something went wrong. Please try again."}
+          </p>
+        )}
+
+        {/* OAuth providers */}
+        <div className="space-y-3">
+          <form
+            action={async () => {
+              "use server";
+              try {
+                await signIn("github", { redirectTo: searchParams.callbackUrl ?? "/dashboard" });
+              } catch (e) {
+                if (e instanceof AuthError) throw e;
+              }
+            }}
+          >
+            <button
+              type="submit"
+              className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            >
+              <GithubIcon className="h-5 w-5" />
+              Continue with GitHub
+            </button>
+          </form>
+
+          <form
+            action={async () => {
+              "use server";
+              try {
+                await signIn("google", { redirectTo: searchParams.callbackUrl ?? "/dashboard" });
+              } catch (e) {
+                if (e instanceof AuthError) throw e;
+              }
+            }}
+          >
+            <button
+              type="submit"
+              className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            >
+              <GoogleIcon className="h-5 w-5" />
+              Continue with Google
+            </button>
+          </form>
+        </div>
+
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-200 dark:border-gray-700" />
+          </div>
+          <div className="relative flex justify-center text-xs text-gray-400">
+            <span className="bg-white px-2 dark:bg-gray-900">or continue with email</span>
+          </div>
+        </div>
+
+        {/* Magic link form */}
+        <form
+          action={async (formData: FormData) => {
+            "use server";
+            const email = formData.get("email") as string;
+            try {
+              await signIn("resend", {
+                email,
+                redirectTo: searchParams.callbackUrl ?? "/dashboard",
+              });
+            } catch (e) {
+              if (e instanceof AuthError) throw e;
+              redirect("/auth/verify");
+            }
+          }}
+          className="space-y-3"
+        >
+          <input
+            name="email"
+            type="email"
+            placeholder="you@example.com"
+            required
+            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+          />
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+          >
+            Send magic link
+          </button>
+        </form>
+      </div>
+    </main>
+  );
+}
+
+function GithubIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+    </svg>
+  );
+}
+
+function GoogleIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24">
+      <path
+        fill="#4285F4"
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+      />
+    </svg>
+  );
+}
+```
+
+```typescript
+// app/dashboard/page.tsx — session in a Server Component
+import { auth } from "@/auth";
+import { redirect } from "next/navigation";
+
+export default async function DashboardPage() {
+  const session = await auth();
+  if (!session) redirect("/login");
+
+  return (
+    <div className="p-8">
+      <h1 className="text-2xl font-bold">
+        Welcome, {session.user?.name ?? session.user?.email}
+      </h1>
+      <p className="mt-2 text-gray-500">User ID: {session.user?.id}</p>
+    </div>
+  );
+}
+```
+
+```typescript
+// components/sign-out-button.tsx — signOut in a Client Component
+"use client";
+
+import { signOut } from "next-auth/react";
+
+export function SignOutButton() {
+  return (
+    <button
+      onClick={() => signOut({ callbackUrl: "/" })}
+      className="rounded-md bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 transition-colors"
+    >
+      Sign out
+    </button>
+  );
+}
+```
+
+## Options
+
+**Adding a new OAuth provider:**
+
+```typescript
+// auth.ts
+import Twitter from "next-auth/providers/twitter";
+
+providers: [
+  // ...existing providers
+  Twitter({
+    clientId: process.env.AUTH_TWITTER_ID!,
+    clientSecret: process.env.AUTH_TWITTER_SECRET!,
+  }),
+],
+```
+
+**Accessing session on the client:**
+
+```typescript
+"use client";
+import { useSession } from "next-auth/react";
+
+export function UserAvatar() {
+  const { data: session, status } = useSession();
+  if (status === "loading") return <div className="h-8 w-8 animate-pulse rounded-full bg-gray-200" />;
+  if (!session) return null;
+  return <img src={session.user?.image ?? ""} alt="" className="h-8 w-8 rounded-full" />;
+}
+```
+
+## Notes
+
+- The `auth()` helper works in Server Components, Route Handlers, and middleware — do not use `getServerSession` (NextAuth v4 API).
+- `signIn()` and `signOut()` from `"next-auth"` are for Server Actions; import from `"next-auth/react"` for Client Components.
+- The Prisma adapter persists sessions and accounts to your database automatically — required for magic links.
+- Wrap your root layout (or a subtree) in `<SessionProvider>` from `next-auth/react` only when you need `useSession` on the client.
+
+## README
+
+### What this includes
+
+- Auth.js v5 (NextAuth) configured for the App Router
+- GitHub and Google OAuth sign-in
+- Email magic links via Resend
+- Prisma adapter for session/account persistence
+- Middleware-based route protection
+- `auth()` helper for Server Components and Route Handlers
+- Sign-in page with OAuth buttons and magic link form
+- Sign-out support in both Server Actions and Client Components
+- Error and verify-request pages
+
+### Prerequisites
+
+- Node.js 18+
+- A PostgreSQL database (Neon, Supabase, Railway, etc.)
+- OAuth app credentials from GitHub and/or Google
+- A Resend account and API key for magic links
+
+### Create this template
+
+```bash
+npx create-next-app@latest my-app --typescript --tailwind --eslint --app
+cd my-app
+
+# Auth.js v5 + Prisma adapter
+npm install next-auth@beta @auth/prisma-adapter
+
+# Prisma ORM
+npm install prisma @prisma/client
+npx prisma init --datasource-provider postgresql
+
+# Apply Auth.js schema to Prisma
+# Copy the Auth.js Prisma schema from:
+# https://authjs.dev/getting-started/adapters/prisma
+# into prisma/schema.prisma, then:
+npx prisma db push
+
+# Create auth config
+touch auth.ts
+
+# Create API route handler
+mkdir -p app/api/auth/\[...nextauth\]
+touch app/api/auth/\[...nextauth\]/route.ts
+
+# Create middleware
+touch middleware.ts
+
+# Create pages
+mkdir -p app/login app/dashboard app/auth/error app/auth/verify
+touch app/login/page.tsx app/dashboard/page.tsx
+
+cp .env.example .env.local
+# Fill in AUTH_SECRET, AUTH_GITHUB_ID, AUTH_GITHUB_SECRET,
+# AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET, AUTH_RESEND_KEY, DATABASE_URL
+npm run dev
+```
+
+### Project structure
+
+```
+auth.ts                         # Central Auth.js config (providers, adapter, callbacks)
+middleware.ts                   # Route protection logic
+app/
+  api/auth/[...nextauth]/
+    route.ts                    # Auth.js route handler
+  login/
+    page.tsx                    # Sign-in page (OAuth + magic link)
+  dashboard/
+    page.tsx                    # Protected page using auth()
+  auth/
+    error/page.tsx              # Auth error display
+    verify/page.tsx             # "Check your email" page
+components/
+  sign-out-button.tsx           # Client Component sign-out
+lib/
+  prisma.ts                     # Prisma client singleton
+prisma/
+  schema.prisma                 # Auth.js schema + your models
+.env.local                      # Secrets (never commit)
+```
+
+### First things to customize
+
+- **`auth.ts`** — add or remove OAuth providers; update the `from` address for magic link emails
+- **`.env.local`** — fill in `AUTH_SECRET` (generate with `npx auth secret`), OAuth credentials, `AUTH_RESEND_KEY`, and `DATABASE_URL`
+- **`middleware.ts`** — update the `matcher` array to protect additional route segments
+- **`app/login/page.tsx`** — adjust branding, copy, and which providers to show
+- **`prisma/schema.prisma`** — add your own models after the Auth.js tables
+- **`auth.ts` callbacks** — extend the session object with additional user fields (e.g., `role`, `plan`)
