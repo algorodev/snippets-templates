@@ -1,0 +1,487 @@
+---
+title: Next.js Landing Page
+description: A high-converting SaaS landing page template with hero, features, pricing, testimonials, and CTA sections. Built with Next.js App Router, Tailwind CSS, and Framer Motion animations.
+category: templates
+language: TypeScript
+tags: [next.js, landing-page, saas, tailwind, framer-motion]
+---
+
+A polished, conversion-focused landing page with animated sections, a responsive layout, and all the standard SaaS page blocks you need to ship fast.
+
+## Usage
+
+```typescript
+// app/page.tsx
+import { Hero } from "@/components/landing/hero";
+import { Features } from "@/components/landing/features";
+import { Pricing } from "@/components/landing/pricing";
+import { Testimonials } from "@/components/landing/testimonials";
+import { CTA } from "@/components/landing/cta";
+
+export default function LandingPage() {
+  return (
+    <main>
+      <Hero />
+      <Features />
+      <Pricing />
+      <Testimonials />
+      <CTA />
+    </main>
+  );
+}
+```
+
+```typescript
+// components/landing/hero.tsx
+"use client";
+
+import { motion } from "framer-motion";
+import Link from "next/link";
+
+export function Hero() {
+  return (
+    <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-white px-4 text-center dark:bg-gray-950">
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+        className="max-w-3xl"
+      >
+        <span className="mb-4 inline-block rounded-full border border-gray-200 bg-gray-50 px-4 py-1 text-sm font-medium text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          Now in public beta
+        </span>
+        <h1 className="text-5xl font-bold tracking-tight text-gray-900 sm:text-6xl dark:text-white">
+          Ship your SaaS{" "}
+          <span className="text-indigo-600 dark:text-indigo-400">10x faster</span>
+        </h1>
+        <p className="mt-6 text-lg leading-8 text-gray-600 dark:text-gray-400">
+          Everything you need to launch, grow, and monetize your product — without
+          spending weeks on boilerplate.
+        </p>
+        <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
+          <Link
+            href="/signup"
+            className="rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 transition-colors"
+          >
+            Get started free
+          </Link>
+          <Link
+            href="#features"
+            className="text-base font-semibold text-gray-900 hover:text-indigo-600 transition-colors dark:text-white"
+          >
+            See how it works →
+          </Link>
+        </div>
+      </motion.div>
+    </section>
+  );
+}
+```
+
+```typescript
+// components/landing/features.tsx
+"use client";
+
+import { motion } from "framer-motion";
+import { Zap, Shield, BarChart3, Globe } from "lucide-react";
+
+const features = [
+  {
+    icon: Zap,
+    title: "Blazing fast",
+    description: "Optimized for Core Web Vitals with server components and edge caching.",
+  },
+  {
+    icon: Shield,
+    title: "Secure by default",
+    description: "Built-in CSRF protection, rate limiting, and input sanitization.",
+  },
+  {
+    icon: BarChart3,
+    title: "Analytics ready",
+    description: "Track conversions and user behavior with first-party event logging.",
+  },
+  {
+    icon: Globe,
+    title: "Global CDN",
+    description: "Deploy to 100+ edge locations worldwide in a single git push.",
+  },
+];
+
+const container = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.1 } },
+};
+
+const item = {
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.5 } },
+};
+
+export function Features() {
+  return (
+    <section id="features" className="bg-gray-50 py-24 px-4 dark:bg-gray-900">
+      <div className="mx-auto max-w-5xl">
+        <div className="text-center">
+          <h2 className="text-3xl font-bold text-gray-900 dark:text-white sm:text-4xl">
+            Everything you need
+          </h2>
+          <p className="mt-4 text-lg text-gray-600 dark:text-gray-400">
+            Battle-tested building blocks so you can focus on your product.
+          </p>
+        </div>
+        <motion.div
+          variants={container}
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, amount: 0.2 }}
+          className="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2"
+        >
+          {features.map((f) => (
+            <motion.div
+              key={f.title}
+              variants={item}
+              className="rounded-2xl border border-gray-200 bg-white p-8 dark:border-gray-700 dark:bg-gray-800"
+            >
+              <f.icon className="h-8 w-8 text-indigo-600 dark:text-indigo-400" />
+              <h3 className="mt-4 text-lg font-semibold text-gray-900 dark:text-white">
+                {f.title}
+              </h3>
+              <p className="mt-2 text-gray-600 dark:text-gray-400">{f.description}</p>
+            </motion.div>
+          ))}
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+```
+
+```typescript
+// components/landing/pricing.tsx
+"use client";
+
+import { motion } from "framer-motion";
+import { Check } from "lucide-react";
+import Link from "next/link";
+
+const plans = [
+  {
+    name: "Starter",
+    price: "$0",
+    description: "Perfect for side projects and indie hackers.",
+    features: ["Up to 1,000 users", "5 projects", "Community support", "Core analytics"],
+    cta: "Get started",
+    href: "/signup",
+    highlight: false,
+  },
+  {
+    name: "Pro",
+    price: "$49",
+    description: "For growing teams that need more power.",
+    features: [
+      "Unlimited users",
+      "Unlimited projects",
+      "Priority support",
+      "Advanced analytics",
+      "Custom domains",
+      "SSO",
+    ],
+    cta: "Start free trial",
+    href: "/signup?plan=pro",
+    highlight: true,
+  },
+  {
+    name: "Enterprise",
+    price: "Custom",
+    description: "Dedicated infrastructure and SLAs.",
+    features: [
+      "Everything in Pro",
+      "99.99% uptime SLA",
+      "Dedicated support",
+      "On-premise option",
+    ],
+    cta: "Contact sales",
+    href: "/contact",
+    highlight: false,
+  },
+];
+
+export function Pricing() {
+  return (
+    <section id="pricing" className="bg-white py-24 px-4 dark:bg-gray-950">
+      <div className="mx-auto max-w-5xl">
+        <div className="text-center">
+          <h2 className="text-3xl font-bold text-gray-900 dark:text-white sm:text-4xl">
+            Simple, transparent pricing
+          </h2>
+          <p className="mt-4 text-lg text-gray-600 dark:text-gray-400">
+            No hidden fees. Cancel any time.
+          </p>
+        </div>
+        <div className="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-3">
+          {plans.map((plan, i) => (
+            <motion.div
+              key={plan.name}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.1, duration: 0.5 }}
+              viewport={{ once: true }}
+              className={`rounded-2xl p-8 ${
+                plan.highlight
+                  ? "bg-indigo-600 text-white ring-2 ring-indigo-600"
+                  : "border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800"
+              }`}
+            >
+              <h3
+                className={`text-lg font-semibold ${
+                  plan.highlight ? "text-white" : "text-gray-900 dark:text-white"
+                }`}
+              >
+                {plan.name}
+              </h3>
+              <p
+                className={`mt-4 text-4xl font-bold ${
+                  plan.highlight ? "text-white" : "text-gray-900 dark:text-white"
+                }`}
+              >
+                {plan.price}
+                {plan.price !== "Custom" && (
+                  <span className="text-base font-normal">/mo</span>
+                )}
+              </p>
+              <p
+                className={`mt-2 text-sm ${
+                  plan.highlight ? "text-indigo-100" : "text-gray-600 dark:text-gray-400"
+                }`}
+              >
+                {plan.description}
+              </p>
+              <ul className="mt-8 space-y-3">
+                {plan.features.map((f) => (
+                  <li key={f} className="flex items-center gap-2 text-sm">
+                    <Check
+                      className={`h-4 w-4 flex-shrink-0 ${
+                        plan.highlight ? "text-indigo-200" : "text-indigo-600 dark:text-indigo-400"
+                      }`}
+                    />
+                    <span
+                      className={
+                        plan.highlight ? "text-indigo-50" : "text-gray-700 dark:text-gray-300"
+                      }
+                    >
+                      {f}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <Link
+                href={plan.href}
+                className={`mt-8 block rounded-lg px-4 py-2.5 text-center text-sm font-semibold transition-colors ${
+                  plan.highlight
+                    ? "bg-white text-indigo-600 hover:bg-indigo-50"
+                    : "bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500"
+                }`}
+              >
+                {plan.cta}
+              </Link>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+```
+
+```typescript
+// components/landing/testimonials.tsx
+"use client";
+
+import { motion } from "framer-motion";
+import Image from "next/image";
+
+const testimonials = [
+  {
+    quote:
+      "We went from idea to first paying customer in under two weeks. This template saved us months of setup.",
+    name: "Sarah Kim",
+    role: "Founder, Formbase",
+    avatar: "https://i.pravatar.cc/64?img=47",
+  },
+  {
+    quote:
+      "The code quality is exceptional. Clean, typed, and follows modern Next.js best practices throughout.",
+    name: "James Okoye",
+    role: "CTO, Loopback",
+    avatar: "https://i.pravatar.cc/64?img=12",
+  },
+  {
+    quote:
+      "I've tried a dozen SaaS starters. This one is the only one I've actually shipped a product with.",
+    name: "Mia Torres",
+    role: "Indie Hacker",
+    avatar: "https://i.pravatar.cc/64?img=31",
+  },
+];
+
+export function Testimonials() {
+  return (
+    <section className="bg-gray-50 py-24 px-4 dark:bg-gray-900">
+      <div className="mx-auto max-w-5xl">
+        <h2 className="text-center text-3xl font-bold text-gray-900 dark:text-white sm:text-4xl">
+          Loved by builders
+        </h2>
+        <div className="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-3">
+          {testimonials.map((t, i) => (
+            <motion.figure
+              key={t.name}
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.1, duration: 0.5 }}
+              viewport={{ once: true }}
+              className="rounded-2xl border border-gray-200 bg-white p-8 dark:border-gray-700 dark:bg-gray-800"
+            >
+              <blockquote className="text-gray-600 dark:text-gray-300">
+                &ldquo;{t.quote}&rdquo;
+              </blockquote>
+              <figcaption className="mt-6 flex items-center gap-3">
+                <Image
+                  src={t.avatar}
+                  alt={t.name}
+                  width={40}
+                  height={40}
+                  className="rounded-full"
+                />
+                <div>
+                  <p className="font-semibold text-gray-900 dark:text-white">{t.name}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{t.role}</p>
+                </div>
+              </figcaption>
+            </motion.figure>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+```
+
+```typescript
+// components/landing/cta.tsx
+"use client";
+
+import { motion } from "framer-motion";
+import Link from "next/link";
+
+export function CTA() {
+  return (
+    <section className="bg-indigo-600 py-24 px-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.97 }}
+        whileInView={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.5 }}
+        viewport={{ once: true }}
+        className="mx-auto max-w-2xl text-center"
+      >
+        <h2 className="text-3xl font-bold text-white sm:text-4xl">
+          Ready to start building?
+        </h2>
+        <p className="mt-4 text-lg text-indigo-100">
+          Join thousands of developers who ship faster with this template.
+        </p>
+        <Link
+          href="/signup"
+          className="mt-8 inline-block rounded-lg bg-white px-8 py-3 text-base font-semibold text-indigo-600 shadow-sm hover:bg-indigo-50 transition-colors"
+        >
+          Get started for free
+        </Link>
+      </motion.div>
+    </section>
+  );
+}
+```
+
+## Options
+
+| Section | File | Key props to edit |
+|---|---|---|
+| Hero | `components/landing/hero.tsx` | headline, subtext, CTA links |
+| Features | `components/landing/features.tsx` | `features` array (icon, title, description) |
+| Pricing | `components/landing/pricing.tsx` | `plans` array (price, features, CTA href) |
+| Testimonials | `components/landing/testimonials.tsx` | `testimonials` array |
+| CTA | `components/landing/cta.tsx` | headline, body copy, button href |
+
+## Notes
+
+- All animations use `whileInView` with `once: true` so they only play once as sections scroll into view.
+- Dark mode is handled via Tailwind's `dark:` variant — add `darkMode: "class"` to `tailwind.config.ts` and toggle the `dark` class on `<html>`.
+- Replace `i.pravatar.cc` avatar URLs with real user photos before going live.
+
+## README
+
+### What this includes
+
+- Hero section with animated headline, badge, and dual CTAs
+- Animated feature grid (4-up, staggered scroll reveal)
+- 3-tier pricing table with highlighted recommended plan
+- Testimonials section with avatar, name, and role
+- Full-bleed CTA banner
+- Framer Motion scroll animations throughout
+- Tailwind CSS v3 dark mode support
+- TypeScript throughout with no `any` types
+
+### Prerequisites
+
+- Node.js 18+
+- A Next.js App Router project (`npx create-next-app@latest`)
+
+### Create this template
+
+```bash
+npx create-next-app@latest my-landing --typescript --tailwind --eslint --app --src-dir no
+cd my-landing
+
+# Install animation and icon dependencies
+npm install framer-motion lucide-react
+
+# Create component directories
+mkdir -p components/landing
+
+# Create section components
+touch components/landing/hero.tsx
+touch components/landing/features.tsx
+touch components/landing/pricing.tsx
+touch components/landing/testimonials.tsx
+touch components/landing/cta.tsx
+
+# Wire up the page
+# Edit app/page.tsx to import and render all five components
+npm run dev
+```
+
+### Project structure
+
+```
+app/
+  page.tsx                  # Imports and renders all landing sections
+  layout.tsx                # Root layout, font, metadata
+components/
+  landing/
+    hero.tsx                # Hero section with animated headline
+    features.tsx            # Feature grid with stagger animation
+    pricing.tsx             # 3-tier pricing cards
+    testimonials.tsx        # Social proof with avatars
+    cta.tsx                 # Bottom call-to-action banner
+public/
+  og.png                    # Open Graph image (1200x630)
+```
+
+### First things to customize
+
+- **`components/landing/hero.tsx`** — update headline, sub-copy, badge text, and CTA `href` values
+- **`components/landing/features.tsx`** — replace the `features` array with your product's actual differentiators
+- **`components/landing/pricing.tsx`** — update plan names, prices, and feature lists; wire `href` to your checkout flow
+- **`components/landing/testimonials.tsx`** — swap placeholder quotes and avatars for real customer quotes
+- **`app/layout.tsx`** — update `metadata.title`, `metadata.description`, and `openGraph.images`
+- **`tailwind.config.ts`** — add `darkMode: "class"` and your brand color palette under `theme.extend.colors`
