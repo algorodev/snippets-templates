@@ -1,0 +1,337 @@
+---
+title: GraphQL Apollo Server
+description: A production-ready GraphQL API using Apollo Server 4 with code-first schema via TypeGraphQL, DataLoader for batching, and JWT-based context authentication.
+category: templates
+language: typescript
+tags: [graphql, apollo-server, node.js, typescript, dataloader]
+---
+
+A complete GraphQL API built on Apollo Server 4 and TypeGraphQL. The schema is derived from decorated TypeScript classes, a per-request DataLoader map eliminates N+1 queries, and a JWT context function attaches the authenticated user before any resolver runs.
+
+## Usage
+
+```typescript
+// src/entities/Post.ts
+import { ObjectType, Field, ID } from 'type-graphql'
+
+@ObjectType()
+export class Post {
+  @Field(() => ID)
+  id: string
+
+  @Field()
+  title: string
+
+  @Field()
+  body: string
+
+  @Field()
+  authorId: string
+
+  @Field()
+  createdAt: Date
+}
+```
+
+```typescript
+// src/entities/User.ts
+import { ObjectType, Field, ID } from 'type-graphql'
+
+@ObjectType()
+export class User {
+  @Field(() => ID)
+  id: string
+
+  @Field()
+  email: string
+
+  @Field()
+  name: string
+}
+```
+
+```typescript
+// src/context.ts
+import DataLoader from 'dataloader'
+import jwt from 'jsonwebtoken'
+import type { StandaloneServerContextFunctionArgument } from '@apollo/server/standalone'
+import { db } from './db'
+import type { User } from './entities/User'
+
+// Loaders — one instance per request to scope caching correctly
+export type Loaders = {
+  userById: DataLoader<string, User>
+  postsByAuthorId: DataLoader<string, Post[]>
+}
+
+function createLoaders(): Loaders {
+  return {
+    userById: new DataLoader(async (ids) => {
+      const users = await db.user.findMany({ where: { id: { in: [...ids] } } })
+      const map = new Map(users.map((u) => [u.id, u]))
+      return ids.map((id) => map.get(id) ?? new Error(`User ${id} not found`))
+    }),
+
+    postsByAuthorId: new DataLoader(async (authorIds) => {
+      const posts = await db.post.findMany({ where: { authorId: { in: [...authorIds] } } })
+      return authorIds.map((id) => posts.filter((p) => p.authorId === id))
+    }),
+  }
+}
+
+export type Context = {
+  user: { id: string; email: string; role: string } | null
+  loaders: Loaders
+}
+
+export async function createContext({
+  req,
+}: StandaloneServerContextFunctionArgument): Promise<Context> {
+  const token = req.headers.authorization?.replace('Bearer ', '')
+  let user: Context['user'] = null
+  if (token) {
+    try {
+      user = jwt.verify(token, process.env.JWT_SECRET!) as Context['user']
+    } catch {
+      // invalid token — resolver guards will reject if auth is required
+    }
+  }
+  return { user, loaders: createLoaders() }
+}
+```
+
+```typescript
+// src/resolvers/PostResolver.ts
+import {
+  Resolver, Query, Mutation, Arg, Ctx,
+  FieldResolver, Root, Authorized, ID,
+} from 'type-graphql'
+import { Post } from '../entities/Post'
+import { User } from '../entities/User'
+import { CreatePostInput } from '../inputs/CreatePostInput'
+import type { Context } from '../context'
+import { db } from '../db'
+
+@Resolver(() => Post)
+export class PostResolver {
+  // ── Queries ────────────────────────────────────────────────────────────────
+
+  @Query(() => [Post])
+  async posts(): Promise<Post[]> {
+    return db.post.findMany({ orderBy: { createdAt: 'desc' } })
+  }
+
+  @Query(() => Post, { nullable: true })
+  async post(@Arg('id', () => ID) id: string): Promise<Post | null> {
+    return db.post.findUnique({ where: { id } })
+  }
+
+  // ── Mutations ──────────────────────────────────────────────────────────────
+
+  @Authorized()
+  @Mutation(() => Post)
+  async createPost(
+    @Arg('input') input: CreatePostInput,
+    @Ctx() ctx: Context
+  ): Promise<Post> {
+    return db.post.create({
+      data: { ...input, authorId: ctx.user!.id },
+    })
+  }
+
+  @Authorized()
+  @Mutation(() => Boolean)
+  async deletePost(
+    @Arg('id', () => ID) id: string,
+    @Ctx() ctx: Context
+  ): Promise<boolean> {
+    const post = await db.post.findUnique({ where: { id } })
+    if (!post) throw new Error('Post not found')
+    if (post.authorId !== ctx.user!.id) throw new Error('Forbidden')
+    await db.post.delete({ where: { id } })
+    return true
+  }
+
+  // ── Field resolvers (DataLoader) ───────────────────────────────────────────
+
+  @FieldResolver(() => User)
+  author(@Root() post: Post, @Ctx() ctx: Context): Promise<User> {
+    return ctx.loaders.userById.load(post.authorId)
+  }
+}
+```
+
+```typescript
+// src/inputs/CreatePostInput.ts
+import { InputType, Field } from 'type-graphql'
+import { IsString, MinLength, MaxLength } from 'class-validator'
+
+@InputType()
+export class CreatePostInput {
+  @Field()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  title: string
+
+  @Field()
+  @IsString()
+  @MinLength(1)
+  body: string
+}
+```
+
+```typescript
+// src/server.ts
+import 'reflect-metadata'
+import { ApolloServer } from '@apollo/server'
+import { startStandaloneServer } from '@apollo/server/standalone'
+import { buildSchema } from 'type-graphql'
+import { authChecker } from './authChecker'
+import { PostResolver } from './resolvers/PostResolver'
+import { createContext } from './context'
+
+async function main() {
+  const schema = await buildSchema({
+    resolvers: [PostResolver],
+    authChecker,
+    validate: true, // runs class-validator on @InputType classes
+    emitSchemaFile: 'schema.graphql', // handy for client code-gen
+  })
+
+  const server = new ApolloServer({
+    schema,
+    formatError: (formattedError) => {
+      // Strip stack traces in production
+      if (process.env.NODE_ENV === 'production') {
+        const { extensions, ...rest } = formattedError
+        return rest
+      }
+      return formattedError
+    },
+  })
+
+  const { url } = await startStandaloneServer(server, {
+    context: createContext,
+    listen: { port: Number(process.env.PORT ?? 4000) },
+  })
+
+  console.log(`GraphQL server ready at ${url}`)
+}
+
+main().catch(console.error)
+```
+
+```typescript
+// src/authChecker.ts
+import type { AuthChecker } from 'type-graphql'
+import type { Context } from './context'
+
+export const authChecker: AuthChecker<Context> = ({ context }, roles) => {
+  if (!context.user) return false
+  if (roles.length === 0) return true
+  return roles.includes(context.user.role)
+}
+```
+
+## How it works
+
+TypeGraphQL builds the SDL from decorated classes at startup; `buildSchema()` returns a standard `GraphQLSchema` that Apollo Server executes. The `createContext` function runs once per request — it verifies the JWT and instantiates fresh DataLoaders so their internal cache is scoped to a single request. When the `author` field resolver calls `loaders.userById.load(id)`, DataLoader batches all pending IDs within the same event-loop tick into a single `db.user.findMany` query, preventing N+1 fetches.
+
+## Notes
+
+- Replace the `db.*` calls with any ORM: Prisma (shown), TypeORM, Drizzle, or raw `pg`.
+- For subscriptions add `graphql-ws` and configure `subscriptions-transport` in `ApolloServer`.
+- Use `@apollo/server/plugin/landingPage/default` in development for the Apollo Sandbox explorer.
+- Persisted queries can be added via `@apollo/persisted-query-lists` to reduce request size in production.
+
+## README
+
+### What this includes
+
+- Apollo Server 4 with `startStandaloneServer`
+- Code-first schema via TypeGraphQL decorators on entity and input classes
+- Per-request DataLoader map for batching field resolver DB calls
+- JWT extraction and verification in the context function
+- `@Authorized()` decorator + custom `authChecker` for resolver-level guards
+- `class-validator` integration for input validation
+- `formatError` hook that strips stack traces in production
+- Schema SDL emitted to `schema.graphql` at build time for client code-gen
+
+### Prerequisites
+
+- Node.js 20+
+- Database (PostgreSQL recommended; Prisma ORM used in examples)
+- `npm` / `pnpm` / `yarn`
+
+### Create this template
+
+```bash
+# 1. Create project
+mkdir my-graphql-api && cd my-graphql-api
+npm init -y
+
+# 2. Install runtime dependencies
+npm install @apollo/server type-graphql graphql reflect-metadata
+npm install dataloader jsonwebtoken class-validator class-transformer
+npm install @prisma/client  # or your ORM of choice
+
+# 3. Install dev dependencies
+npm install -D typescript ts-node nodemon @types/jsonwebtoken prisma
+
+# 4. Initialise TypeScript (decorator support is required)
+npx tsc --init
+# Ensure tsconfig.json has:
+# "experimentalDecorators": true
+# "emitDecoratorMetadata": true
+
+# 5. Initialise Prisma
+npx prisma init
+# Edit prisma/schema.prisma — add User and Post models
+npx prisma migrate dev --name init
+
+# 6. Create src/ files as shown above
+
+# 7. Add .env
+# DATABASE_URL=postgresql://user:pass@localhost:5432/mydb
+# JWT_SECRET=change-me-in-production
+# PORT=4000
+# NODE_ENV=development
+
+# 8. Start dev server
+npx nodemon --exec ts-node src/server.ts
+# GraphQL Sandbox: http://localhost:4000
+```
+
+### Project structure
+
+```
+my-graphql-api/
+├── src/
+│   ├── server.ts              # Apollo Server bootstrap
+│   ├── context.ts             # JWT auth + DataLoader factory
+│   ├── authChecker.ts         # TypeGraphQL auth hook
+│   ├── db.ts                  # Prisma client singleton
+│   ├── entities/
+│   │   ├── Post.ts            # @ObjectType
+│   │   └── User.ts            # @ObjectType
+│   ├── inputs/
+│   │   └── CreatePostInput.ts # @InputType with class-validator
+│   └── resolvers/
+│       └── PostResolver.ts    # @Resolver with queries, mutations, field resolvers
+├── prisma/
+│   └── schema.prisma
+├── schema.graphql             # auto-emitted SDL
+├── .env
+├── tsconfig.json
+└── package.json
+```
+
+### First things to customize
+
+- `prisma/schema.prisma` — define your actual data model and run `prisma migrate dev`
+- `src/context.ts` `userById` and `postsByAuthorId` loaders — update queries to match your schema
+- `src/authChecker.ts` — add role strings that map to your permission model
+- `JWT_SECRET` — use a long random value (32+ chars) and rotate it via an env secret manager
+- `formatError` — add structured logging (Sentry, Datadog) before stripping the error
+- Add more `@Resolver` classes and register them in the `buildSchema` `resolvers` array
