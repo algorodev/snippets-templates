@@ -1,0 +1,100 @@
+---
+title: package.json Scripts Reference
+description: A comprehensive set of package.json scripts covering dev, build, test, lint, format, and release workflows. Uses cross-env and concurrently for cross-platform compatibility.
+category: configs
+language: json
+tags: [npm, package-json, scripts, dx]
+---
+
+A ready-to-paste `scripts` block covering the full development lifecycle — dev server, build, type-checking, testing, linting, formatting, and release — all wired for cross-platform compatibility.
+
+## Usage
+
+```json
+{
+  "scripts": {
+    "dev": "cross-env NODE_ENV=development vite",
+    "dev:host": "cross-env NODE_ENV=development vite --host",
+
+    "build": "tsc --noEmit && vite build",
+    "build:analyze": "cross-env ANALYZE=true vite build",
+    "preview": "vite preview",
+
+    "typecheck": "tsc --noEmit",
+    "typecheck:watch": "tsc --noEmit --watch",
+
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:ui": "vitest --coverage --ui",
+
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+
+    "check": "concurrently --group --names tsc,eslint,prettier \"npm run typecheck\" \"npm run lint\" \"npm run format:check\"",
+
+    "clean": "rimraf dist coverage .turbo node_modules/.cache",
+    "clean:all": "rimraf dist coverage .turbo node_modules",
+
+    "prepare": "husky",
+
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
+    "release": "npm run check && npm run test && npm run build && changeset publish"
+  }
+}
+```
+
+## Required dev dependencies
+
+Install the cross-platform utilities referenced by these scripts:
+
+```bash
+npm install -D cross-env concurrently rimraf
+```
+
+Install the tools themselves based on what you use:
+
+```bash
+# Type checking
+npm install -D typescript
+
+# Testing
+npm install -D vitest @vitest/ui @vitest/coverage-v8
+
+# Linting & formatting
+npm install -D eslint prettier
+
+# Git hooks
+npm install -D husky
+
+# Release
+npm install -D @changesets/cli
+npx changeset init
+```
+
+## Script groups
+
+| Group | Scripts | Purpose |
+|-------|---------|---------|
+| Dev | `dev`, `dev:host` | Start Vite dev server; `dev:host` exposes it on the local network |
+| Build | `build`, `build:analyze`, `preview` | Production build, bundle analyser, preview the built output |
+| Types | `typecheck`, `typecheck:watch` | Run `tsc` without emitting — faster than a full build |
+| Test | `test`, `test:watch`, `test:ui`, `test:coverage` | Vitest one-shot, watch, browser UI, and coverage modes |
+| Quality | `lint`, `lint:fix`, `format`, `format:check` | ESLint and Prettier checks and auto-fix |
+| CI gate | `check` | Runs typecheck, lint, and format check in parallel — one command for PRs |
+| Clean | `clean`, `clean:all` | Remove generated artefacts; `clean:all` also removes `node_modules` |
+| Release | `version:*`, `release` | Bump version, then publish via Changesets |
+
+## Notes
+
+`cross-env` normalises `NODE_ENV=...` syntax across Windows (cmd/PowerShell) and Unix shells. If your team works exclusively on macOS/Linux, you can drop it and set env vars inline.
+
+`concurrently` runs the three quality checks in parallel in `check`, which is noticeably faster than running them sequentially. The `--group` flag buffers each process's output so it is printed together rather than interleaved, and `--names` prefixes each line so you can tell which tool produced it.
+
+`--no-git-tag-version` on the `version:*` scripts bumps `package.json` without also creating a git commit and tag — useful when your release pipeline (e.g. Changesets or a GitHub Action) handles versioning commits itself.
