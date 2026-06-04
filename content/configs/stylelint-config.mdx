@@ -1,0 +1,91 @@
+---
+title: Stylelint Config
+description: A Stylelint configuration for CSS and SCSS projects using standard and order plugins. Enforces consistent property ordering and modern CSS best practices.
+category: configs
+language: json
+tags: [stylelint, css, scss, linting]
+---
+
+Extends the official Stylelint standard config and adds `stylelint-order` to enforce a consistent CSS property order. Covers both plain CSS and SCSS.
+
+## Usage
+
+```json
+{
+  "extends": [
+    "stylelint-config-standard",
+    "stylelint-config-standard-scss",
+    "stylelint-config-recess-order"
+  ],
+  "plugins": ["stylelint-order"],
+  "rules": {
+    "color-named": "never",
+    "color-no-invalid-hex": true,
+    "declaration-no-important": true,
+    "shorthand-property-no-redundant-values": true,
+    "value-no-vendor-prefix": true,
+    "property-no-vendor-prefix": true,
+    "selector-max-id": 0,
+    "selector-no-qualifying-type": true,
+    "no-descending-specificity": true,
+    "no-duplicate-selectors": true,
+    "scss/at-rule-no-unknown": true,
+    "scss/dollar-variable-pattern": "^[a-z][a-z0-9-]*$",
+    "scss/selector-no-redundant-nesting-selector": true,
+    "import-notation": "string"
+  },
+  "ignoreFiles": [
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    "coverage/**",
+    "**/*.min.css"
+  ]
+}
+```
+
+**Install:**
+
+```bash
+npm install -D stylelint stylelint-config-standard stylelint-config-standard-scss stylelint-config-recess-order stylelint-order
+```
+
+Save as `.stylelintrc.json` at the project root.
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "lint:css": "stylelint \"**/*.{css,scss}\"",
+    "lint:css:fix": "stylelint \"**/*.{css,scss}\" --fix"
+  }
+}
+```
+
+## Property order (RECESS)
+
+`stylelint-config-recess-order` enforces the property order originally defined by Bootstrap's RECESS linter, which groups properties by purpose:
+
+1. **Positioning** — `position`, `top`, `right`, `z-index`, …
+2. **Box model** — `display`, `width`, `height`, `padding`, `margin`, …
+3. **Typography** — `font`, `line-height`, `color`, `text-align`, …
+4. **Visual** — `background`, `border`, `border-radius`, `opacity`, …
+5. **Misc** — `transition`, `animation`, `cursor`, …
+
+## Options
+
+| Rule | Effect |
+|------|--------|
+| `color-named` | Bans `red`, `blue`, etc. — forces CSS variables or hex |
+| `declaration-no-important` | Disallows `!important` |
+| `selector-max-id` | Disallows `#id` selectors entirely |
+| `selector-no-qualifying-type` | Bans `a.link`, `input[type]` — use classes only |
+| `no-descending-specificity` | Catches specificity ordering bugs |
+| `scss/dollar-variable-pattern` | Enforces kebab-case `$variable-names` |
+
+## Notes
+
+- Remove `stylelint-config-standard-scss` and the `scss/*` rules if your project uses plain CSS only — keep only `stylelint-config-standard`.
+- If you use CSS Modules, add `"customSyntax": "postcss-modules-values"` or configure the `ignoreFiles` pattern to match `.module.css` files and suppress false positives on `:local` and `:global`.
+- For VS Code integration, install the [Stylelint extension](https://marketplace.visualstudio.com/items?itemName=stylelint.vscode-stylelint) and add `"editor.codeActionsOnSave": { "source.fixAll.stylelint": "explicit" }` to `.vscode/settings.json`.
