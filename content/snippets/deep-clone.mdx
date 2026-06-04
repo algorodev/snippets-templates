@@ -1,0 +1,75 @@
+---
+title: Deep Clone Object
+description: Creates a fully independent deep copy of a plain object or array without using JSON serialization, preserving undefined values and Date objects. Falls back to structuredClone when available.
+category: snippets
+language: typescript
+tags: [object, utils, clone, deep]
+---
+
+Creates a structurally independent deep copy that handles `undefined`, `Date`, and nested arrays — unlike `JSON.parse(JSON.stringify(...))` which silently drops `undefined` values and stringifies Dates.
+
+## Usage
+
+```typescript
+function deepClone<T>(value: T): T {
+  // Prefer the native implementation when available (Node 17+, modern browsers)
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value)
+  }
+
+  if (value === null || typeof value !== 'object') {
+    return value
+  }
+
+  if (value instanceof Date) {
+    return new Date(value.getTime()) as unknown as T
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(deepClone) as unknown as T
+  }
+
+  const cloned = {} as Record<string, unknown>
+  for (const key of Object.keys(value as object)) {
+    cloned[key] = deepClone((value as Record<string, unknown>)[key])
+  }
+  return cloned as T
+}
+
+export default deepClone
+```
+
+## Examples
+
+```typescript
+const original = {
+  name: 'Alice',
+  scores: [10, 20, 30],
+  meta: {
+    createdAt: new Date('2024-01-01'),
+    notes: undefined,
+  },
+}
+
+const copy = deepClone(original)
+
+// Mutations to the copy do not affect the original
+copy.scores.push(40)
+copy.meta.createdAt.setFullYear(2000)
+
+console.log(original.scores)           // [10, 20, 30]
+console.log(original.meta.createdAt)   // 2024-01-01 (unchanged)
+console.log(copy.meta.notes)           // undefined (preserved)
+
+// Works with plain arrays too
+const matrix = [[1, 2], [3, 4]]
+const clonedMatrix = deepClone(matrix)
+clonedMatrix[0][0] = 99
+console.log(matrix[0][0]) // 1 (unchanged)
+```
+
+## Notes
+
+- `structuredClone` (used when available) also handles `Map`, `Set`, `RegExp`, `ArrayBuffer`, and more. The manual fallback only covers plain objects, arrays, Dates, and primitives.
+- Class instances are cloned as plain objects by the manual fallback — use `structuredClone` or a class-aware approach when instances need to retain their prototype.
+- Circular references are not handled by the manual fallback and will cause a stack overflow. Use `structuredClone` (which handles them natively) or track visited nodes with a `WeakMap` if cycles are possible.
