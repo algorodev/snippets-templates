@@ -1,0 +1,151 @@
+---
+title: Drizzle ORM Config
+description: A Drizzle Kit configuration for schema management and database migrations with multiple dialect support. Covers output directory, schema path, and migration strategy settings.
+category: configs
+language: typescript
+tags: [drizzle, orm, database, migrations, typescript]
+---
+
+Drizzle Kit reads `drizzle.config.ts` to locate your schema, connect to the database, and generate or run migrations. This config covers PostgreSQL, MySQL, and SQLite with dialect-specific connection examples.
+
+## Usage
+
+```ts
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  // Path to your schema file(s) — glob patterns are supported
+  schema: "./src/db/schema/index.ts",
+
+  // Output directory for generated SQL migration files
+  out: "./drizzle",
+
+  // Set to "database" to let Drizzle manage migrations in a meta table
+  // Set to "migrations" to write SQL files you apply yourself
+  migrations: {
+    prefix: "timestamp",   // "timestamp" | "supabase" | "unix" | "none"
+  },
+
+  // Verbose logging during push/generate
+  verbose: true,
+
+  // Strict mode: prompts before destructive changes (drop table, drop column)
+  strict: true,
+
+  dialect: "postgresql",
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+});
+```
+
+**Install:**
+
+```bash
+npm install drizzle-orm
+npm install -D drizzle-kit
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate":  "drizzle-kit migrate",
+    "db:push":     "drizzle-kit push",
+    "db:studio":   "drizzle-kit studio",
+    "db:pull":     "drizzle-kit pull"
+  }
+}
+```
+
+## Examples
+
+### PostgreSQL (via `pg` / `postgres.js`)
+
+```ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/db/schema/index.ts",
+  out: "./drizzle",
+  dialect: "postgresql",
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+  strict: true,
+  verbose: true,
+});
+```
+
+### MySQL
+
+```ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/db/schema/index.ts",
+  out: "./drizzle",
+  dialect: "mysql",
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+  strict: true,
+  verbose: true,
+});
+```
+
+### SQLite (local file or Turso)
+
+```ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/db/schema/index.ts",
+  out: "./drizzle",
+  dialect: "sqlite",
+  dbCredentials: {
+    url: "sqlite.db",                 // local file
+    // url: process.env.TURSO_URL!,   // Turso
+    // authToken: process.env.TURSO_AUTH_TOKEN,
+  },
+});
+```
+
+### Multi-schema projects (glob)
+
+```ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/db/schema/**/*.ts",
+  out: "./drizzle",
+  dialect: "postgresql",
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+});
+```
+
+## Options
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema` | `string \| string[]` | Path or glob to schema file(s) |
+| `out` | `string` | Directory for generated SQL files |
+| `dialect` | `"postgresql" \| "mysql" \| "sqlite"` | Database dialect |
+| `dbCredentials` | object | Connection URL or individual host/port/user/pass fields |
+| `strict` | `boolean` | Prompt before destructive operations |
+| `verbose` | `boolean` | Print all SQL statements during push |
+| `migrations.prefix` | `"timestamp" \| "unix" \| "supabase" \| "none"` | Migration filename prefix format |
+| `tablesFilter` | `string \| string[]` | Glob to limit which tables Drizzle manages |
+
+## Notes
+
+- `drizzle-kit push` applies schema changes directly to the database without generating SQL files — useful during development but not recommended in production.
+- `drizzle-kit generate` creates versioned SQL files in `out`. Commit these files and apply them with `drizzle-kit migrate` in CI/CD.
+- `strict: true` is strongly recommended in production workflows to prevent accidental destructive schema changes.
+- When using Turso (libSQL), install `@libsql/client` and set both `url` and `authToken` in `dbCredentials`.
+- Use `tablesFilter` in shared database environments to prevent Drizzle from touching tables owned by other services.
