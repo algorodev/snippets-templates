@@ -1,0 +1,325 @@
+---
+title: Nuxt App
+description: A full-stack Nuxt 3 application with file-based routing, server API routes via Nitro, Pinia for state management, and Nuxt UI component library.
+category: templates
+language: TypeScript
+tags: [nuxt, vue, typescript, nitro, pinia]
+repo: https://github.com/nuxt/nuxt
+---
+
+A batteries-included Nuxt 3 starter that covers the full stack — Vue 3 pages with file-based routing on the front end, Nitro-powered API routes on the back end, Pinia stores for reactive state, and Nuxt UI components so you can build UI without reaching for a separate design system.
+
+## Usage
+
+```bash
+# Scaffold with the official Nuxt CLI
+npx nuxi@latest init my-nuxt-app
+cd my-nuxt-app
+npm install
+npm run dev
+```
+
+## Configuration
+
+```typescript
+// nuxt.config.ts
+export default defineNuxtConfig({
+  devtools: { enabled: true },
+
+  modules: [
+    "@pinia/nuxt",
+    "@nuxt/ui",
+  ],
+
+  // Auto-import composables and utilities
+  imports: {
+    dirs: ["stores"],
+  },
+
+  // TypeScript strict mode
+  typescript: {
+    strict: true,
+  },
+
+  // Nitro server configuration
+  nitro: {
+    preset: "node-server", // or "vercel", "netlify", "cloudflare-pages", etc.
+  },
+});
+```
+
+## Server API route
+
+```typescript
+// server/api/posts/index.get.ts
+import { defineEventHandler, getQuery } from "h3";
+
+interface Post {
+  id: number;
+  title: string;
+  body: string;
+  userId: number;
+}
+
+export default defineEventHandler(async (event) => {
+  const query = getQuery(event);
+  const limit = Number(query.limit) || 10;
+
+  const posts: Post[] = await $fetch(
+    `https://jsonplaceholder.typicode.com/posts?_limit=${limit}`
+  );
+
+  return {
+    data: posts,
+    total: posts.length,
+  };
+});
+```
+
+```typescript
+// server/api/posts/[id].get.ts
+import { defineEventHandler, getRouterParam, createError } from "h3";
+
+export default defineEventHandler(async (event) => {
+  const id = getRouterParam(event, "id");
+
+  if (!id || isNaN(Number(id))) {
+    throw createError({ statusCode: 400, statusMessage: "Invalid post ID" });
+  }
+
+  const post = await $fetch(
+    `https://jsonplaceholder.typicode.com/posts/${id}`
+  ).catch(() => {
+    throw createError({ statusCode: 404, statusMessage: "Post not found" });
+  });
+
+  return post;
+});
+```
+
+## Pinia store
+
+```typescript
+// stores/posts.ts
+import { defineStore } from "pinia";
+
+interface Post {
+  id: number;
+  title: string;
+  body: string;
+  userId: number;
+}
+
+interface PostsState {
+  posts: Post[];
+  loading: boolean;
+  error: string | null;
+}
+
+export const usePostsStore = defineStore("posts", {
+  state: (): PostsState => ({
+    posts: [],
+    loading: false,
+    error: null,
+  }),
+
+  getters: {
+    postById: (state) => (id: number) =>
+      state.posts.find((p) => p.id === id) ?? null,
+
+    postCount: (state) => state.posts.length,
+  },
+
+  actions: {
+    async fetchPosts(limit = 10) {
+      this.loading = true;
+      this.error = null;
+      try {
+        const { data } = await $fetch<{ data: Post[]; total: number }>(
+          `/api/posts?limit=${limit}`
+        );
+        this.posts = data;
+      } catch (err) {
+        this.error = err instanceof Error ? err.message : "Failed to fetch posts";
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async fetchPost(id: number) {
+      const existing = this.postById(id);
+      if (existing) return existing;
+
+      const post = await $fetch<Post>(`/api/posts/${id}`);
+      this.posts.push(post);
+      return post;
+    },
+  },
+});
+```
+
+## Pages
+
+```vue
+<!-- pages/index.vue -->
+<script setup lang="ts">
+const postsStore = usePostsStore();
+
+await postsStore.fetchPosts(10);
+
+useHead({
+  title: "Home — My Nuxt App",
+  meta: [{ name: "description", content: "A Nuxt 3 full-stack starter." }],
+});
+</script>
+
+<template>
+  <UContainer>
+    <h1 class="text-3xl font-bold mb-6">Posts</h1>
+
+    <div v-if="postsStore.loading" class="text-center py-12">
+      <UIcon name="i-heroicons-arrow-path" class="animate-spin text-4xl" />
+    </div>
+
+    <UAlert
+      v-else-if="postsStore.error"
+      color="red"
+      :description="postsStore.error"
+    />
+
+    <div v-else class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <UCard
+        v-for="post in postsStore.posts"
+        :key="post.id"
+        class="hover:shadow-md transition-shadow"
+      >
+        <template #header>
+          <h2 class="font-semibold capitalize">{{ post.title }}</h2>
+        </template>
+        <p class="text-sm text-gray-500 line-clamp-3">{{ post.body }}</p>
+        <template #footer>
+          <NuxtLink :to="`/posts/${post.id}`">
+            <UButton variant="ghost" size="sm">Read more</UButton>
+          </NuxtLink>
+        </template>
+      </UCard>
+    </div>
+  </UContainer>
+</template>
+```
+
+```vue
+<!-- pages/posts/[id].vue -->
+<script setup lang="ts">
+const route = useRoute();
+const postsStore = usePostsStore();
+
+const post = await postsStore.fetchPost(Number(route.params.id));
+
+useHead({ title: `${post.title} — My Nuxt App` });
+</script>
+
+<template>
+  <UContainer class="max-w-2xl py-12">
+    <NuxtLink to="/">
+      <UButton icon="i-heroicons-arrow-left" variant="ghost" class="mb-6">
+        Back
+      </UButton>
+    </NuxtLink>
+
+    <article>
+      <h1 class="text-2xl font-bold capitalize mb-4">{{ post.title }}</h1>
+      <p class="text-gray-600 leading-relaxed">{{ post.body }}</p>
+    </article>
+  </UContainer>
+</template>
+```
+
+## Composable
+
+```typescript
+// composables/useApi.ts
+export function useApi<T>(url: string, options?: Parameters<typeof useFetch>[1]) {
+  return useFetch<T>(url, {
+    onResponseError({ response }) {
+      console.error(`API error ${response.status}: ${response._data?.message}`);
+    },
+    ...options,
+  });
+}
+```
+
+## README
+
+### What this includes
+
+- **Nuxt 3** — Vue 3 meta-framework with SSR, SSG, and hybrid rendering
+- **File-based routing** — `pages/` directory maps directly to URL routes
+- **Nitro** — Built-in server engine powering `server/api/` route handlers
+- **Pinia** — Official Vue state management with full TypeScript support
+- **Nuxt UI** — Tailwind CSS-based component library (buttons, cards, modals, etc.)
+- **Auto-imports** — Composables, utilities, and store refs available without explicit imports
+- **`useHead` / SEO** — Per-page meta tags with the `useHead` composable
+- **TypeScript strict mode** — End-to-end type safety across pages, stores, and API routes
+
+### Prerequisites
+
+- Node.js 18+
+- npm / pnpm / yarn
+
+### Create this template
+
+```bash
+# 1. Scaffold a new Nuxt 3 project
+npx nuxi@latest init my-nuxt-app
+cd my-nuxt-app
+
+# 2. Install base dependencies
+npm install
+
+# 3. Add Pinia
+npm install @pinia/nuxt pinia
+
+# 4. Add Nuxt UI (includes Tailwind CSS and Heroicons)
+npm install @nuxt/ui
+
+# 5. Register modules in nuxt.config.ts
+#    modules: ["@pinia/nuxt", "@nuxt/ui"]
+
+# 6. Create the stores/ directory
+mkdir stores
+
+# 7. Start the dev server
+npm run dev
+```
+
+### Project structure
+
+```
+my-nuxt-app/
+├── components/          # Auto-imported Vue components
+├── composables/         # Auto-imported composables (useApi.ts, etc.)
+├── pages/
+│   ├── index.vue        # → /
+│   └── posts/
+│       └── [id].vue     # → /posts/:id
+├── server/
+│   └── api/
+│       ├── posts/
+│       │   ├── index.get.ts   # GET /api/posts
+│       │   └── [id].get.ts    # GET /api/posts/:id
+│       └── middleware/        # Server middleware
+├── stores/
+│   └── posts.ts         # Pinia store
+├── app.vue              # Root layout
+├── nuxt.config.ts
+└── tsconfig.json
+```
+
+### First things to customize
+
+- `nuxt.config.ts` — Switch the Nitro preset (`"vercel"`, `"netlify"`, `"cloudflare-pages"`) to match your deployment target
+- `server/api/` — Replace the JSONPlaceholder calls with your real database queries (Drizzle, Prisma, etc.)
+- `stores/` — Rename `posts.ts` and expand the state shape to match your data model
+- `app.vue` — Add a shared `<NuxtLayout>` and navigation components
+- `pages/index.vue` — Replace demo content with your application's home page
