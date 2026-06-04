@@ -1,0 +1,310 @@
+---
+title: Express REST API
+description: A production-ready Express.js REST API with TypeScript, Zod request validation, JWT authentication, and Prisma ORM. Includes error handling middleware, request logging, and a layered architecture.
+category: templates
+language: TypeScript
+tags: [node.js, express, rest-api, typescript, prisma]
+---
+
+A production-ready Express REST API template with a clean layered architecture: routes call controllers, controllers call services, services call the Prisma data layer. Zod handles request validation at the boundary, JWT protects routes, and a centralised error handler ensures consistent error responses.
+
+## Usage
+
+```typescript
+// src/app.ts
+import express from 'express'
+import helmet from 'helmet'
+import cors from 'cors'
+import { pinoHttp } from 'pino-http'
+import { userRouter } from './routes/users'
+import { authRouter } from './routes/auth'
+import { errorHandler } from './middleware/errorHandler'
+import { notFound } from './middleware/notFound'
+
+export const app = express()
+
+app.use(helmet())
+app.use(cors({ origin: process.env.ALLOWED_ORIGIN }))
+app.use(express.json())
+app.use(pinoHttp())
+
+app.use('/api/auth', authRouter)
+app.use('/api/users', userRouter)
+
+app.use(notFound)
+app.use(errorHandler)
+```
+
+```typescript
+// src/middleware/authenticate.ts
+import type { Request, Response, NextFunction } from 'express'
+import jwt from 'jsonwebtoken'
+import { AppError } from '../lib/AppError'
+
+export interface AuthRequest extends Request {
+  userId?: string
+}
+
+export function authenticate(
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction
+) {
+  const header = req.headers.authorization
+  if (!header?.startsWith('Bearer ')) {
+    return next(new AppError('Unauthorized', 401))
+  }
+
+  try {
+    const token = header.slice(7)
+    const payload = jwt.verify(token, process.env.JWT_SECRET!) as {
+      sub: string
+    }
+    req.userId = payload.sub
+    next()
+  } catch {
+    next(new AppError('Invalid or expired token', 401))
+  }
+}
+```
+
+```typescript
+// src/middleware/errorHandler.ts
+import type { Request, Response, NextFunction } from 'express'
+import { ZodError } from 'zod'
+import { AppError } from '../lib/AppError'
+
+export function errorHandler(
+  err: unknown,
+  _req: Request,
+  res: Response,
+  _next: NextFunction
+) {
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      error: 'Validation error',
+      details: err.flatten().fieldErrors,
+    })
+  }
+
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({ error: err.message })
+  }
+
+  console.error(err)
+  return res.status(500).json({ error: 'Internal server error' })
+}
+```
+
+```typescript
+// src/lib/AppError.ts
+export class AppError extends Error {
+  constructor(
+    message: string,
+    public readonly statusCode: number = 500
+  ) {
+    super(message)
+    this.name = 'AppError'
+  }
+}
+```
+
+```typescript
+// src/routes/users.ts
+import { Router } from 'express'
+import { authenticate } from '../middleware/authenticate'
+import { validateBody } from '../middleware/validateBody'
+import { getUserById, updateUser } from '../controllers/users'
+import { updateUserSchema } from '../schemas/users'
+
+export const userRouter = Router()
+
+userRouter.use(authenticate)
+
+userRouter.get('/:id', getUserById)
+userRouter.patch('/:id', validateBody(updateUserSchema), updateUser)
+```
+
+```typescript
+// src/schemas/users.ts
+import { z } from 'zod'
+
+export const updateUserSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  email: z.string().email().optional(),
+})
+
+export type UpdateUserInput = z.infer<typeof updateUserSchema>
+```
+
+```typescript
+// src/controllers/users.ts
+import type { Response, NextFunction } from 'express'
+import type { AuthRequest } from '../middleware/authenticate'
+import * as userService from '../services/users'
+import { AppError } from '../lib/AppError'
+import type { UpdateUserInput } from '../schemas/users'
+
+export async function getUserById(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const user = await userService.findById(req.params.id)
+    if (!user) return next(new AppError('User not found', 404))
+    res.json(user)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function updateUser(
+  req: AuthRequest & { body: UpdateUserInput },
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    if (req.userId !== req.params.id) {
+      return next(new AppError('Forbidden', 403))
+    }
+    const user = await userService.update(req.params.id, req.body)
+    res.json(user)
+  } catch (err) {
+    next(err)
+  }
+}
+```
+
+```typescript
+// src/services/users.ts
+import { prisma } from '../lib/prisma'
+import type { UpdateUserInput } from '../schemas/users'
+
+export function findById(id: string) {
+  return prisma.user.findUnique({
+    where: { id },
+    select: { id: true, name: true, email: true, createdAt: true },
+  })
+}
+
+export function update(id: string, data: UpdateUserInput) {
+  return prisma.user.update({ where: { id }, data })
+}
+```
+
+```typescript
+// src/lib/prisma.ts
+import { PrismaClient } from '@prisma/client'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __prisma: PrismaClient | undefined
+}
+
+export const prisma =
+  global.__prisma ??
+  new PrismaClient({ log: ['query', 'warn', 'error'] })
+
+if (process.env.NODE_ENV !== 'production') global.__prisma = prisma
+```
+
+```prisma
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+```
+
+## README
+
+### What this includes
+- Express 5 with TypeScript, strict mode enabled
+- Zod schema validation with a `validateBody` middleware helper
+- JWT authentication via `jsonwebtoken` with a typed `AuthRequest` extension
+- Prisma ORM with a singleton client safe for hot-reload environments
+- Centralised `AppError` class and error handler middleware that also catches `ZodError`
+- `pino-http` structured request logging
+- `helmet` security headers and `cors` configuration
+- Layered architecture: routes → controllers → services → Prisma
+
+### Prerequisites
+- Node.js 20+
+- PostgreSQL database (local or hosted, e.g. Neon, Supabase, Railway)
+
+### Create this template
+
+```bash
+mkdir my-api && cd my-api
+npm init -y
+npm install express zod jsonwebtoken prisma @prisma/client pino-http helmet cors
+npm install --save-dev typescript ts-node-dev @types/express @types/node @types/jsonwebtoken @types/cors
+npx tsc --init --strict --module nodenext --moduleresolution nodenext --outdir dist
+npx prisma init
+mkdir -p src/{routes,controllers,services,middleware,schemas,lib}
+touch src/app.ts src/server.ts
+```
+
+```bash
+# Add to package.json scripts:
+# "dev":   "ts-node-dev --respawn --transpile-only src/server.ts"
+# "build": "tsc"
+# "start": "node dist/server.js"
+# "db:migrate": "prisma migrate dev"
+# "db:studio":  "prisma studio"
+
+# Copy .env.example to .env and fill in DATABASE_URL and JWT_SECRET
+npx prisma migrate dev --name init
+npm run dev
+```
+
+### Project structure
+
+```
+src/
+  routes/
+    auth.ts            # POST /api/auth/login, /register
+    users.ts           # GET/PATCH /api/users/:id
+  controllers/
+    auth.ts
+    users.ts
+  services/
+    auth.ts
+    users.ts
+  middleware/
+    authenticate.ts    # JWT guard
+    validateBody.ts    # Zod schema middleware factory
+    errorHandler.ts    # centralised error responses
+    notFound.ts        # 404 fallback
+  schemas/
+    users.ts           # Zod schemas + inferred types
+  lib/
+    AppError.ts
+    prisma.ts          # singleton PrismaClient
+  app.ts               # Express app setup
+  server.ts            # HTTP server + port binding
+prisma/
+  schema.prisma
+.env
+```
+
+### First things to customize
+- Add your domain models to `prisma/schema.prisma` and run `prisma migrate dev`
+- Implement `POST /api/auth/register` and `POST /api/auth/login` in `src/controllers/auth.ts`
+- Replace `process.env.ALLOWED_ORIGIN` in `cors()` with your actual frontend origin(s)
+- Set `JWT_SECRET` to a long random string (at least 32 characters) in `.env`
+- Add rate limiting with `express-rate-limit` to auth routes before going to production
