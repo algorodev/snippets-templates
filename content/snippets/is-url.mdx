@@ -1,0 +1,85 @@
+---
+title: Validate URL
+description: Returns true if a string is a valid absolute URL, with optional protocol restriction (e.g. https only). Uses the native URL constructor for reliable parsing.
+category: snippets
+language: typescript
+tags: [validation, utils, url]
+---
+
+Leverages the native `URL` constructor — which implements the WHATWG URL Standard — to determine whether a string is a well-formed absolute URL, with an optional allowlist of accepted protocols.
+
+## Usage
+
+```typescript
+interface UrlValidationOptions {
+  /**
+   * Restrict valid URLs to these protocols (without trailing colon).
+   * Defaults to ['http', 'https'] when omitted.
+   * Pass an empty array to allow any protocol.
+   */
+  protocols?: string[]
+}
+
+function isUrl(value: string, options: UrlValidationOptions = {}): boolean {
+  if (!value || typeof value !== 'string') return false
+
+  const { protocols = ['http', 'https'] } = options
+
+  let parsed: URL
+
+  try {
+    parsed = new URL(value)
+  } catch {
+    return false
+  }
+
+  if (protocols.length === 0) return true
+
+  // URL.protocol includes the trailing colon, e.g. 'https:'
+  const scheme = parsed.protocol.replace(/:$/, '')
+  return protocols.includes(scheme)
+}
+
+export default isUrl
+```
+
+## Examples
+
+```typescript
+isUrl('https://example.com')
+// true
+
+isUrl('http://sub.domain.io/path?q=1#hash')
+// true
+
+isUrl('ftp://files.example.com')
+// false  (ftp not in default allowlist)
+
+isUrl('not a url')
+// false
+
+isUrl('//example.com/path')
+// false  (protocol-relative URLs are not absolute)
+
+isUrl('ftp://files.example.com', { protocols: ['ftp'] })
+// true
+
+isUrl('data:text/html,<h1>hi</h1>', { protocols: [] })
+// true  (any protocol accepted)
+
+isUrl('https://localhost:3000')
+// true
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `protocols` | `string[]` | `['http', 'https']` | Accepted URL schemes (without the trailing `:`). Pass `[]` to skip protocol checking. |
+
+## Notes
+
+- Relative URLs (e.g. `/path/to/page`) and protocol-relative URLs (e.g. `//example.com`) are always rejected because `new URL()` throws for both without a base.
+- The function does not perform any network request — it only validates the string format.
+- `localhost` and IP addresses are accepted as valid hosts.
+- Internationalized domain names (IDNs) in Unicode form (e.g. `https://münchen.de`) are accepted by modern runtimes that implement the WHATWG URL Standard.
