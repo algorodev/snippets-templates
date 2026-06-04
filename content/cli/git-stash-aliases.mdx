@@ -1,0 +1,128 @@
+---
+title: Git Stash Aliases
+description: Shortcuts for named stashes, listing stash contents, and popping by index or name without remembering stash@{N} syntax.
+category: cli
+language: bash
+tags: [git, stash, aliases, productivity]
+---
+
+The default `stash@{0}` syntax is hard to remember when you have several stashes queued up. These aliases and functions let you save with a name, list stashes with their contents, and pop by number or substring match.
+
+## Usage
+
+Add to `~/.gitconfig` under `[alias]`:
+
+```bash
+[alias]
+  # Save with a required message (named stash)
+  # Usage: git ss "work in progress on login"
+  ss    = stash push -m
+
+  # List stashes with index and message
+  sl    = stash list
+
+  # Show the diff of a stash by index (default: 0)
+  # Usage: git sd 2
+  sd    = "!f() { git stash show -p stash@{${1:-0}}; }; f"
+
+  # Pop stash by index (default: 0)
+  # Usage: git sp 1
+  sp    = "!f() { git stash pop stash@{${1:-0}}; }; f"
+
+  # Apply stash by index without removing it (default: 0)
+  # Usage: git sa 1
+  sa    = "!f() { git stash apply stash@{${1:-0}}; }; f"
+
+  # Drop a stash by index (default: 0)
+  # Usage: git sd-drop 2
+  sd-drop = "!f() { git stash drop stash@{${1:-0}}; }; f"
+
+  # Clear all stashes (with confirmation prompt)
+  sc    = "!read -r -p 'Drop ALL stashes? [y/N] ' reply && [[ $reply =~ ^[Yy]$ ]] && git stash clear"
+```
+
+## Shell functions
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# Pop the most recent stash whose message contains a pattern
+# Usage: stash-pop-named "login"
+stash-pop-named() {
+  local pattern="$1"
+  if [ -z "$pattern" ]; then
+    echo "Usage: stash-pop-named <pattern>" >&2
+    return 1
+  fi
+
+  local entry
+  entry=$(git stash list | grep -m1 "$pattern")
+
+  if [ -z "$entry" ]; then
+    echo "No stash found matching: $pattern" >&2
+    git stash list
+    return 1
+  fi
+
+  local index
+  index=$(echo "$entry" | grep -oE 'stash@\{[0-9]+\}')
+  echo "Popping: $entry"
+  git stash pop "$index"
+}
+
+# Pretty-print all stashes with their diffs
+stash-show-all() {
+  local count
+  count=$(git stash list | wc -l | tr -d ' ')
+  if [ "$count" -eq 0 ]; then
+    echo "No stashes."
+    return 0
+  fi
+
+  for i in $(seq 0 $((count - 1))); do
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "stash@{$i}: $(git stash list | sed -n "$((i+1))p" | cut -d: -f3-)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    git stash show -p "stash@{$i}" --stat
+    echo ""
+  done
+}
+
+# Push current staged changes to a named stash, keeping unstaged changes intact
+stash-staged() {
+  local name="${1:-staged-$(date +%Y%m%d-%H%M%S)}"
+  git stash push --staged -m "$name"
+  echo "Stashed staged changes as: $name"
+}
+```
+
+## Examples
+
+```bash
+# Save everything with a descriptive name
+git ss "half-done refactor of auth module"
+
+# See what's in each stash
+git sl
+# stash@{0}: On main: half-done refactor of auth module
+# stash@{1}: On feat/ui: quick fix attempt
+
+# Inspect stash 1 before applying
+git sd 1
+
+# Pop by name match
+stash-pop-named "auth module"
+
+# Pop by index
+git sp 1
+
+# Stash only staged changes (keep unstaged in working tree)
+git add src/auth.ts
+stash-staged "auth: extract token helper"
+```
+
+## Notes
+
+- `stash push -m` (used in `ss`) is the modern form; the older `stash save` is deprecated.
+- `stash pop` applies and removes the entry. Use `stash apply` (`sa`) when you want to keep the stash as a backup.
+- `--staged` on `stash push` requires Git 2.35+. Check your version with `git --version`.
