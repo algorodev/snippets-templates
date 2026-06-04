@@ -1,0 +1,121 @@
+---
+title: "GitHub Actions: Release with Changesets"
+description: A GitHub Actions workflow that uses Changesets to automate versioning and changelog generation. Opens a release PR when changesets are present and publishes to npm on merge.
+category: configs
+language: yaml
+tags: [github-actions, changesets, release, npm, versioning]
+---
+
+This workflow has two modes: when changesets are present it opens (or updates) a "Version Packages" PR that bumps versions and updates `CHANGELOG.md` files; when that PR is merged it publishes changed packages to npm automatically.
+
+## Usage
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history is required so Changesets can detect all changed packages
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-20-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create release PR or publish to npm
+        uses: changesets/action@v1
+        with:
+          # Script that runs `changeset version` to bump versions
+          version: npm run version
+          # Script that builds and publishes packages
+          publish: npm run release
+          title: "chore: version packages"
+          commit: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+```
+
+Add the following scripts to your root `package.json`:
+
+```json
+{
+  "scripts": {
+    "version": "changeset version",
+    "release": "changeset publish"
+  }
+}
+```
+
+And a `.changeset/config.json` for a standard single-package repo:
+
+```json
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": []
+}
+```
+
+## How it works
+
+1. A developer runs `npx changeset` locally, answers prompts about which packages changed and the bump type (major / minor / patch), and commits the generated `.changeset/*.md` file with their PR.
+2. When that PR merges to `main`, this workflow runs. `changesets/action` detects the pending changeset files and opens a "Version Packages" PR that updates `package.json` versions and `CHANGELOG.md`.
+3. When the "Version Packages" PR is merged, the workflow runs again. This time there are no pending changeset files, so `changesets/action` runs the `release` script instead, publishing to npm.
+
+## Options
+
+| Field | Default | Effect |
+|-------|---------|--------|
+| `version` script | `changeset version` | Command to bump versions and update changelogs |
+| `publish` script | `changeset publish` | Command to build and publish to npm |
+| `title` / `commit` | `"chore: version packages"` | PR title and commit message created by Changesets |
+| `NPM_CONFIG_PROVENANCE` | `true` | Attaches npm provenance attestation (requires `id-token: write`) |
+| `access` in config | `"public"` | Set to `"restricted"` for private scoped packages |
+
+## Notes
+
+- Add `NPM_TOKEN` as a repository secret (Settings → Secrets and variables → Actions). Generate it at npmjs.com under Access Tokens with "Automation" type so it bypasses 2FA during publish.
+- `fetch-depth: 0` is required — Changesets uses the full Git history to determine which packages changed across commits.
+- For a monorepo with multiple publishable packages, set `"access": "public"` per-package in each `package.json`, or configure `linked` and `fixed` groups in `.changeset/config.json` to keep related packages in sync.
+- The `concurrency` block prevents two simultaneous release runs from racing to publish the same version when multiple commits land on `main` in quick succession.
+- To preview what would be published without actually publishing, run `npx changeset status` locally.
