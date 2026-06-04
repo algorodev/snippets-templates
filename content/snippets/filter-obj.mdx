@@ -1,0 +1,55 @@
+---
+title: Filter Object Entries
+description: Returns a new object containing only entries where the predicate returns true. Predicate receives both key and value for maximum flexibility.
+category: snippets
+language: typescript
+tags: [object, utils, filter]
+---
+
+Mirrors `Array.prototype.filter` for plain objects — pass a predicate that receives both the key and value and returns `true` to keep the entry.
+
+## Usage
+
+```typescript
+function filterObj<T extends Record<string, unknown>>(
+  obj: T,
+  predicate: (key: keyof T, value: T[keyof T]) => boolean
+): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([key, value]) => predicate(key as keyof T, value as T[keyof T]))
+  ) as Partial<T>
+}
+
+export default filterObj
+```
+
+## Examples
+
+```typescript
+const user = {
+  id: 1,
+  name: 'Alice',
+  age: 30,
+  email: 'alice@example.com',
+  role: 'admin',
+}
+
+// Keep only string values
+const stringFields = filterObj(user, (_key, value) => typeof value === 'string')
+// { name: 'Alice', email: 'alice@example.com', role: 'admin' }
+
+// Keep only specific keys
+const publicFields = filterObj(user, (key) => ['name', 'role'].includes(key as string))
+// { name: 'Alice', role: 'admin' }
+
+// Remove falsy values
+const config = { debug: false, timeout: 5000, host: '', port: 3000 }
+const defined = filterObj(config, (_key, value) => Boolean(value))
+// { timeout: 5000, port: 3000 }
+```
+
+## Notes
+
+- Returns a new object — the original is never mutated.
+- The return type is `Partial<T>` because a subset of keys is returned; cast to a stricter type if you know the exact shape.
+- For deeply nested filtering, apply `filterObj` recursively on nested objects.
