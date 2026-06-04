@@ -1,0 +1,148 @@
+---
+title: useUndoRedo Hook
+description: Provides undo and redo capabilities for any state value, tracking past and future snapshots up to a configurable limit. Returns canUndo, canRedo, and stable action functions.
+category: snippets
+language: typescript
+tags: [react, hooks, state, undo]
+---
+
+A generic React hook that wraps any state value with full undo/redo history, capping the snapshot stack at a configurable limit to avoid unbounded memory growth.
+
+## Usage
+
+```typescript
+import { useCallback, useReducer } from 'react'
+
+interface HistoryState<T> {
+  past: T[]
+  present: T
+  future: T[]
+}
+
+type HistoryAction<T> =
+  | { type: 'SET'; value: T }
+  | { type: 'UNDO' }
+  | { type: 'REDO' }
+
+function createReducer<T>(limit: number) {
+  return function reducer(
+    state: HistoryState<T>,
+    action: HistoryAction<T>
+  ): HistoryState<T> {
+    switch (action.type) {
+      case 'SET': {
+        const past = [...state.past, state.present].slice(-limit)
+        return { past, present: action.value, future: [] }
+      }
+      case 'UNDO': {
+        if (state.past.length === 0) return state
+        const previous = state.past[state.past.length - 1]
+        const past = state.past.slice(0, -1)
+        return { past, present: previous, future: [state.present, ...state.future] }
+      }
+      case 'REDO': {
+        if (state.future.length === 0) return state
+        const next = state.future[0]
+        const future = state.future.slice(1)
+        return { past: [...state.past, state.present], present: next, future }
+      }
+      default:
+        return state
+    }
+  }
+}
+
+interface UseUndoRedoReturn<T> {
+  value: T
+  set: (value: T) => void
+  undo: () => void
+  redo: () => void
+  canUndo: boolean
+  canRedo: boolean
+  history: { past: T[]; future: T[] }
+}
+
+function useUndoRedo<T>(
+  initialValue: T,
+  limit = 100
+): UseUndoRedoReturn<T> {
+  const reducer = createReducer<T>(limit)
+
+  const [state, dispatch] = useReducer(reducer, {
+    past: [],
+    present: initialValue,
+    future: [],
+  })
+
+  const set = useCallback((value: T) => dispatch({ type: 'SET', value }), [])
+  const undo = useCallback(() => dispatch({ type: 'UNDO' }), [])
+  const redo = useCallback(() => dispatch({ type: 'REDO' }), [])
+
+  return {
+    value: state.present,
+    set,
+    undo,
+    redo,
+    canUndo: state.past.length > 0,
+    canRedo: state.future.length > 0,
+    history: { past: state.past, future: state.future },
+  }
+}
+
+export default useUndoRedo
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `initialValue` | `T` | — | Starting value for the state |
+| `limit` | `number` | `100` | Maximum number of past snapshots to retain |
+
+## Examples
+
+```typescript
+// Basic text editor with undo/redo
+function TextEditor() {
+  const { value, set, undo, redo, canUndo, canRedo } = useUndoRedo('')
+
+  return (
+    <div>
+      <textarea value={value} onChange={e => set(e.target.value)} />
+      <button onClick={undo} disabled={!canUndo}>Undo</button>
+      <button onClick={redo} disabled={!canRedo}>Redo</button>
+    </div>
+  )
+}
+
+// With a lower history limit and a complex state object
+interface DrawingState {
+  shapes: { id: string; x: number; y: number }[]
+  selectedId: string | null
+}
+
+function DrawingCanvas() {
+  const { value, set, undo, redo, canUndo } = useUndoRedo<DrawingState>(
+    { shapes: [], selectedId: null },
+    50
+  )
+
+  const addShape = () =>
+    set({
+      ...value,
+      shapes: [...value.shapes, { id: crypto.randomUUID(), x: 100, y: 100 }],
+    })
+
+  return (
+    <div>
+      <button onClick={addShape}>Add shape</button>
+      <button onClick={undo} disabled={!canUndo}>Undo</button>
+      <p>{value.shapes.length} shapes</p>
+    </div>
+  )
+}
+```
+
+## How it works
+
+State is managed with `useReducer` over a `{ past, present, future }` triple. `SET` pushes the current present onto `past` (trimming to `limit`) and clears `future`. `UNDO` pops from `past` into `present` and prepends the old present onto `future`. `REDO` does the reverse. All dispatch wrappers are stabilised with `useCallback` so they never cause unnecessary re-renders in child components.
