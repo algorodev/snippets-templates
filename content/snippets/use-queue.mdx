@@ -1,0 +1,117 @@
+---
+title: useQueue Hook
+description: Implements a FIFO queue as React state with enqueue, dequeue, peek, and clear operations. Returns the queue contents and all mutators.
+category: snippets
+language: typescript
+tags: [react, hooks, state, queue]
+---
+
+A FIFO queue backed by React state. Handy for notification stacks, step-by-step wizards, request throttling, and any scenario where items must be processed in arrival order.
+
+## Usage
+
+```typescript
+import { useState, useCallback } from 'react'
+
+type QueueActions<T> = {
+  enqueue: (item: T) => void
+  dequeue: () => T | undefined
+  peek: () => T | undefined
+  clear: () => void
+}
+
+type UseQueueReturn<T> = {
+  queue: T[]
+  size: number
+  isEmpty: boolean
+} & QueueActions<T>
+
+function useQueue<T>(initialItems: T[] = []): UseQueueReturn<T> {
+  const [queue, setQueue] = useState<T[]>(initialItems)
+
+  const enqueue = useCallback((item: T) => {
+    setQueue(prev => [...prev, item])
+  }, [])
+
+  const dequeue = useCallback((): T | undefined => {
+    let removed: T | undefined
+    setQueue(prev => {
+      if (prev.length === 0) return prev
+      const [first, ...rest] = prev
+      removed = first
+      return rest
+    })
+    return removed
+  }, [])
+
+  const peek = useCallback((): T | undefined => {
+    return queue[0]
+  }, [queue])
+
+  const clear = useCallback(() => {
+    setQueue([])
+  }, [])
+
+  return {
+    queue,
+    size: queue.length,
+    isEmpty: queue.length === 0,
+    enqueue,
+    dequeue,
+    peek,
+    clear,
+  }
+}
+
+export default useQueue
+```
+
+## Examples
+
+```typescript
+// Toast notification queue
+interface Toast {
+  id: string
+  message: string
+  type: 'info' | 'error' | 'success'
+}
+
+const { queue: toasts, enqueue: addToast, dequeue: dismissToast, isEmpty } =
+  useQueue<Toast>()
+
+// Add a toast
+addToast({ id: crypto.randomUUID(), message: 'Saved!', type: 'success' })
+
+// Dismiss the oldest toast
+dismissToast()
+```
+
+```typescript
+// Process items one at a time
+const { peek, dequeue, isEmpty, enqueue } = useQueue<Job>()
+
+useEffect(() => {
+  if (isEmpty) return
+  const job = peek()
+  if (!job) return
+
+  processJob(job).then(() => dequeue())
+}, [isEmpty, peek, dequeue])
+```
+
+## Options
+
+| Property | Type | Description |
+|---|---|---|
+| `queue` | `T[]` | Current queue contents, front at index `0` |
+| `size` | `number` | Number of items in the queue |
+| `isEmpty` | `boolean` | `true` when the queue has no items |
+| `enqueue` | `(item: T) => void` | Add an item to the back |
+| `dequeue` | `() => T \| undefined` | Remove and return the front item |
+| `peek` | `() => T \| undefined` | Return the front item without removing it |
+| `clear` | `() => void` | Remove all items |
+
+## Notes
+
+- `dequeue` returns the removed item synchronously despite using the functional `setState` form. The return value reflects the item that was at the front at call time.
+- For high-frequency enqueueing (e.g. websocket messages), consider batching with `useTransition` to keep the UI responsive.
