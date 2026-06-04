@@ -1,0 +1,39 @@
+---
+title: Generate Random ID
+description: Generates a random alphanumeric ID of a configurable length using a cryptographically random source. Useful for temporary keys, component IDs, and testing fixtures.
+category: snippets
+language: typescript
+tags: [string, utils, id, random]
+---
+
+Generates a random alphanumeric string of a given length using `crypto.getRandomValues` for a cryptographically strong source — safer than `Math.random()`.
+
+## Usage
+
+```typescript
+const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+
+function generateId(length: number = 12): string {
+  const bytes = new Uint8Array(length)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes)
+    .map((b) => CHARS[b % CHARS.length])
+    .join('')
+}
+
+export default generateId
+```
+
+## Examples
+
+```typescript
+generateId()      // 'aK3mZpQr8xNw'  (12 chars, default)
+generateId(6)     // 'bT9yXq'         (6 chars)
+generateId(24)    // 'HjR2nWpL8sKmDqV4tYcB7eAz'
+```
+
+## Notes
+
+- Works in browsers, Node.js 19+, and all modern runtimes that expose the Web Crypto API.
+- The character set is 62 characters. Each byte is reduced with `% 62`, introducing a tiny modulo bias (~0.4%). For non-security-sensitive IDs (component keys, test fixtures) this is negligible.
+- For collision-resistant IDs at scale, prefer a UUID v4 library instead.
