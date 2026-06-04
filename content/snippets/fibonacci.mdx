@@ -1,0 +1,73 @@
+---
+title: Fibonacci Sequence
+description: Generates the Fibonacci sequence up to a given term count using iterative computation for O(n) performance. Also exports a single-term variant with BigInt support for large indices.
+category: snippets
+language: typescript
+tags: [math, utils, sequence, number]
+---
+
+Computes the Fibonacci sequence iteratively in O(n) time and O(1) space. A single-term variant using `BigInt` is included for indices that exceed `Number.MAX_SAFE_INTEGER`.
+
+## Usage
+
+```typescript
+/**
+ * Returns an array of the first `n` Fibonacci numbers.
+ * fibonacci(8) => [0, 1, 1, 2, 3, 5, 8, 13]
+ */
+function fibonacci(n: number): number[] {
+  if (n <= 0) return []
+  if (n === 1) return [0]
+
+  const result: number[] = [0, 1]
+  for (let i = 2; i < n; i++) {
+    result.push(result[i - 1] + result[i - 2])
+  }
+  return result
+}
+
+/**
+ * Returns the Fibonacci number at index `n` using BigInt.
+ * Safe for arbitrarily large indices.
+ * fibonacciAt(50n) => 12586269025n
+ */
+function fibonacciAt(n: bigint): bigint {
+  if (n < 0n) throw new RangeError('Index must be a non-negative integer')
+  if (n === 0n) return 0n
+  if (n === 1n) return 1n
+
+  let a = 0n
+  let b = 1n
+  for (let i = 2n; i <= n; i++) {
+    ;[a, b] = [b, a + b]
+  }
+  return b
+}
+
+export { fibonacci, fibonacciAt }
+```
+
+## Examples
+
+```typescript
+fibonacci(8)
+// => [0, 1, 1, 2, 3, 5, 8, 13]
+
+fibonacci(1)
+// => [0]
+
+fibonacci(0)
+// => []
+
+fibonacciAt(10n)
+// => 55n
+
+fibonacciAt(100n)
+// => 354224848179261915075n
+```
+
+## Notes
+
+- `fibonacci(n)` uses plain `number` and is accurate up to index 78 (beyond which values exceed `Number.MAX_SAFE_INTEGER`).
+- `fibonacciAt(n)` accepts a `BigInt` index and returns a `BigInt`, making it safe for any index size.
+- Both implementations run in O(n) time using a simple iterative loop — no recursion, no memoization overhead.
