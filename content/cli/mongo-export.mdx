@@ -1,0 +1,202 @@
+---
+title: MongoDB Export Helper
+description: Export a MongoDB collection to JSON or CSV with optional field filtering and query conditions, wrapping mongodump and mongoexport.
+category: cli
+language: bash
+tags: [database, mongodb, export, devops]
+---
+
+Wrapper functions around `mongoexport` and `mongodump` that handle the repetitive flags — connection URI, output path, format, field lists, and query filters — behind short, memorable commands.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# Export a MongoDB collection to a JSON or CSV file.
+# Usage: mongo_export <uri> <db> <collection> [--format json|csv] [--fields f1,f2] [--query '<json>'] [--out <file>]
+#
+# Defaults: format=json, out=<collection>-<timestamp>.json
+mongo_export() {
+  local uri=""
+  local db=""
+  local collection=""
+  local format="json"
+  local fields=""
+  local query=""
+  local out=""
+
+  # First three positional args
+  if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
+    echo "Usage: mongo_export <uri> <db> <collection> [--format json|csv] [--fields f1,f2] [--query '{...}'] [--out file]"
+    return 1
+  fi
+  uri="$1"; db="$2"; collection="$3"
+  shift 3
+
+  # Parse optional flags
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --format)  format="$2";     shift 2 ;;
+      --fields)  fields="$2";     shift 2 ;;
+      --query)   query="$2";      shift 2 ;;
+      --out)     out="$2";        shift 2 ;;
+      *) echo "Unknown option: $1"; return 1 ;;
+    esac
+  done
+
+  # Default output filename
+  if [ -z "$out" ]; then
+    local ts
+    ts=$(date +%Y%m%d%H%M%S)
+    out="${collection}-${ts}.${format}"
+  fi
+
+  local args=(
+    --uri="$uri"
+    --db="$db"
+    --collection="$collection"
+    --type="$format"
+    --out="$out"
+  )
+
+  if [ -n "$fields" ]; then
+    args+=(--fields="$fields")
+  fi
+
+  if [ -n "$query" ]; then
+    args+=(--query="$query")
+  fi
+
+  # CSV requires explicit field list
+  if [ "$format" = "csv" ] && [ -z "$fields" ]; then
+    echo "Error: --fields is required when exporting to CSV."
+    return 1
+  fi
+
+  echo "Exporting ${db}.${collection} → ${out} (${format})"
+  mongoexport "${args[@]}"
+
+  if [ $? -eq 0 ]; then
+    local lines
+    lines=$(wc -l < "$out" | tr -d ' ')
+    echo "Done. Wrote ${lines} lines to: ${out}"
+  else
+    echo "Export failed."
+    return 1
+  fi
+}
+
+# Create a compressed BSON dump of an entire database or a single collection.
+# Usage: mongo_dump <uri> <db> [collection] [--out <dir>]
+mongo_dump() {
+  local uri="$1"
+  local db="$2"
+  local collection=""
+  local out=""
+
+  if [ -z "$uri" ] || [ -z "$db" ]; then
+    echo "Usage: mongo_dump <uri> <db> [collection] [--out <dir>]"
+    return 1
+  fi
+  shift 2
+
+  # Optional collection (if next arg doesn't start with --)
+  if [ -n "$1" ] && [[ "$1" != --* ]]; then
+    collection="$1"
+    shift
+  fi
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --out) out="$2"; shift 2 ;;
+      *) echo "Unknown option: $1"; return 1 ;;
+    esac
+  done
+
+  if [ -z "$out" ]; then
+    local ts
+    ts=$(date +%Y%m%d%H%M%S)
+    out="dump-${db}-${ts}"
+  fi
+
+  local args=(
+    --uri="$uri"
+    --db="$db"
+    --out="$out"
+    --gzip
+  )
+
+  if [ -n "$collection" ]; then
+    args+=(--collection="$collection")
+    echo "Dumping ${db}.${collection} → ${out}/ (gzip)"
+  else
+    echo "Dumping database ${db} → ${out}/ (gzip)"
+  fi
+
+  mongodump "${args[@]}"
+
+  if [ $? -eq 0 ]; then
+    echo "Dump complete: ${out}/"
+  else
+    echo "Dump failed."
+    return 1
+  fi
+}
+```
+
+## Options
+
+### `mongo_export`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | `json` | Output format: `json` or `csv` |
+| `--fields` | — | Comma-separated field list (required for CSV) |
+| `--query` | — | MongoDB query filter as an extended JSON string |
+| `--out` | `<collection>-<ts>.<fmt>` | Output file path |
+
+### `mongo_dump`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `collection` | — | Optional collection name; omit to dump the whole database |
+| `--out` | `dump-<db>-<ts>` | Output directory |
+
+Both functions use `--gzip` compression for `mongodump` and produce a timestamped output by default so repeated runs never overwrite each other.
+
+## Examples
+
+```bash
+# Export a full collection as JSON
+mongo_export "mongodb://localhost:27017" myapp users
+
+# Export specific fields only
+mongo_export "mongodb://localhost:27017" myapp users \
+  --fields _id,email,createdAt
+
+# Export with a query filter (users created in 2024)
+mongo_export "mongodb://localhost:27017" myapp users \
+  --query '{"createdAt": {"$gte": {"$date": "2024-01-01T00:00:00Z"}}}'
+
+# Export to CSV (fields required)
+mongo_export "mongodb://localhost:27017" myapp orders \
+  --format csv \
+  --fields _id,customerId,total,status \
+  --out orders-export.csv
+
+# Dump an entire database (all collections, gzip)
+mongo_dump "mongodb://localhost:27017" myapp
+
+# Dump a single collection to a custom directory
+mongo_dump "mongodb://localhost:27017" myapp events --out /backups/events-dump
+
+# Connect with credentials
+mongo_export "mongodb://admin:secret@db.example.com:27017/?authSource=admin" myapp users
+```
+
+## Notes
+
+`mongoexport` and `mongodump` are part of the [MongoDB Database Tools](https://www.mongodb.com/docs/database-tools/) package, which is installed separately from `mongod`. Install on macOS with `brew install mongodb/brew/mongodb-database-tools`.
+
+For Atlas clusters, replace the URI with your Atlas connection string (found in the Atlas UI under **Connect → Compass or mongosh**).
