@@ -1,0 +1,384 @@
+---
+title: Tauri Desktop App
+description: A lightweight cross-platform desktop application using Tauri 2 with a React + Vite frontend and a Rust backend. Produces small, performant binaries compared to Electron.
+category: templates
+language: Rust
+tags: [tauri, rust, react, desktop, cross-platform]
+repo: https://github.com/tauri-apps/tauri
+---
+
+A cross-platform desktop application that pairs a React + Vite frontend with a Rust backend via Tauri 2. Unlike Electron, Tauri renders using the OS's native WebView and ships a Rust binary instead of bundling Chromium — resulting in installers measured in megabytes rather than hundreds of megabytes.
+
+## Usage
+
+```bash
+# Install prerequisites then scaffold
+npm create tauri-app@latest my-tauri-app -- --template react-ts
+cd my-tauri-app
+npm install
+npm run tauri dev
+```
+
+## Configuration
+
+```toml
+# src-tauri/tauri.conf.json (TOML equivalent shown for readability)
+# The actual file is JSON — see src-tauri/tauri.conf.json below
+```
+
+```json
+// src-tauri/tauri.conf.json
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "my-tauri-app",
+  "version": "0.1.0",
+  "identifier": "com.example.my-tauri-app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "My Tauri App",
+        "width": 1024,
+        "height": 768,
+        "minWidth": 600,
+        "minHeight": 400,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
+```
+
+```toml
+# src-tauri/Cargo.toml
+[package]
+name = "my-tauri-app"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "my_tauri_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+```
+
+## Rust backend commands
+
+```rust
+// src-tauri/src/lib.rs
+use tauri::{AppHandle, Manager};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileInfo {
+    pub name: String,
+    pub size: u64,
+    pub path: String,
+}
+
+/// Read a text file and return its contents.
+#[tauri::command]
+async fn read_text_file(path: String) -> Result<String, String> {
+    tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("Failed to read file: {e}"))
+}
+
+/// Write text to a file, creating it if it doesn't exist.
+#[tauri::command]
+async fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    tokio::fs::write(&path, contents)
+        .await
+        .map_err(|e| format!("Failed to write file: {e}"))
+}
+
+/// Get basic metadata for a file.
+#[tauri::command]
+async fn get_file_info(path: String) -> Result<FileInfo, String> {
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| format!("Failed to stat file: {e}"))?;
+
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    Ok(FileInfo {
+        name,
+        size: meta.len(),
+        path,
+    })
+}
+
+/// Emit an event to all windows.
+#[tauri::command]
+fn notify_windows(app: AppHandle, message: String) {
+    app.emit("notification", message).ok();
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .invoke_handler(tauri::generate_handler![
+            read_text_file,
+            write_text_file,
+            get_file_info,
+            notify_windows,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+```
+
+## React frontend
+
+```typescript
+// src/lib/tauri.ts — typed wrappers around invoke
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+export interface FileInfo {
+  name: string;
+  size: number;
+  path: string;
+}
+
+export const tauriApi = {
+  readTextFile: (path: string) =>
+    invoke<string>("read_text_file", { path }),
+
+  writeTextFile: (path: string, contents: string) =>
+    invoke<void>("write_text_file", { path, contents }),
+
+  getFileInfo: (path: string) =>
+    invoke<FileInfo>("get_file_info", { path }),
+
+  notifyWindows: (message: string) =>
+    invoke<void>("notify_windows", { message }),
+
+  onNotification: (cb: (message: string) => void): Promise<UnlistenFn> =>
+    listen<string>("notification", (event) => cb(event.payload)),
+};
+```
+
+```typescript
+// src/App.tsx
+import { useState, useEffect } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { tauriApi, type FileInfo } from "./lib/tauri";
+import "./App.css";
+
+function App() {
+  const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
+  const [content, setContent] = useState("");
+  const [notification, setNotification] = useState<string | null>(null);
+
+  // Subscribe to Rust-emitted events
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    tauriApi.onNotification((msg) => setNotification(msg)).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
+
+  async function handleOpenFile() {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "Text", extensions: ["txt", "md", "json"] }],
+    });
+
+    if (!selected || typeof selected !== "string") return;
+
+    const [info, text] = await Promise.all([
+      tauriApi.getFileInfo(selected),
+      tauriApi.readTextFile(selected),
+    ]);
+
+    setFileInfo(info);
+    setContent(text);
+  }
+
+  async function handleSave() {
+    if (!fileInfo) return;
+    await tauriApi.writeTextFile(fileInfo.path, content);
+    await tauriApi.notifyWindows(`Saved ${fileInfo.name}`);
+  }
+
+  return (
+    <div className="app">
+      <header className="toolbar">
+        <button onClick={handleOpenFile}>Open file</button>
+        <button onClick={handleSave} disabled={!fileInfo}>
+          Save
+        </button>
+        {fileInfo && (
+          <span className="file-name">
+            {fileInfo.name} ({(fileInfo.size / 1024).toFixed(1)} KB)
+          </span>
+        )}
+      </header>
+
+      {notification && (
+        <div className="notification" onClick={() => setNotification(null)}>
+          {notification}
+        </div>
+      )}
+
+      <textarea
+        className="editor"
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder="Open a file to start editing…"
+        spellCheck={false}
+      />
+    </div>
+  );
+}
+
+export default App;
+```
+
+## Vite configuration
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig(async () => ({
+  plugins: [react()],
+
+  // Tauri's dev server must not open the browser
+  clearScreen: false,
+
+  server: {
+    port: 1420,
+    strictPort: true,
+    watch: {
+      // Watch the Rust sources so Vite HMR stays in sync
+      ignored: ["**/src-tauri/**"],
+    },
+  },
+
+  envPrefix: ["VITE_", "TAURI_"],
+}));
+```
+
+## README
+
+### What this includes
+
+- **Tauri 2** — Rust-powered desktop shell using the OS native WebView (WebKit / WebView2 / WebKitGTK)
+- **React 18 + Vite** — Fast HMR dev server and optimised production bundles for the frontend
+- **TypeScript** — End-to-end types across the React UI and the `invoke` boundary
+- **Rust backend commands** — `#[tauri::command]` handlers invokable from JavaScript via `invoke()`
+- **Event system** — Rust-to-frontend event emission with `app.emit()` / `listen()`
+- **Official plugins** — `tauri-plugin-dialog`, `tauri-plugin-fs`, `tauri-plugin-shell`
+- **Small binaries** — Release profile configured with LTO, `opt-level = "s"`, and `strip = true`
+
+### Prerequisites
+
+- Node.js 18+
+- Rust (install via [rustup.rs](https://rustup.rs))
+- Platform system dependencies:
+  - **macOS**: Xcode Command Line Tools (`xcode-select --install`)
+  - **Linux**: `webkit2gtk`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`
+  - **Windows**: Microsoft Visual Studio C++ Build Tools + WebView2
+
+### Create this template
+
+```bash
+# 1. Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 2. Scaffold the app (choose React + TypeScript when prompted)
+npm create tauri-app@latest my-tauri-app -- --template react-ts
+cd my-tauri-app
+
+# 3. Install JS dependencies
+npm install
+
+# 4. Add Tauri JS APIs
+npm install @tauri-apps/api @tauri-apps/plugin-dialog
+
+# 5. Add Tauri plugins to Cargo.toml (tauri-plugin-dialog, tauri-plugin-fs, tauri-plugin-shell)
+#    then register them in src-tauri/src/lib.rs
+
+# 6. Run in dev mode (starts Vite + Rust watcher simultaneously)
+npm run tauri dev
+
+# 7. Build a distributable binary
+npm run tauri build
+```
+
+### Project structure
+
+```
+my-tauri-app/
+├── src/                       # React + TypeScript frontend
+│   ├── lib/
+│   │   └── tauri.ts           # Typed invoke() wrappers
+│   ├── App.tsx
+│   ├── App.css
+│   └── main.tsx
+├── src-tauri/                 # Rust backend
+│   ├── icons/                 # App icons for all platforms
+│   ├── src/
+│   │   ├── lib.rs             # Tauri commands & app setup
+│   │   └── main.rs            # Entry point (calls lib::run())
+│   ├── Cargo.toml
+│   ├── Cargo.lock
+│   └── tauri.conf.json        # Window, bundle, security config
+├── index.html
+├── package.json
+├── tsconfig.json
+└── vite.config.ts
+```
+
+### First things to customize
+
+- `src-tauri/tauri.conf.json` — Update `productName`, `identifier` (reverse-DNS, e.g. `com.yourco.appname`), and default window dimensions
+- `src-tauri/src/lib.rs` — Add your own `#[tauri::command]` functions and register them in `generate_handler![]`
+- `src-tauri/Cargo.toml` — Add Rust crates your backend logic needs (e.g. `rusqlite`, `reqwest`, `tokio`)
+- `src/lib/tauri.ts` — Extend the typed `tauriApi` wrapper with your new commands
+- `src-tauri/icons/` — Replace placeholder icons with your application's artwork (`tauri icon path/to/app-icon.png` regenerates all sizes)
