@@ -1,0 +1,124 @@
+---
+title: Git Conflict Helpers
+description: Shell functions to list all conflicted files, open them in your editor, and mark them resolved in a single step.
+category: cli
+language: bash
+tags: [git, conflicts, merge, productivity]
+---
+
+Merge conflicts interrupt flow. These shell functions let you list every conflicted file at a glance, jump straight into your editor, and stage them all as resolved without typing repetitive `git add` commands.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`, then `source` the file or open a new terminal.
+
+```bash
+# List every file that currently has a merge conflict
+git-conflicts() {
+  local conflicts
+  conflicts=$(git diff --name-only --diff-filter=U 2>/dev/null)
+
+  if [ -z "$conflicts" ]; then
+    echo "No conflicts found."
+    return 0
+  fi
+
+  local count
+  count=$(echo "$conflicts" | wc -l | tr -d ' ')
+  echo "${count} conflicted file(s):"
+  echo "$conflicts"
+}
+
+# Open all conflicted files in $EDITOR (falls back to vim)
+git-edit-conflicts() {
+  local conflicts
+  conflicts=$(git diff --name-only --diff-filter=U 2>/dev/null)
+
+  if [ -z "$conflicts" ]; then
+    echo "No conflicts to edit."
+    return 0
+  fi
+
+  local editor="${EDITOR:-vim}"
+  echo "Opening conflicted files in $editor…"
+  # Pass each file as a separate argument so multi-file editors (nvim, code) open tabs
+  echo "$conflicts" | xargs $editor
+}
+
+# Stage all currently conflicted files as resolved
+git-resolve-all() {
+  local conflicts
+  conflicts=$(git diff --name-only --diff-filter=U 2>/dev/null)
+
+  if [ -z "$conflicts" ]; then
+    echo "Nothing to resolve."
+    return 0
+  fi
+
+  echo "Staging as resolved:"
+  echo "$conflicts"
+  echo ""
+  read -r "reply?Mark all as resolved and stage them? [y/N] "
+
+  if [[ "$reply" =~ ^[Yy]$ ]]; then
+    echo "$conflicts" | xargs git add
+    echo "Done. Run 'git status' to confirm, then commit."
+  else
+    echo "Aborted."
+  fi
+}
+
+# Resolve a single file: open in editor, then stage it
+git-resolve-file() {
+  if [ -z "$1" ]; then
+    echo "Usage: git-resolve-file <path>"
+    return 1
+  fi
+
+  local file="$1"
+
+  if ! git diff --name-only --diff-filter=U | grep -qF "$file"; then
+    echo "'$file' is not listed as conflicted."
+    return 1
+  fi
+
+  local editor="${EDITOR:-vim}"
+  $editor "$file"
+
+  read -r "reply?Stage '$file' as resolved? [y/N] "
+  if [[ "$reply" =~ ^[Yy]$ ]]; then
+    git add "$file"
+    echo "Staged."
+  else
+    echo "Aborted."
+  fi
+}
+```
+
+## Examples
+
+```bash
+# After a merge or rebase that stopped with conflicts:
+git-conflicts
+# 3 conflicted file(s):
+# src/auth/login.ts
+# src/auth/logout.ts
+# tests/auth.test.ts
+
+# Open all three in your $EDITOR at once:
+git-edit-conflicts
+
+# Resolve them one at a time with interactive staging:
+git-resolve-file src/auth/login.ts
+
+# Or stage all at once after editing manually:
+git-resolve-all
+```
+
+## Notes
+
+- `--diff-filter=U` selects only files in the **Unmerged** state, which is exactly the set git considers conflicted.
+- `git-edit-conflicts` respects `$EDITOR`. Set it in your profile (`export EDITOR=nvim`) to control which editor opens.
+- VS Code users can set `EDITOR="code --wait"` so the shell pauses until the editor window is closed before asking to stage.
+- These helpers work during both `git merge` and `git rebase` conflicts; the underlying `git diff --diff-filter=U` output is the same in both cases.
+- Never run `git-resolve-all` until you have actually fixed every conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`). Git does not verify conflict markers are gone before accepting a staged file.
