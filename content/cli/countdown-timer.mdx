@@ -1,0 +1,161 @@
+---
+title: Countdown Timer
+description: Start a countdown timer from the terminal with a notification or bell when it reaches zero, useful for Pomodoro sessions.
+category: cli
+language: bash
+tags: [misc, timer, productivity, utilities]
+---
+
+Add this function to your `~/.zshrc` or `~/.bashrc` to start a countdown timer directly from the terminal. It displays a live ticking countdown and fires a system notification (macOS) or a terminal bell (Linux) when time is up.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+timer() {
+  local duration="" label="Timer" notify=1
+
+  # Parse flags
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -l|--label)
+        label="$2"; shift 2 ;;
+      --no-notify)
+        notify=0; shift ;;
+      -h|--help)
+        echo "Usage: timer [options] <duration>"
+        echo ""
+        echo "Duration format:"
+        echo "  25m        25 minutes"
+        echo "  90s        90 seconds"
+        echo "  1h30m      1 hour 30 minutes"
+        echo "  1h30m45s   1 hour 30 minutes 45 seconds"
+        echo ""
+        echo "Options:"
+        echo "  -l, --label <name>   Label shown in the notification (default: Timer)"
+        echo "  --no-notify          Ring terminal bell only, skip OS notification"
+        echo ""
+        echo "Examples:"
+        echo "  timer 25m"
+        echo "  timer 5m -l \"Short break\""
+        echo "  timer 1h --no-notify"
+        return 0 ;;
+      *)
+        duration="$1"; shift ;;
+    esac
+  done
+
+  if [[ -z "$duration" ]]; then
+    echo "Usage: timer <duration>  (e.g. 25m, 90s, 1h30m)" >&2
+    return 1
+  fi
+
+  # Parse duration string into total seconds
+  local total_seconds=0
+  local remaining="$duration"
+
+  # Hours
+  if [[ "$remaining" =~ ([0-9]+)h ]]; then
+    total_seconds=$(( total_seconds + ${match[1]:-${BASH_REMATCH[1]}} * 3600 ))
+    remaining="${remaining/${match[1]:-${BASH_REMATCH[1]}}h/}"
+  fi
+  # Minutes
+  if [[ "$remaining" =~ ([0-9]+)m ]]; then
+    total_seconds=$(( total_seconds + ${match[1]:-${BASH_REMATCH[1]}} * 60 ))
+    remaining="${remaining/${match[1]:-${BASH_REMATCH[1]}}m/}"
+  fi
+  # Seconds
+  if [[ "$remaining" =~ ([0-9]+)s ]]; then
+    total_seconds=$(( total_seconds + ${match[1]:-${BASH_REMATCH[1]}} ))
+  fi
+
+  if (( total_seconds <= 0 )); then
+    echo "Error: could not parse duration '${duration}'. Use formats like 25m, 90s, 1h30m." >&2
+    return 1
+  fi
+
+  local end_time=$(( $(date +%s) + total_seconds ))
+  echo "Starting timer: ${label} — ${duration}"
+  echo "Press Ctrl+C to cancel."
+  echo ""
+
+  # Countdown loop
+  while true; do
+    local now=$(date +%s)
+    local left=$(( end_time - now ))
+
+    if (( left <= 0 )); then
+      break
+    fi
+
+    local h=$(( left / 3600 ))
+    local m=$(( (left % 3600) / 60 ))
+    local s=$(( left % 60 ))
+
+    # Overwrite same line
+    printf "\r  \e[1m%02d:%02d:%02d\e[0m  remaining " "$h" "$m" "$s"
+    sleep 1
+  done
+
+  printf "\r  \e[1;32m00:00:00\e[0m  — ${label} done!        \n"
+
+  # Send notification
+  if (( notify )); then
+    if [[ "$(uname)" == "Darwin" ]]; then
+      osascript -e "display notification \"${label} is done!\" with title \"Timer\" sound name \"Glass\"" 2>/dev/null
+    elif command -v notify-send &>/dev/null; then
+      notify-send "Timer" "${label} is done!"
+    fi
+  fi
+
+  # Terminal bell fallback
+  printf '\a'
+}
+```
+
+After adding the function, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# 25-minute Pomodoro work session
+timer 25m
+
+# 5-minute break with a custom label
+timer 5m -l "Short break"
+
+# 1-hour deep work block
+timer 1h -l "Deep work"
+
+# 90 seconds
+timer 90s
+
+# Mixed duration
+timer 1h30m -l "Meeting"
+
+# Suppress OS notification, terminal bell only
+timer 10m --no-notify
+```
+
+## Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `-l / --label <name>` | `Timer` | Label shown in the OS notification and terminal output |
+| `--no-notify` | — | Skip the OS notification; terminal bell still fires |
+
+## How it works
+
+The function converts the human-friendly duration string (e.g. `1h30m`) into total seconds, then loops with `sleep 1`, printing the remaining time over the same terminal line using a carriage return (`\r`). When the countdown reaches zero, it fires an `osascript` notification on macOS or a `notify-send` desktop notification on Linux, and prints a terminal bell character (`\a`) as a universal fallback.
+
+## Notes
+
+- On macOS, the `Glass` sound plays automatically with the notification. Change it to any sound in `/System/Library/Sounds/` (e.g. `Ping`, `Sosumi`).
+- On Linux, `notify-send` is provided by `libnotify-bin` (`sudo apt-get install libnotify-bin`).
+- The live countdown uses ANSI escape codes for bold text. If your terminal does not support ANSI, the codes will appear as raw characters — remove the `\e[1m` / `\e[0m` wrappers to disable formatting.
+- Pressing Ctrl+C will cancel the timer cleanly; no cleanup is needed.
