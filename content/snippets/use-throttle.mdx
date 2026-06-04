@@ -1,0 +1,117 @@
+---
+title: useThrottle Hook
+description: Returns a throttled version of a value or callback that updates at most once per interval. Useful for scroll or resize event handlers inside components.
+category: snippets
+language: typescript
+tags: [react, hooks, throttle, performance]
+---
+
+Wraps a value so that downstream effects and renders triggered by it fire at most once per interval, no matter how quickly the source value changes. Pairs well with scroll position, mouse coordinates, or any rapidly-updating state that drives expensive work.
+
+## Usage
+
+```typescript
+import { useState, useEffect, useRef } from 'react'
+
+function useThrottle<T>(value: T, intervalMs: number): T {
+  const [throttledValue, setThrottledValue] = useState<T>(value)
+  const lastUpdated = useRef<number>(0)
+  const timeoutId = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const now = Date.now()
+    const remaining = intervalMs - (now - lastUpdated.current)
+
+    if (remaining <= 0) {
+      // Interval has elapsed — update immediately
+      if (timeoutId.current !== null) {
+        clearTimeout(timeoutId.current)
+        timeoutId.current = null
+      }
+      lastUpdated.current = now
+      setThrottledValue(value)
+    } else if (timeoutId.current === null) {
+      // Schedule a trailing update so the latest value is never dropped
+      timeoutId.current = setTimeout(() => {
+        lastUpdated.current = Date.now()
+        timeoutId.current = null
+        setThrottledValue(value)
+      }, remaining)
+    }
+
+    return () => {
+      if (timeoutId.current !== null) {
+        clearTimeout(timeoutId.current)
+        timeoutId.current = null
+      }
+    }
+  }, [value, intervalMs])
+
+  return throttledValue
+}
+
+export default useThrottle
+```
+
+## Examples
+
+```typescript
+import { useState, useEffect } from 'react'
+import useThrottle from './useThrottle'
+
+function ScrollTracker() {
+  const [scrollY, setScrollY] = useState(0)
+  const throttledScrollY = useThrottle(scrollY, 200)
+
+  useEffect(() => {
+    const handleScroll = () => setScrollY(window.scrollY)
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  // This effect runs at most every 200 ms instead of on every scroll event
+  useEffect(() => {
+    console.log('Throttled scroll position:', throttledScrollY)
+  }, [throttledScrollY])
+
+  return <p>Scroll Y: {throttledScrollY}px</p>
+}
+```
+
+```typescript
+// Throttle window resize to avoid expensive layout recalculations
+function useWindowWidth(intervalMs = 150): number {
+  const [width, setWidth] = useState(window.innerWidth)
+  const throttledWidth = useThrottle(width, intervalMs)
+
+  useEffect(() => {
+    const handleResize = () => setWidth(window.innerWidth)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  return throttledWidth
+}
+```
+
+## Options
+
+| Parameter    | Type   | Description                                                   |
+|--------------|--------|---------------------------------------------------------------|
+| `value`      | `T`    | The value to throttle. Any type is accepted.                 |
+| `intervalMs` | number | Minimum milliseconds between consecutive state updates.       |
+
+## How it works
+
+The hook tracks the timestamp of the last committed update in a `ref` (so it never triggers extra renders). On each new `value`:
+
+- If the interval has elapsed, the throttled state is updated immediately.
+- Otherwise, a single trailing `setTimeout` is scheduled for the remaining interval so the most recent value is always delivered eventually.
+
+The cleanup function cancels any pending timer when the component unmounts or before the next effect run, preventing stale-closure updates.
+
+## Notes
+
+- This is a **leading + trailing** throttle — the first value in a burst is applied immediately and the last one is never silently dropped.
+- For **leading-only** behaviour (drop the trailing call), remove the `else if` branch that schedules the timeout.
+- Because the update is asynchronous, `throttledValue` will momentarily lag behind `value` by up to `intervalMs`.
