@@ -1,0 +1,101 @@
+---
+title: useWindowSize Hook
+description: Returns the current window width and height, updating on resize with debouncing to avoid excessive renders. Returns undefined during SSR.
+category: snippets
+language: typescript
+tags: [react, hooks, window, responsive]
+---
+
+Subscribes to the window `resize` event and returns `{ width, height }`, debounced so rapid resizing doesn't trigger a re-render on every pixel. Both values are `undefined` on the server, making it safe to use in Next.js.
+
+## Usage
+
+```typescript
+import { useWindowSize } from '@/hooks/use-window-size'
+
+export default function ResponsiveLayout() {
+  const { width, height } = useWindowSize()
+
+  if (width === undefined) return null // SSR guard
+
+  return (
+    <p>
+      Viewport: {width} x {height}
+      {width < 768 ? ' (mobile)' : ' (desktop)'}
+    </p>
+  )
+}
+```
+
+```typescript
+import { useState, useEffect } from 'react'
+
+interface WindowSize {
+  width: number | undefined
+  height: number | undefined
+}
+
+export function useWindowSize(debounceMs: number = 150): WindowSize {
+  const [size, setSize] = useState<WindowSize>({
+    width: undefined,
+    height: undefined,
+  })
+
+  useEffect(() => {
+    let timerId: ReturnType<typeof setTimeout>
+
+    function handleResize() {
+      clearTimeout(timerId)
+      timerId = setTimeout(() => {
+        setSize({
+          width: window.innerWidth,
+          height: window.innerHeight,
+        })
+      }, debounceMs)
+    }
+
+    // Set the initial size immediately (no debounce needed on mount).
+    setSize({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })
+
+    window.addEventListener('resize', handleResize)
+
+    return () => {
+      clearTimeout(timerId)
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [debounceMs])
+
+  return size
+}
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `debounceMs` | `number` | `150` | Time in ms to wait after the last resize event before updating state. Pass `0` to disable debouncing. |
+
+## Examples
+
+Conditionally render a sidebar only on wide screens:
+
+```typescript
+const { width } = useWindowSize()
+const showSidebar = (width ?? 0) >= 1024
+```
+
+Pick an image resolution based on viewport width:
+
+```typescript
+const { width } = useWindowSize()
+const imgSrc = width && width > 768 ? '/hero-lg.webp' : '/hero-sm.webp'
+```
+
+## Notes
+
+- `width` and `height` are `undefined` during SSR and on the first render before `useEffect` runs. Always guard against `undefined` before comparing to a breakpoint.
+- Uses `window.innerWidth` / `window.innerHeight`, which include the scrollbar width on some browsers. Use `document.documentElement.clientWidth` inside the handler if you need the layout viewport instead.
+- The initial size is set synchronously inside `useEffect` (no debounce) so the component gets real dimensions on its very first client-side render.
