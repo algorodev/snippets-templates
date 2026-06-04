@@ -1,0 +1,105 @@
+---
+title: pnpm Workspace Config
+description: A pnpm-workspace.yaml configuration defining workspace packages for a monorepo. Includes catalog entries for sharing dependency versions across packages.
+category: configs
+language: yaml
+tags: [pnpm, monorepo, workspace, package-manager]
+---
+
+A `pnpm-workspace.yaml` at the monorepo root declares which directories are workspace packages and, with pnpm v9+, defines a shared dependency version catalog so every package uses the same version of common libraries.
+
+## Usage
+
+```yaml
+# pnpm-workspace.yaml
+
+# Declare workspace package locations
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "tools/*"
+  # Exclude internal test fixtures
+  - "!**/test-fixtures/**"
+
+# Catalog: pin shared dependency versions in one place (pnpm v9+)
+# Reference them in package.json with "catalog:" instead of a version string
+catalog:
+  # TypeScript ecosystem
+  typescript: "^5.8.0"
+  tsup: "^8.5.0"
+
+  # React
+  react: "^19.1.0"
+  react-dom: "^19.1.0"
+  "@types/react": "^19.1.0"
+  "@types/react-dom": "^19.1.0"
+
+  # Testing
+  vitest: "^3.2.0"
+  "@testing-library/react": "^16.3.0"
+  "@testing-library/user-event": "^14.6.0"
+
+  # Linting & formatting
+  eslint: "^9.28.0"
+  prettier: "^3.5.0"
+
+  # Build
+  vite: "^6.3.0"
+```
+
+Then in any `packages/*/package.json` use `"catalog:"` as the version:
+
+```json
+{
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "eslint": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  }
+}
+```
+
+## Options
+
+| Key | Description |
+|-----|-------------|
+| `packages` | Glob patterns for workspace package directories. pnpm looks for a `package.json` in each matched directory. |
+| `catalog` | Named `default` catalog. Packages reference it with `"catalog:"`. |
+| `catalogs.<name>` | Named catalogs for groups of packages (e.g. `catalogs.react18`). Packages reference with `"catalog:react18"`. |
+
+## Multiple catalogs
+
+Use named catalogs to maintain multiple versions of the same dependency (e.g. to support both React 18 and React 19 in a component library):
+
+```yaml
+catalogs:
+  react18:
+    react: "^18.3.0"
+    react-dom: "^18.3.0"
+    "@types/react": "^18.3.0"
+
+  react19:
+    react: "^19.1.0"
+    react-dom: "^19.1.0"
+    "@types/react": "^19.1.0"
+```
+
+Reference in `package.json`:
+
+```json
+{
+  "peerDependencies": {
+    "react": "catalog:react18 || catalog:react19"
+  }
+}
+```
+
+## Notes
+
+The catalog feature requires pnpm v9.0 or later. Run `pnpm --version` to check. If you are on an older version, remove the `catalog:` block and pin versions manually in each `package.json`.
+
+Running `pnpm update --recursive` in the workspace root updates all packages and the catalog in one pass, keeping the lockfile consistent across the entire monorepo.
