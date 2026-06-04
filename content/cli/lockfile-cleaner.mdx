@@ -1,0 +1,144 @@
+---
+title: Lockfile Cleaner
+description: Delete node_modules and the appropriate lockfile for the detected package manager, then reinstall from scratch cleanly.
+category: cli
+language: bash
+tags: [node, lockfile, cleanup, npm]
+---
+
+Wipe `node_modules` and the active lockfile, then reinstall from `package.json` — useful when a botched install, a branch switch, or a package manager migration leaves the tree in a broken state.
+
+## Usage
+
+```bash
+#!/usr/bin/env bash
+# clean-install.sh — nuke node_modules + lockfile and reinstall from scratch
+# Usage: ./clean-install.sh [--dry-run] [directory]
+set -euo pipefail
+
+DRY_RUN=false
+TARGET="."
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run|-n) DRY_RUN=true ;;
+    *) TARGET="$arg" ;;
+  esac
+done
+
+# Resolve absolute path
+TARGET=$(cd "$TARGET" && pwd)
+
+if [ ! -f "$TARGET/package.json" ]; then
+  echo "Error: no package.json found in $TARGET" >&2
+  exit 1
+fi
+
+# Detect package manager from lockfile
+detect_pm() {
+  if [ -f "$TARGET/bun.lockb" ] || [ -f "$TARGET/bun.lock" ]; then
+    echo "bun"
+  elif [ -f "$TARGET/pnpm-lock.yaml" ]; then
+    echo "pnpm"
+  elif [ -f "$TARGET/yarn.lock" ]; then
+    echo "yarn"
+  elif [ -f "$TARGET/package-lock.json" ]; then
+    echo "npm"
+  else
+    echo "npm"
+  fi
+}
+
+# Map package manager to its lockfile name
+lockfile_for() {
+  case "$1" in
+    bun)  echo "bun.lockb" ;;   # bun v1; bun v2 uses bun.lock
+    pnpm) echo "pnpm-lock.yaml" ;;
+    yarn) echo "yarn.lock" ;;
+    npm)  echo "package-lock.json" ;;
+  esac
+}
+
+run() {
+  if $DRY_RUN; then
+    echo "[dry-run] $*"
+  else
+    echo "→ $*"
+    "$@"
+  fi
+}
+
+PM=$(detect_pm)
+LOCKFILE=$(lockfile_for "$PM")
+
+echo "Package manager : $PM"
+echo "Lockfile        : $LOCKFILE"
+echo "Target          : $TARGET"
+$DRY_RUN && echo "(dry-run mode — nothing will be deleted)"
+echo ""
+
+# Remove node_modules
+if [ -d "$TARGET/node_modules" ]; then
+  run rm -rf "$TARGET/node_modules"
+else
+  echo "node_modules not present — skipping"
+fi
+
+# Remove lockfile
+if [ -f "$TARGET/$LOCKFILE" ]; then
+  run rm -f "$TARGET/$LOCKFILE"
+  # bun v2 uses bun.lock (text), v1 uses bun.lockb (binary) — remove both if present
+  if [ "$PM" = "bun" ] && [ -f "$TARGET/bun.lock" ]; then
+    run rm -f "$TARGET/bun.lock"
+  fi
+else
+  echo "$LOCKFILE not present — skipping"
+fi
+
+# Reinstall
+echo ""
+echo "Reinstalling with $PM..."
+(cd "$TARGET" && run "$PM" install)
+
+echo ""
+echo "Done. Fresh install complete."
+```
+
+## Examples
+
+```bash
+chmod +x clean-install.sh
+
+# Clean and reinstall the current project
+./clean-install.sh
+
+# Preview what would be deleted without doing it
+./clean-install.sh --dry-run
+
+# Target a specific subdirectory (e.g. a workspace package)
+./clean-install.sh packages/ui
+
+# Combine both
+./clean-install.sh --dry-run packages/api
+```
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run`, `-n` | Print what would be removed without deleting anything |
+| `[directory]` | Path to the project root (default: current directory) |
+
+## How it works
+
+1. Verifies a `package.json` exists in the target directory.
+2. Reads whichever lockfile is present to determine the active package manager (bun → pnpm → yarn → npm).
+3. Removes `node_modules/` with `rm -rf`.
+4. Removes the detected lockfile so the reinstall generates a fresh one from `package.json` version ranges.
+5. Runs `<pm> install` from within the target directory.
+
+## Notes
+
+- Removing the lockfile means version ranges in `package.json` will resolve to their **latest matching** versions. This is intentional for a clean rebuild but may update transitive dependencies. Commit the new lockfile after verifying things work.
+- For a monorepo, run the script from the **root** — workspace package managers handle the full tree from there.
+- The `bun.lockb` binary lockfile (bun v1) and `bun.lock` text lockfile (bun v2) are both removed when bun is detected.
