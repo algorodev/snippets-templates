@@ -1,0 +1,96 @@
+---
+title: Scroll To Element
+description: Smoothly scrolls the page to a target element with an optional offset for fixed headers. Respects the user's prefers-reduced-motion setting by falling back to instant scroll.
+category: snippets
+language: typescript
+tags: [dom, utils, scroll, accessibility]
+---
+
+Scrolls the viewport to bring a DOM element into view, accounting for a fixed header offset and the user's motion preference. When `prefers-reduced-motion: reduce` is set, the scroll is instantaneous instead of animated.
+
+## Usage
+
+```typescript
+interface ScrollToElementOptions {
+  /** Pixels to offset from the top — useful for sticky/fixed headers. Defaults to 0. */
+  offset?: number
+  /** Scroll behaviour when reduced motion is NOT preferred. Defaults to "smooth". */
+  behavior?: ScrollBehavior
+}
+
+function scrollToElement(
+  element: Element | null,
+  options: ScrollToElementOptions = {}
+): void {
+  if (!element) return
+
+  const { offset = 0, behavior = 'smooth' } = options
+
+  const prefersReducedMotion = window.matchMedia(
+    '(prefers-reduced-motion: reduce)'
+  ).matches
+
+  const top =
+    element.getBoundingClientRect().top +
+    window.scrollY -
+    offset
+
+  window.scrollTo({
+    top,
+    behavior: prefersReducedMotion ? 'instant' : behavior,
+  })
+}
+
+export default scrollToElement
+```
+
+## Examples
+
+```typescript
+// Scroll to an element by ID, no offset
+const section = document.getElementById('features')
+scrollToElement(section)
+
+// Compensate for a 64 px fixed navbar
+scrollToElement(section, { offset: 64 })
+
+// Use from a click handler
+document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
+  anchor.addEventListener('click', (e) => {
+    e.preventDefault()
+    const id = (anchor as HTMLAnchorElement).hash.slice(1)
+    const target = document.getElementById(id)
+    scrollToElement(target, { offset: 72 })
+  })
+})
+
+// React usage
+function TableOfContents({ headings }: { headings: string[] }) {
+  function handleClick(id: string) {
+    scrollToElement(document.getElementById(id), { offset: 80 })
+  }
+
+  return (
+    <nav>
+      {headings.map((h) => (
+        <button key={h} onClick={() => handleClick(h)}>
+          {h}
+        </button>
+      ))}
+    </nav>
+  )
+}
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `offset` | `number` | `0` | Pixels subtracted from the target top position, e.g. the height of a fixed header. |
+| `behavior` | `ScrollBehavior` | `"smooth"` | Passed to `window.scrollTo` when the user has not requested reduced motion. |
+
+## Notes
+
+- Passing `null` as the element is a no-op, so you can safely pass the result of `document.getElementById` without a null check at the call site.
+- `getBoundingClientRect().top` is relative to the viewport; adding `window.scrollY` converts it to an absolute document position.
+- The `'instant'` behaviour is part of the CSSOM View spec and is supported in all modern browsers. For older environments it degrades gracefully — the browser will still scroll, just without the smooth animation.
