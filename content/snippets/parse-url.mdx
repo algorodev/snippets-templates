@@ -1,0 +1,76 @@
+---
+title: Parse URL
+description: Parses a URL string into its constituent parts (protocol, host, pathname, query params, hash) as a plain object. Works in Node.js and browser environments.
+category: snippets
+language: typescript
+tags: [url, utils, parsing]
+---
+
+Wraps the built-in `URL` constructor to return a plain object with all the parts you typically need. Returns `null` for invalid or unparseable URLs instead of throwing.
+
+```typescript
+interface ParsedURL {
+  protocol: string
+  host: string
+  hostname: string
+  port: string
+  pathname: string
+  search: string
+  params: Record<string, string>
+  hash: string
+  href: string
+  origin: string
+}
+
+function parseURL(url: string, base?: string): ParsedURL | null {
+  try {
+    const parsed = new URL(url, base)
+    const params: Record<string, string> = {}
+    parsed.searchParams.forEach((value, key) => {
+      params[key] = value
+    })
+    return {
+      protocol: parsed.protocol,
+      host: parsed.host,
+      hostname: parsed.hostname,
+      port: parsed.port,
+      pathname: parsed.pathname,
+      search: parsed.search,
+      params,
+      hash: parsed.hash,
+      href: parsed.href,
+      origin: parsed.origin,
+    }
+  } catch {
+    return null
+  }
+}
+
+export default parseURL
+```
+
+## Usage
+
+```typescript
+const result = parseURL('https://example.com:8080/api/users?page=2&limit=10#section')
+
+// result:
+// {
+//   protocol: 'https:',
+//   host: 'example.com:8080',
+//   hostname: 'example.com',
+//   port: '8080',
+//   pathname: '/api/users',
+//   search: '?page=2&limit=10',
+//   params: { page: '2', limit: '10' },
+//   hash: '#section',
+//   href: 'https://example.com:8080/api/users?page=2&limit=10#section',
+//   origin: 'https://example.com:8080',
+// }
+```
+
+## Notes
+
+- Pass an optional `base` string as the second argument to resolve relative URLs: `parseURL('/about', 'https://example.com')`.
+- When a query key appears more than once, only the last value is kept in `params`. Use `new URL(...).searchParams.getAll(key)` directly if you need multi-value support.
+- Returns `null` rather than throwing, so you can safely call it without a try/catch at the call site.
