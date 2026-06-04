@@ -1,0 +1,230 @@
+---
+title: Rate Limiter (Python)
+description: A token-bucket rate limiter class that can be used as a decorator or context manager for both sync and async functions. Configurable rate, burst size, and wait behaviour.
+category: snippets
+language: python
+tags: [utils, rate-limiting, async, performance]
+---
+
+A token-bucket rate limiter that works as a decorator or context manager for both synchronous and `async` code. Tokens refill continuously at the configured rate; a burst allowance lets a caller consume multiple tokens at once. When the bucket is empty the caller either waits or receives an immediate `RateLimitError`.
+
+## Usage
+
+```python
+import asyncio
+import time
+import threading
+from typing import Any, Callable, TypeVar
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+class RateLimitError(Exception):
+    """Raised when a call is rejected because no tokens are available and wait=False."""
+
+
+class RateLimiter:
+    """Token-bucket rate limiter usable as a decorator or context manager.
+
+    Args:
+        rate: Number of tokens refilled per second.
+        burst: Maximum token capacity (peak burst size). Defaults to *rate*.
+        wait: If ``True`` (default), block until a token is available.
+              If ``False``, raise :exc:`RateLimitError` immediately.
+
+    Example::
+
+        limiter = RateLimiter(rate=10, burst=20)
+
+        @limiter
+        def call_api(endpoint: str) -> dict:
+            ...
+
+        async with RateLimiter(rate=5) as lim:
+            await lim.async_acquire()
+            ...
+    """
+
+    def __init__(
+        self,
+        rate: float,
+        burst: float | None = None,
+        wait: bool = True,
+    ) -> None:
+        if rate <= 0:
+            raise ValueError(f"rate must be positive, got {rate!r}")
+        self._rate = rate
+        self._burst = burst if burst is not None else rate
+        self._wait = wait
+        self._tokens: float = self._burst
+        self._last: float = time.monotonic()
+        self._lock = threading.Lock()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _refill(self) -> None:
+        """Add tokens based on elapsed time (call while holding the lock)."""
+        now = time.monotonic()
+        elapsed = now - self._last
+        self._tokens = min(self._burst, self._tokens + elapsed * self._rate)
+        self._last = now
+
+    def _consume(self, tokens: float = 1.0) -> float:
+        """Return the number of seconds to wait (0 if tokens were available)."""
+        with self._lock:
+            self._refill()
+            if self._tokens >= tokens:
+                self._tokens -= tokens
+                return 0.0
+            # Seconds until enough tokens are available
+            return (tokens - self._tokens) / self._rate
+
+    # ------------------------------------------------------------------
+    # Synchronous API
+    # ------------------------------------------------------------------
+
+    def acquire(self, tokens: float = 1.0) -> None:
+        """Acquire *tokens* from the bucket, blocking or raising as configured."""
+        wait_for = self._consume(tokens)
+        if wait_for == 0.0:
+            return
+        if not self._wait:
+            raise RateLimitError(
+                f"Rate limit exceeded — retry in {wait_for:.3f}s"
+            )
+        time.sleep(wait_for)
+
+    # ------------------------------------------------------------------
+    # Asynchronous API
+    # ------------------------------------------------------------------
+
+    async def async_acquire(self, tokens: float = 1.0) -> None:
+        """Async version of :meth:`acquire` — uses ``asyncio.sleep`` instead of blocking."""
+        wait_for = self._consume(tokens)
+        if wait_for == 0.0:
+            return
+        if not self._wait:
+            raise RateLimitError(
+                f"Rate limit exceeded — retry in {wait_for:.3f}s"
+            )
+        await asyncio.sleep(wait_for)
+
+    # ------------------------------------------------------------------
+    # Decorator
+    # ------------------------------------------------------------------
+
+    def __call__(self, func: F) -> F:
+        """Decorate a sync or async callable to be rate-limited."""
+        import functools
+
+        if asyncio.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                await self.async_acquire()
+                return await func(*args, **kwargs)
+            return async_wrapper  # type: ignore[return-value]
+
+        @functools.wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            self.acquire()
+            return func(*args, **kwargs)
+
+        return sync_wrapper  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> "RateLimiter":
+        self.acquire()
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> "RateLimiter":
+        await self.async_acquire()
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        pass
+```
+
+## Examples
+
+```python
+# --- Decorator on a sync function ---
+
+limiter = RateLimiter(rate=5, burst=10)  # 5 calls/s, burst up to 10
+
+@limiter
+def fetch_data(url: str) -> str:
+    # ... requests.get(url) ...
+    return f"data from {url}"
+
+for url in urls:
+    fetch_data(url)  # automatically throttled to 5 calls/s
+
+
+# --- Decorator on an async function ---
+
+api_limiter = RateLimiter(rate=2)
+
+@api_limiter
+async def post_event(payload: dict) -> None:
+    # ... await session.post(...) ...
+    pass
+
+await asyncio.gather(*[post_event(p) for p in payloads])
+
+
+# --- Context manager (sync) ---
+
+upload_limiter = RateLimiter(rate=10, wait=False)
+
+for chunk in chunks:
+    try:
+        with upload_limiter:
+            upload(chunk)
+    except RateLimitError as exc:
+        print(f"Skipping chunk: {exc}")
+
+
+# --- Async context manager ---
+
+limiter = RateLimiter(rate=3)
+
+async def run() -> None:
+    async with limiter:
+        result = await slow_api_call()
+    return result
+
+
+# --- Non-integer token costs ---
+
+heavy_limiter = RateLimiter(rate=1.0, burst=5.0)
+
+heavy_limiter.acquire(tokens=2.0)   # costs two tokens
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `rate` | `float` | required | Tokens refilled per second. |
+| `burst` | `float \| None` | `rate` | Maximum token capacity. Allows short bursts above the sustained rate. |
+| `wait` | `bool` | `True` | Block (`True`) or raise `RateLimitError` (`False`) when the bucket is empty. |
+
+## How it works
+
+The token bucket algorithm maintains a counter (`_tokens`) that drains by 1 per call and refills continuously at `rate` tokens per second up to `burst`. Each call to `_consume` first tops up `_tokens` based on elapsed monotonic time, then deducts the requested amount. If the bucket is empty the deficit converts directly to a sleep duration (`deficit / rate`), which is either awaited or raised as an error depending on the `wait` flag.
+
+A `threading.Lock` guards `_refill` and the token deduction so the limiter is safe to share across threads. In async contexts the lock is released before `asyncio.sleep`, so the event loop is never blocked.
+
+## Notes
+
+- A single `RateLimiter` instance is shared state. Create one instance per resource or endpoint to apply independent limits.
+- `burst` should be at least `rate` (one full second's worth) to avoid always-exhausted buckets under normal load.
+- For distributed rate limiting across multiple processes or machines, replace the in-process bucket with a Redis-backed implementation (e.g. using `INCR` + `EXPIRE` or a Lua script).
