@@ -1,0 +1,95 @@
+---
+title: Validate Phone Number
+description: Validates international phone numbers in E.164 format, optionally accepting common formatted variants with dashes and parentheses. Returns a normalised E.164 string on success.
+category: snippets
+language: typescript
+tags: [validation, utils, phone]
+---
+
+Parses and validates a phone number string against the E.164 format, also accepting common human-readable variants such as `+1 (800) 555-0100`. On success it returns the number stripped down to its canonical `+<digits>` form.
+
+## Usage
+
+```typescript
+export interface PhoneValidationResult {
+  valid: boolean
+  e164: string | null
+  error?: string
+}
+
+/**
+ * Validates a phone number and normalises it to E.164 format.
+ *
+ * Accepted input examples:
+ *   +14155552671
+ *   +1 415 555 2671
+ *   +1 (415) 555-2671
+ *   001 415 555 2671
+ *
+ * @param input - Raw phone number string.
+ * @returns Result object with validity flag and normalised E.164 string.
+ */
+function isPhoneNumber(input: string): PhoneValidationResult {
+  if (!input || typeof input !== 'string') {
+    return { valid: false, e164: null, error: 'Input must be a non-empty string.' }
+  }
+
+  // Strip leading IDD prefix (00 or 011) and replace with +
+  let normalised = input.trim().replace(/^00/, '+').replace(/^011/, '+')
+
+  // Remove all formatting characters: spaces, dashes, dots, parentheses
+  normalised = normalised.replace(/[\s\-().]/g, '')
+
+  // Must start with + after normalisation
+  if (!normalised.startsWith('+')) {
+    return { valid: false, e164: null, error: 'Phone number must include a country code (e.g. +1).' }
+  }
+
+  // E.164: + followed by 7–15 digits
+  const e164Regex = /^\+[1-9]\d{6,14}$/
+  if (!e164Regex.test(normalised)) {
+    return {
+      valid: false,
+      e164: null,
+      error: 'Phone number must be between 7 and 15 digits and start with a valid country code.',
+    }
+  }
+
+  return { valid: true, e164: normalised }
+}
+
+export default isPhoneNumber
+```
+
+## Examples
+
+```typescript
+isPhoneNumber('+14155552671')
+// { valid: true, e164: '+14155552671' }
+
+isPhoneNumber('+1 (415) 555-2671')
+// { valid: true, e164: '+14155552671' }
+
+isPhoneNumber('0014155552671')
+// { valid: true, e164: '+14155552671' }
+
+isPhoneNumber('+44 20 7946 0958')
+// { valid: true, e164: '+442079460958' }
+
+isPhoneNumber('555-1234')
+// { valid: false, e164: null, error: 'Phone number must include a country code (e.g. +1).' }
+
+isPhoneNumber('+1 800')
+// { valid: false, e164: null, error: 'Phone number must be between 7 and 15 digits...' }
+```
+
+## How it works
+
+1. Leading IDD prefixes (`00`, `011`) are rewritten to `+` so users who omit the `+` sign still get a clean result.
+2. All formatting characters — spaces, hyphens, dots, and parentheses — are stripped, leaving only digits and the leading `+`.
+3. The resulting string is tested against the E.164 regex: a `+`, a non-zero country-code digit, and between 6 and 14 additional digits (total 7–15 digits after the `+`).
+
+## Notes
+
+- This validator checks structural validity only. It does not verify whether the number is actually assigned to a subscriber. Use a service such as Twilio Lookup or libphonenumber-js for that.
+- 64-bit EUI and premium-rate number quirks are outside the scope of E.164; a library like `libphonenumber-js` handles those edge cases.
