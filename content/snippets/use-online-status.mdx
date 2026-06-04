@@ -1,0 +1,79 @@
+---
+title: useOnlineStatus Hook
+description: Returns a boolean indicating whether the browser is currently online, updating reactively on network changes. Falls back to true in SSR environments.
+category: snippets
+language: typescript
+tags: [react, hooks, network, browser]
+---
+
+Tracks the browser's network connectivity in real time by subscribing to the `online` and `offline` window events, giving your UI an always-accurate online/offline signal without any polling.
+
+## Usage
+
+```typescript
+import { useEffect, useState } from 'react'
+
+function useOnlineStatus(): boolean {
+  const [isOnline, setIsOnline] = useState<boolean>(() => {
+    // navigator is undefined in SSR — default to true
+    if (typeof navigator === 'undefined') return true
+    return navigator.onLine
+  })
+
+  useEffect(() => {
+    function handleOnline() {
+      setIsOnline(true)
+    }
+
+    function handleOffline() {
+      setIsOnline(false)
+    }
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
+  return isOnline
+}
+
+export { useOnlineStatus }
+```
+
+## Examples
+
+```typescript
+import { useOnlineStatus } from './use-online-status'
+
+function NetworkBanner() {
+  const isOnline = useOnlineStatus()
+
+  if (isOnline) return null
+
+  return (
+    <div role="alert" style={{ background: '#f87171', padding: '0.5rem 1rem' }}>
+      You are offline. Some features may not be available.
+    </div>
+  )
+}
+
+function SyncButton() {
+  const isOnline = useOnlineStatus()
+
+  return (
+    <button disabled={!isOnline} onClick={() => syncData()}>
+      {isOnline ? 'Sync now' : 'Offline — sync unavailable'}
+    </button>
+  )
+}
+```
+
+## Notes
+
+- `navigator.onLine` reflects the browser's best guess at connectivity. A `true` value means the device has a network interface up, not necessarily that the server is reachable. For a reliable connectivity check, pair this hook with a lightweight health-check request.
+- The lazy `useState` initialiser reads `navigator.onLine` once on mount, so the initial render is always accurate on the client without needing an extra effect.
+- Safe to use in Next.js and other SSR frameworks — the `typeof navigator === 'undefined'` guard prevents a `ReferenceError` during server-side rendering.
