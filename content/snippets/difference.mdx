@@ -1,0 +1,82 @@
+---
+title: Array Difference
+description: Returns elements present in the first array but not in subsequent arrays. Supports a key selector for comparing arrays of complex objects.
+category: snippets
+language: typescript
+tags: [array, utils, set, comparison]
+---
+
+Computes the set difference: elements from the first array that do not appear in any of the subsequent arrays. A key selector makes it easy to compare objects by a specific field (like `id`) rather than by reference or full deep equality.
+
+## Usage
+
+```typescript
+type KeySelector<T> = (item: T) => unknown
+
+function difference<T>(
+  first: T[],
+  ...rest: T[][]
+): T[]
+function difference<T>(
+  first: T[],
+  arrays: T[][],
+  keySelector: KeySelector<T>
+): T[]
+function difference<T>(
+  first: T[],
+  secondOrArrays: T[] | T[][],
+  keySelector?: KeySelector<T>
+): T[] {
+  // Detect overload: key-selector form vs spread form
+  const isKeyForm =
+    keySelector !== undefined && Array.isArray(secondOrArrays[0])
+
+  const others: T[] = isKeyForm
+    ? (secondOrArrays as T[][]).flat()
+    : [secondOrArrays as unknown as T].flat()
+
+  if (keySelector) {
+    const excludedKeys = new Set(others.map(keySelector))
+    return first.filter((item) => !excludedKeys.has(keySelector(item)))
+  }
+
+  const excluded = new Set(others.map((item) => JSON.stringify(item)))
+  return first.filter((item) => !excluded.has(JSON.stringify(item)))
+}
+
+export default difference
+```
+
+## Examples
+
+```typescript
+// Primitives
+difference([1, 2, 3, 4, 5], [2, 4])
+// [1, 3, 5]
+
+difference(['a', 'b', 'c', 'd'], ['b', 'd'], ['c'])
+// ['a']
+
+// Objects — compared by serialization (default)
+const all = [{ id: 1 }, { id: 2 }, { id: 3 }]
+const remove = [{ id: 2 }]
+difference(all, remove)
+// [{ id: 1 }, { id: 3 }]
+
+// Objects — compared by key selector (efficient for large arrays)
+const inventory = [
+  { sku: 'A1', qty: 10 },
+  { sku: 'B2', qty: 5 },
+  { sku: 'C3', qty: 8 },
+]
+const outOfStock = [{ sku: 'B2', qty: 0 }]
+difference(inventory, [outOfStock], (item) => item.sku)
+// [{ sku: 'A1', qty: 10 }, { sku: 'C3', qty: 8 }]
+```
+
+## Notes
+
+- The default comparison serializes items with `JSON.stringify`; it works for plain objects but is sensitive to key ordering. Use a key selector when working with complex or inconsistently keyed objects.
+- When a key selector is provided, excluded keys are stored in a `Set`, making lookups O(1) and the overall operation O(n + m) instead of O(n × m).
+- Only elements from the **first** array are returned; the function does not produce a symmetric difference.
+- Pass multiple arrays to subtract from all of them at once: `difference(a, b, c)` removes everything in b or c from a.
