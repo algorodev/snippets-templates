@@ -1,0 +1,291 @@
+---
+title: Expo React Native App
+description: A cross-platform mobile app template built with Expo SDK and React Native, featuring file-based routing via Expo Router, NativeWind for styling, and EAS Build configuration.
+category: templates
+language: TypeScript
+tags: [react-native, expo, mobile, typescript, nativewind]
+repo: https://github.com/expo/expo
+---
+
+A production-ready Expo starter that gets you file-based routing (no navigator setup required), Tailwind-style utility classes via NativeWind, and EAS Build pre-configured for iOS and Android — all typed with TypeScript strict mode.
+
+## Usage
+
+```bash
+# Install dependencies and start the dev server
+npm install
+npx expo start
+
+# Open on device/simulator
+# Press i → iOS simulator, a → Android emulator, w → web
+```
+
+## App entry and layout
+
+```typescript
+// app/_layout.tsx
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import "../global.css";
+
+export default function RootLayout() {
+  return (
+    <>
+      <StatusBar style="auto" />
+      <Stack>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="+not-found" />
+      </Stack>
+    </>
+  );
+}
+```
+
+## Tab navigator
+
+```typescript
+// app/(tabs)/_layout.tsx
+import { Tabs } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+
+export default function TabLayout() {
+  return (
+    <Tabs
+      screenOptions={{
+        tabBarActiveTintColor: "#6366f1",
+        headerShown: false,
+      }}
+    >
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: "Home",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="explore"
+        options={{
+          title: "Explore",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="search-outline" size={size} color={color} />
+          ),
+        }}
+      />
+    </Tabs>
+  );
+}
+```
+
+## Home screen
+
+```typescript
+// app/(tabs)/index.tsx
+import { View, Text, ScrollView, TouchableOpacity } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+export default function HomeScreen() {
+  return (
+    <SafeAreaView className="flex-1 bg-white">
+      <ScrollView className="flex-1 px-4">
+        <View className="mt-8 mb-4">
+          <Text className="text-3xl font-bold text-gray-900">Welcome</Text>
+          <Text className="text-base text-gray-500 mt-1">
+            Your new Expo app is ready.
+          </Text>
+        </View>
+
+        <TouchableOpacity className="bg-indigo-500 rounded-xl py-4 items-center mt-4">
+          <Text className="text-white font-semibold text-base">Get started</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+```
+
+## NativeWind configuration
+
+```javascript
+// tailwind.config.js
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ["./app/**/*.{js,jsx,ts,tsx}", "./components/**/*.{js,jsx,ts,tsx}"],
+  presets: [require("nativewind/preset")],
+  theme: {
+    extend: {
+      colors: {
+        primary: "#6366f1",
+      },
+    },
+  },
+  plugins: [],
+};
+```
+
+```css
+/* global.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+```
+
+```javascript
+// babel.config.js
+module.exports = function (api) {
+  api.cache(true);
+  return {
+    presets: [
+      ["babel-preset-expo", { jsxImportSource: "nativewind" }],
+      "nativewind/babel",
+    ],
+  };
+};
+```
+
+## App config
+
+```javascript
+// app.config.js
+export default {
+  expo: {
+    name: "MyApp",
+    slug: "my-app",
+    version: "1.0.0",
+    orientation: "portrait",
+    icon: "./assets/icon.png",
+    splash: {
+      image: "./assets/splash.png",
+      resizeMode: "contain",
+      backgroundColor: "#ffffff",
+    },
+    ios: {
+      supportsTablet: true,
+      bundleIdentifier: "com.yourorg.myapp",
+    },
+    android: {
+      adaptiveIcon: {
+        foregroundImage: "./assets/adaptive-icon.png",
+        backgroundColor: "#ffffff",
+      },
+      package: "com.yourorg.myapp",
+    },
+    web: {
+      bundler: "metro",
+    },
+    plugins: ["expo-router"],
+    scheme: "myapp",
+  },
+};
+```
+
+## EAS Build configuration
+
+```json
+// eas.json
+{
+  "cli": {
+    "version": ">= 10.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
+```
+
+## README
+
+### What this includes
+
+- **Expo SDK 51+** — Managed workflow with OTA updates via Expo Updates
+- **Expo Router v3** — File-based routing for screens, tabs, and modals
+- **NativeWind v4** — Tailwind CSS utility classes for React Native components
+- **TypeScript** — Strict mode with path aliases configured
+- **EAS Build** — Development, preview, and production build profiles
+- **SafeAreaContext** — Proper insets on iOS and Android
+- **expo-status-bar** — Unified status bar control across platforms
+- **Tab navigation** — Pre-configured bottom tab navigator with icons
+
+### Prerequisites
+
+- Node.js 18+
+- Expo CLI: `npm install -g expo-cli` (or use `npx expo`)
+- For iOS: Xcode 15+ with iOS Simulator
+- For Android: Android Studio with an emulator configured
+- EAS CLI for builds: `npm install -g eas-cli`
+
+### Create this template
+
+```bash
+# 1. Create a new Expo app with the tabs template
+npx create-expo-app@latest my-app --template tabs
+cd my-app
+
+# 2. Install NativeWind v4 and its peer dependencies
+npx expo install nativewind tailwindcss react-native-reanimated react-native-safe-area-context
+
+# 3. Generate tailwind.config.js
+npx tailwindcss init
+
+# 4. Update tailwind.config.js, babel.config.js, and app.config.js
+#    as shown in the configuration sections above
+
+# 5. Create global.css in the project root
+#    (content shown in the NativeWind configuration section)
+
+# 6. Import global.css in app/_layout.tsx
+
+# 7. Install EAS CLI and configure builds
+npm install -g eas-cli
+eas login
+eas build:configure
+
+# 8. Start the dev server
+npx expo start
+```
+
+### Project structure
+
+```
+my-app/
+├── app/
+│   ├── (tabs)/
+│   │   ├── _layout.tsx    # Tab navigator definition
+│   │   ├── index.tsx      # Home tab screen
+│   │   └── explore.tsx    # Explore tab screen
+│   ├── _layout.tsx        # Root layout with Stack navigator
+│   └── +not-found.tsx     # 404 screen
+├── assets/
+│   ├── icon.png
+│   ├── splash.png
+│   └── adaptive-icon.png
+├── components/            # Shared components
+├── global.css             # Tailwind CSS entry point
+├── tailwind.config.js
+├── babel.config.js
+├── app.config.js
+├── eas.json
+└── tsconfig.json
+```
+
+### First things to customize
+
+- `app.config.js` — Update `name`, `slug`, `bundleIdentifier` (iOS), and `package` (Android)
+- `app/(tabs)/_layout.tsx` — Add, remove, or rename tab screens and their icons
+- `tailwind.config.js` — Extend the `colors`, `fontFamily`, and `spacing` tokens to match your brand
+- `global.css` — Add any global base styles alongside the Tailwind directives
+- `eas.json` — Set your distribution method and build environment variables per profile
