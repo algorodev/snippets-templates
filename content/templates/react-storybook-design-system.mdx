@@ -1,0 +1,344 @@
+---
+title: React Storybook Design System
+description: A design system starter with Storybook 8, React, and Tailwind CSS, including token-based theming and auto-generated component documentation. Pre-wired with Chromatic for visual regression testing.
+category: templates
+language: TypeScript
+tags: [react, storybook, design-system, tailwind, chromatic]
+---
+
+A design system foundation that treats tokens first — colors, spacing, typography, and radii are defined once in a `tokens.ts` file and consumed by both Tailwind and your components. Storybook 8 auto-generates documentation from JSDoc and PropTypes, and Chromatic catches unintended visual regressions on every pull request.
+
+## Usage
+
+```bash
+# Run Storybook locally
+npm run storybook
+
+# Publish to Chromatic for visual regression CI
+npx chromatic --project-token=<your-token>
+
+# Build static Storybook for hosting
+npm run build-storybook
+```
+
+## Design tokens
+
+```typescript
+// src/tokens.ts
+export const tokens = {
+  color: {
+    brand: {
+      50:  "#eff6ff",
+      100: "#dbeafe",
+      500: "#3b82f6",
+      600: "#2563eb",
+      700: "#1d4ed8",
+      900: "#1e3a8a",
+    },
+    neutral: {
+      0:   "#ffffff",
+      50:  "#f8fafc",
+      100: "#f1f5f9",
+      200: "#e2e8f0",
+      500: "#64748b",
+      700: "#334155",
+      900: "#0f172a",
+    },
+    semantic: {
+      success: "#22c55e",
+      warning: "#f59e0b",
+      error:   "#ef4444",
+      info:    "#3b82f6",
+    },
+  },
+  spacing: {
+    px: "1px",
+    0:  "0",
+    1:  "0.25rem",
+    2:  "0.5rem",
+    3:  "0.75rem",
+    4:  "1rem",
+    6:  "1.5rem",
+    8:  "2rem",
+    12: "3rem",
+    16: "4rem",
+  },
+  radius: {
+    none: "0",
+    sm:   "0.125rem",
+    md:   "0.375rem",
+    lg:   "0.5rem",
+    xl:   "0.75rem",
+    full: "9999px",
+  },
+  font: {
+    sans:  ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+    mono:  ["JetBrains Mono", "ui-monospace", "monospace"],
+    size:  { sm: "0.875rem", base: "1rem", lg: "1.125rem", xl: "1.25rem", "2xl": "1.5rem" },
+    weight: { normal: "400", medium: "500", semibold: "600", bold: "700" },
+  },
+} as const;
+```
+
+## Tailwind config wired to tokens
+
+```typescript
+// tailwind.config.ts
+import type { Config } from "tailwindcss";
+import { tokens } from "./src/tokens";
+
+export default {
+  content: ["./src/**/*.{ts,tsx}", "./.storybook/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      colors: {
+        brand:   tokens.color.brand,
+        neutral: tokens.color.neutral,
+        success: tokens.color.semantic.success,
+        warning: tokens.color.semantic.warning,
+        error:   tokens.color.semantic.error,
+      },
+      borderRadius: tokens.radius,
+      fontFamily: {
+        sans: tokens.font.sans,
+        mono: tokens.font.mono,
+      },
+    },
+  },
+  plugins: [],
+} satisfies Config;
+```
+
+## Example component
+
+```typescript
+// src/components/Badge/Badge.tsx
+import type { ReactNode } from "react";
+
+export type BadgeVariant = "default" | "success" | "warning" | "error" | "info";
+
+export interface BadgeProps {
+  /** Semantic intent of the badge. */
+  variant?: BadgeVariant;
+  /** Content rendered inside the badge. */
+  children: ReactNode;
+  /** Additional Tailwind classes. */
+  className?: string;
+}
+
+const variantClasses: Record<BadgeVariant, string> = {
+  default: "bg-neutral-100 text-neutral-700",
+  success: "bg-green-100 text-green-700",
+  warning: "bg-amber-100 text-amber-700",
+  error:   "bg-red-100   text-red-700",
+  info:    "bg-blue-100  text-blue-700",
+};
+
+/**
+ * A compact label used to highlight status or category.
+ * Supports five semantic variants that map to the design token palette.
+ */
+export function Badge({ variant = "default", children, className = "" }: BadgeProps) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium
+        ${variantClasses[variant]} ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+```
+
+## Storybook story with autodocs
+
+```typescript
+// src/components/Badge/Badge.stories.tsx
+import type { Meta, StoryObj } from "@storybook/react";
+import { Badge } from "./Badge";
+
+const meta: Meta<typeof Badge> = {
+  title: "Components/Badge",
+  component: Badge,
+  tags: ["autodocs"],
+  argTypes: {
+    variant: {
+      control: "select",
+      options: ["default", "success", "warning", "error", "info"],
+      description: "Semantic intent of the badge",
+    },
+  },
+};
+
+export default meta;
+type Story = StoryObj<typeof Badge>;
+
+export const Default: Story  = { args: { children: "Default" } };
+export const Success: Story  = { args: { variant: "success", children: "Published" } };
+export const Warning: Story  = { args: { variant: "warning", children: "Pending" } };
+export const Error: Story    = { args: { variant: "error",   children: "Failed" } };
+export const Info: Story     = { args: { variant: "info",    children: "Draft" } };
+
+export const AllVariants: Story = {
+  render: () => (
+    <div style={{ display: "flex", gap: 8 }}>
+      {(["default", "success", "warning", "error", "info"] as const).map((v) => (
+        <Badge key={v} variant={v}>
+          {v.charAt(0).toUpperCase() + v.slice(1)}
+        </Badge>
+      ))}
+    </div>
+  ),
+};
+```
+
+## Storybook configuration
+
+```typescript
+// .storybook/main.ts
+import type { StorybookConfig } from "@storybook/react-vite";
+
+const config: StorybookConfig = {
+  stories: ["../src/**/*.stories.@(ts|tsx)"],
+  addons: [
+    "@storybook/addon-essentials",
+    "@storybook/addon-a11y",
+    "@storybook/addon-interactions",
+  ],
+  framework: {
+    name: "@storybook/react-vite",
+    options: {},
+  },
+  docs: { autodocs: "tag" },
+};
+
+export default config;
+```
+
+```typescript
+// .storybook/preview.ts
+import type { Preview } from "@storybook/react";
+import "../src/index.css"; // Tailwind base styles
+
+const preview: Preview = {
+  parameters: {
+    controls: {
+      matchers: {
+        color: /(background|color)$/i,
+        date: /Date$/i,
+      },
+    },
+  },
+};
+
+export default preview;
+```
+
+## Chromatic CI
+
+```yaml
+# .github/workflows/chromatic.yml
+name: Chromatic
+on: push
+
+jobs:
+  chromatic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Required for Chromatic TurboSnap
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: chromaui/action@latest
+        with:
+          projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+          onlyChanged: true   # TurboSnap — only test affected stories
+```
+
+## README
+
+### What this includes
+
+- **Storybook 8** with `react-vite` framework and `autodocs` tag support
+- **Tailwind CSS v3** consuming shared design tokens
+- **Token system** — a single `tokens.ts` source of truth for color, spacing, radius, and typography
+- **Addons** — Essentials, Accessibility (`a11y`), Interactions, Controls
+- **Chromatic** — Visual regression testing pre-wired with a GitHub Actions workflow and TurboSnap
+- **JSDoc-driven docs** — Component descriptions and prop descriptions auto-populate the Docs page
+
+### Prerequisites
+
+- Node.js 18+
+- A [Chromatic](https://www.chromatic.com) account and project token (free for open source)
+
+### Create this template
+
+```bash
+# 1. Create a new Vite React-TS project
+npm create vite@latest my-design-system -- --template react-ts
+cd my-design-system
+
+# 2. Install and initialise Storybook
+npx storybook@latest init
+# Choose: React + Vite
+
+# 3. Install Tailwind CSS
+npm install -D tailwindcss postcss autoprefixer
+npx tailwindcss init -p
+
+# 4. Install Storybook addons
+npm install -D @storybook/addon-a11y @storybook/addon-interactions
+
+# 5. Install Chromatic
+npm install -D chromatic
+
+# 6. Create src/tokens.ts with your token definitions (see above)
+
+# 7. Wire tokens into tailwind.config.ts (see above)
+
+# 8. Update .storybook/main.ts and .storybook/preview.ts (see above)
+
+# 9. Add Tailwind directives to src/index.css
+#    @tailwind base; @tailwind components; @tailwind utilities;
+
+# 10. Run Storybook
+npm run storybook
+```
+
+### Project structure
+
+```
+my-design-system/
+├── .github/
+│   └── workflows/
+│       └── chromatic.yml        # Visual regression CI
+├── .storybook/
+│   ├── main.ts                  # Storybook config, addons, framework
+│   └── preview.ts               # Global decorators and parameters
+├── src/
+│   ├── components/
+│   │   ├── Badge/
+│   │   │   ├── Badge.tsx
+│   │   │   └── Badge.stories.tsx
+│   │   ├── Button/
+│   │   │   ├── Button.tsx
+│   │   │   └── Button.stories.tsx
+│   │   └── index.ts             # Barrel export
+│   ├── tokens.ts                # Single source of truth for all tokens
+│   └── index.css                # Tailwind directives
+├── tailwind.config.ts
+├── tsconfig.json
+└── vite.config.ts
+```
+
+### First things to customize
+
+- `src/tokens.ts` — Replace the example palette with your brand colors and spacing scale
+- `tailwind.config.ts` — Map your tokens to Tailwind theme extensions
+- `src/index.css` — Add custom CSS variables for theming (e.g. `--color-bg`, `--color-fg`) alongside Tailwind
+- `.storybook/preview.ts` — Add a `ThemeProvider` decorator if you use context-based theming
+- `.github/workflows/chromatic.yml` — Add `CHROMATIC_PROJECT_TOKEN` to your GitHub repository secrets
