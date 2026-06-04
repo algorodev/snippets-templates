@@ -1,0 +1,197 @@
+---
+title: Hono Edge API
+description: An ultra-lightweight API built with Hono, designed for deployment on Cloudflare Workers, Deno Deploy, or Bun. Features middleware chaining, Zod validation, and RPC-style client type inference.
+category: templates
+language: typescript
+tags: [hono, edge, cloudflare-workers, rest-api, typescript]
+repo: https://github.com/honojs/hono
+---
+
+A minimal but production-ready REST API built with Hono that runs at the edge. Ships with Zod-powered request validation, typed error responses, and an exported `AppType` that powers end-to-end type safety via the Hono RPC client.
+
+## Usage
+
+```typescript
+// src/index.ts
+import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
+import { logger } from 'hono/logger'
+import { cors } from 'hono/cors'
+import { prettyJSON } from 'hono/pretty-json'
+import { z } from 'zod'
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type Env = {
+  Bindings: {
+    DB: KVNamespace // swap for D1, R2, etc.
+    API_SECRET: string
+  }
+  Variables: {
+    userId: string
+  }
+}
+
+// ── App ──────────────────────────────────────────────────────────────────────
+
+const app = new Hono<Env>()
+
+// ── Global middleware ────────────────────────────────────────────────────────
+
+app.use('*', logger())
+app.use('*', prettyJSON())
+app.use(
+  '/api/*',
+  cors({
+    origin: ['https://example.com'],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+  })
+)
+
+// ── Auth middleware ──────────────────────────────────────────────────────────
+
+const authMiddleware = async (c: Context<Env>, next: Next) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  if (!token || token !== c.env.API_SECRET) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+  c.set('userId', 'user_from_token') // decode JWT here in real usage
+  await next()
+}
+
+// ── Schemas ──────────────────────────────────────────────────────────────────
+
+const createItemSchema = z.object({
+  name: z.string().min(1).max(100),
+  price: z.number().positive(),
+  tags: z.array(z.string()).optional().default([]),
+})
+
+const itemParamSchema = z.object({
+  id: z.string().uuid(),
+})
+
+// ── Routes ───────────────────────────────────────────────────────────────────
+
+const items = new Hono<Env>()
+
+items.get('/', async (c) => {
+  const all = await c.env.DB.list({ prefix: 'item:' })
+  const values = await Promise.all(
+    all.keys.map((k) => c.env.DB.get(k.name, 'json'))
+  )
+  return c.json({ items: values.filter(Boolean) })
+})
+
+items.post('/', authMiddleware, zValidator('json', createItemSchema), async (c) => {
+  const body = c.req.valid('json')
+  const id = crypto.randomUUID()
+  const item = { id, ...body, createdAt: new Date().toISOString() }
+  await c.env.DB.put(`item:${id}`, JSON.stringify(item))
+  return c.json(item, 201)
+})
+
+items.get('/:id', zValidator('param', itemParamSchema), async (c) => {
+  const { id } = c.req.valid('param')
+  const item = await c.env.DB.get(`item:${id}`, 'json')
+  if (!item) return c.json({ error: 'Not found' }, 404)
+  return c.json(item)
+})
+
+items.delete('/:id', authMiddleware, zValidator('param', itemParamSchema), async (c) => {
+  const { id } = c.req.valid('param')
+  const existing = await c.env.DB.get(`item:${id}`)
+  if (!existing) return c.json({ error: 'Not found' }, 404)
+  await c.env.DB.delete(`item:${id}`)
+  return c.body(null, 204)
+})
+
+// ── Mount & health ───────────────────────────────────────────────────────────
+
+app.route('/api/items', items)
+
+app.get('/health', (c) => c.json({ status: 'ok', ts: Date.now() }))
+
+app.onError((err, c) => {
+  console.error(err)
+  return c.json({ error: 'Internal server error' }, 500)
+})
+
+app.notFound((c) => c.json({ error: 'Not found' }, 404))
+
+// Export the type for use with hc() RPC client
+export type AppType = typeof app
+export default app
+```
+
+## Options
+
+| Feature | How to enable |
+|---|---|
+| JWT auth | Replace `authMiddleware` with `hono/jwt` helper |
+| D1 database | Swap `KVNamespace` for `D1Database` in `Env.Bindings` |
+| Rate limiting | Add `hono-rate-limiter` middleware before routes |
+| OpenAPI docs | Use `@hono/zod-openapi` in place of `@hono/zod-validator` |
+
+## How it works
+
+Hono uses a trie-based router that compiles to near-zero overhead at the edge. Each `.use()` call registers middleware in a chain; `zValidator` short-circuits the handler and returns a `422` automatically if the schema fails. Exporting `AppType` lets the `hc<AppType>()` RPC client infer request and response shapes without a separate code-gen step.
+
+## README
+
+### What this includes
+
+- Hono app with typed `Env` bindings and context variables
+- `cors`, `logger`, and `prettyJSON` global middleware
+- Bearer token auth middleware (swap for JWT in production)
+- Zod request validation on body and path params via `@hono/zod-validator`
+- Full CRUD route group mounted at `/api/items`
+- Centralised error handler and 404 fallback
+- Exported `AppType` for Hono RPC client type inference
+
+### Prerequisites
+
+- Node.js 18+ or Bun 1.x
+- Wrangler CLI (`npm i -g wrangler`) for Cloudflare Workers deployment
+
+### Create this template
+
+```bash
+# 1. Scaffold a new Hono Cloudflare Workers project
+npm create hono@latest my-edge-api -- --template cloudflare-workers
+cd my-edge-api
+
+# 2. Install validation helpers
+npm install zod @hono/zod-validator
+
+# 3. (Optional) install dev tooling
+npm install -D wrangler typescript @cloudflare/workers-types
+
+# 4. Copy src/index.ts content from above
+
+# 5. Run locally with Wrangler
+npx wrangler dev
+
+# 6. Deploy
+npx wrangler deploy
+```
+
+### Project structure
+
+```
+my-edge-api/
+├── src/
+│   └── index.ts        # App entry point, routes, middleware
+├── wrangler.toml        # Cloudflare Workers config (name, KV bindings)
+├── tsconfig.json
+└── package.json
+```
+
+### First things to customize
+
+- `wrangler.toml` — set `name`, add `kv_namespaces` or `d1_databases` bindings
+- `Env.Bindings` — match the binding names declared in `wrangler.toml`
+- `authMiddleware` — replace the secret comparison with real JWT verification
+- `cors` `origin` — change from `https://example.com` to your frontend domain
+- Route prefix `/api/items` — rename to match your resource
