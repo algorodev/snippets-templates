@@ -1,0 +1,144 @@
+---
+title: Validate Credit Card Number
+description: Validates a credit card number using the Luhn algorithm and identifies the card network (Visa, Mastercard, Amex, etc.). Strips spaces and hyphens before checking.
+category: snippets
+language: typescript
+tags: [validation, utils, payment, luhn]
+---
+
+Validates a raw card number string with the Luhn checksum algorithm and detects the issuing network (Visa, Mastercard, American Express, Discover, and others) from the IIN prefix, stripping formatting characters before any checks.
+
+## Usage
+
+```typescript
+export type CardNetwork =
+  | 'visa'
+  | 'mastercard'
+  | 'amex'
+  | 'discover'
+  | 'dinersclub'
+  | 'jcb'
+  | 'unionpay'
+  | 'unknown'
+
+export interface CreditCardValidationResult {
+  valid: boolean
+  network: CardNetwork | null
+  /** Digits-only, no spaces or hyphens. */
+  normalised: string | null
+  error?: string
+}
+
+const NETWORK_PATTERNS: Array<{ network: CardNetwork; pattern: RegExp }> = [
+  { network: 'amex',       pattern: /^3[47]/ },
+  { network: 'dinersclub', pattern: /^3(?:0[0-5]|[68])/ },
+  { network: 'discover',   pattern: /^6(?:011|5\d{2})/ },
+  { network: 'jcb',        pattern: /^(?:2131|1800|35\d{3})/ },
+  { network: 'mastercard', pattern: /^5[1-5]|^2(?:2[2-9][1-9]|[3-6]\d{2}|7[01]\d|720)/ },
+  { network: 'unionpay',   pattern: /^62/ },
+  { network: 'visa',       pattern: /^4/ },
+]
+
+/**
+ * Runs the Luhn (mod-10) checksum on a digits-only string.
+ */
+function luhn(digits: string): boolean {
+  let sum = 0
+  let alternate = false
+
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = parseInt(digits[i], 10)
+    if (alternate) {
+      n *= 2
+      if (n > 9) n -= 9
+    }
+    sum += n
+    alternate = !alternate
+  }
+
+  return sum % 10 === 0
+}
+
+/**
+ * Detects the card network from the IIN/BIN prefix.
+ */
+function detectNetwork(digits: string): CardNetwork {
+  for (const { network, pattern } of NETWORK_PATTERNS) {
+    if (pattern.test(digits)) return network
+  }
+  return 'unknown'
+}
+
+/**
+ * Validates a credit card number using the Luhn algorithm and identifies
+ * the card network.
+ *
+ * @param input - Card number string, may include spaces or hyphens.
+ * @returns Validation result with network and normalised number.
+ */
+function isCreditCard(input: string): CreditCardValidationResult {
+  if (!input || typeof input !== 'string') {
+    return { valid: false, network: null, normalised: null, error: 'Input must be a non-empty string.' }
+  }
+
+  const normalised = input.replace(/[\s\-]/g, '')
+
+  if (!/^\d+$/.test(normalised)) {
+    return { valid: false, network: null, normalised: null, error: 'Card number must contain only digits, spaces, or hyphens.' }
+  }
+
+  if (normalised.length < 13 || normalised.length > 19) {
+    return { valid: false, network: null, normalised: null, error: 'Card number must be between 13 and 19 digits.' }
+  }
+
+  if (!luhn(normalised)) {
+    return { valid: false, network: null, normalised: null, error: 'Card number failed the Luhn checksum.' }
+  }
+
+  return {
+    valid: true,
+    network: detectNetwork(normalised),
+    normalised,
+  }
+}
+
+export default isCreditCard
+```
+
+## Examples
+
+```typescript
+isCreditCard('4111 1111 1111 1111')
+// { valid: true, network: 'visa', normalised: '4111111111111111' }
+
+isCreditCard('5500 0000 0000 0004')
+// { valid: true, network: 'mastercard', normalised: '5500000000000004' }
+
+isCreditCard('3714 496353 98431')
+// { valid: true, network: 'amex', normalised: '371449635398431' }
+
+isCreditCard('6011 1111 1111 1117')
+// { valid: true, network: 'discover', normalised: '6011111111111117' }
+
+isCreditCard('1234 5678 9012 3456')
+// { valid: false, network: null, normalised: null, error: 'Card number failed the Luhn checksum.' }
+
+isCreditCard('4111-1111-1111-111')
+// { valid: false, network: null, normalised: null, error: 'Card number must be between 13 and 19 digits.' }
+```
+
+## How it works
+
+### Luhn algorithm
+
+The Luhn (mod-10) algorithm traverses the digit string from right to left. Every second digit is doubled; if the result exceeds 9, 9 is subtracted. The running total of all digits must be divisible by 10 for the number to be valid. This catches most single-digit transcription errors and all single-digit substitutions.
+
+### Network detection
+
+IIN (Issuer Identification Number) prefixes are matched in specificity order — more specific patterns (Amex's `3[47]`, Diners' `3(?:0[0-5]|[68])`) appear before the broad Visa catch-all (`^4`). The Mastercard pattern covers both the legacy `51–55` range and the newer `2221–2720` range introduced in 2017.
+
+## Notes
+
+- The function validates the number format only — it does not authorise a charge or verify that the card is active. Always run a real authorisation through a payment processor (Stripe, Adyen, etc.) before accepting payment.
+- Never log or persist raw card numbers. PCI-DSS requires tokenisation.
+- Test card numbers from payment processors (e.g. Stripe's `4242 4242 4242 4242`) are valid Luhn numbers and will return `valid: true`.
