@@ -1,0 +1,77 @@
+---
+title: Memoize Function
+description: Caches the results of a function based on its arguments, returning the cached result on subsequent calls with the same inputs. Supports a custom cache-key resolver.
+category: snippets
+language: typescript
+tags: [async, utils, performance, cache]
+---
+
+Wraps any pure function with a transparent result cache, eliminating redundant computation for repeated calls with identical arguments.
+
+## Usage
+
+```typescript
+type AnyFunction = (...args: unknown[]) => unknown
+
+function memoize<T extends AnyFunction>(
+  fn: T,
+  resolver?: (...args: Parameters<T>) => unknown
+): T {
+  const cache = new Map<unknown, ReturnType<T>>()
+
+  return function (this: unknown, ...args: Parameters<T>): ReturnType<T> {
+    const key = resolver ? resolver(...args) : args[0]
+
+    if (cache.has(key)) {
+      return cache.get(key) as ReturnType<T>
+    }
+
+    const result = fn.apply(this, args) as ReturnType<T>
+    cache.set(key, result)
+    return result
+  } as T
+}
+
+export default memoize
+```
+
+## Options
+
+| Parameter  | Type                                   | Default       | Description                                                        |
+| ---------- | -------------------------------------- | ------------- | ------------------------------------------------------------------ |
+| `fn`       | `T extends (...args) => unknown`       | —             | The function whose results should be cached.                       |
+| `resolver` | `(...args: Parameters<T>) => unknown`  | `args[0]`     | Optional function that derives the cache key from the arguments.   |
+
+## Examples
+
+```typescript
+// Single-argument — key defaults to the first argument
+const expensiveSquare = memoize((n: number) => {
+  console.log('computing...')
+  return n * n
+})
+
+expensiveSquare(4)  // logs "computing...", returns 16
+expensiveSquare(4)  // cache hit, returns 16
+expensiveSquare(5)  // logs "computing...", returns 25
+```
+
+```typescript
+// Multi-argument with custom resolver
+const fetchUser = memoize(
+  async (orgId: string, userId: string) => {
+    const res = await fetch(`/api/orgs/${orgId}/users/${userId}`)
+    return res.json()
+  },
+  (orgId, userId) => `${orgId}:${userId}`
+)
+
+await fetchUser('org-1', 'user-42') // fetches from network
+await fetchUser('org-1', 'user-42') // returns cached promise
+```
+
+## Notes
+
+- The default key is `args[0]`, which is sufficient for single-argument functions. Always provide a `resolver` when the function takes more than one argument to avoid cache collisions.
+- For async functions the returned promise is cached, so concurrent calls with the same key resolve from the same in-flight request.
+- The cache is unbounded — for long-running processes consider pairing this with a TTL-aware cache (e.g. a `Map` with timestamps) or an LRU implementation.
