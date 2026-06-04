@@ -1,0 +1,153 @@
+---
+title: Parse .env File (Python)
+description: Parses a .env file into a dictionary, supporting comments, blank lines, and quoted values. Does not mutate os.environ, returning a plain dict instead.
+category: snippets
+language: python
+tags: [utils, config, env, parsing]
+---
+
+A lightweight `.env` parser that reads a file into a plain dict without touching `os.environ`, making it easy to inspect, test, or layer environment configuration without side effects.
+
+## Usage
+
+```python
+from pathlib import Path
+
+
+def parse_env(source: str | Path) -> dict[str, str]:
+    """
+    Parse a .env file into a plain dictionary.
+
+    Supported syntax
+    ----------------
+    - ``KEY=value`` — basic assignment
+    - ``KEY="value with spaces"`` — double-quoted value
+    - ``KEY='value with spaces'`` — single-quoted value
+    - ``# comment`` — full-line comment (ignored)
+    - ``KEY=value  # inline comment`` — inline comment stripped
+    - Blank lines — ignored
+    - ``export KEY=value`` — optional ``export`` prefix stripped
+    - Multi-word unquoted values are kept as-is (trailing whitespace trimmed)
+
+    The file is read as UTF-8. ``os.environ`` is never read or modified.
+
+    Parameters
+    ----------
+    source:
+        Path to the ``.env`` file, given as a string or :class:`pathlib.Path`.
+
+    Returns
+    -------
+    dict[str, str]
+        A new dict mapping variable names to their string values.
+
+    Raises
+    ------
+    FileNotFoundError
+        When *source* does not point to an existing file.
+    UnicodeDecodeError
+        When the file cannot be decoded as UTF-8.
+    """
+    path = Path(source)
+    result: dict[str, str] = {}
+
+    for lineno, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        line = raw_line.strip()
+
+        # Skip blank lines and comments
+        if not line or line.startswith("#"):
+            continue
+
+        # Strip optional 'export ' prefix
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+
+        if "=" not in line:
+            # No assignment operator — skip malformed lines silently
+            continue
+
+        key, _, raw_value = line.partition("=")
+        key = key.strip()
+
+        if not key:
+            continue
+
+        value = raw_value
+
+        # Handle quoted values (must start AND end with the same quote)
+        if len(value) >= 2 and value[0] in ('"', "'"):
+            quote = value[0]
+            end = value.find(quote, 1)
+            if end != -1:
+                value = value[1:end]
+            else:
+                # Unmatched opening quote — treat whole thing as unquoted
+                value = _strip_inline_comment(value).strip()
+        else:
+            value = _strip_inline_comment(value).strip()
+
+        result[key] = value
+
+    return result
+
+
+def _strip_inline_comment(value: str) -> str:
+    """Remove an inline ``# comment`` from an unquoted value."""
+    idx = value.find(" #")
+    if idx != -1:
+        return value[:idx]
+    return value
+```
+
+## Examples
+
+```python
+# Given this .env file on disk:
+#
+#   # Database
+#   DATABASE_URL=postgresql://user:pass@localhost/mydb
+#   export SECRET_KEY="s3cr3t with spaces"
+#   PORT=5432  # default port
+#   DEBUG=false
+#   EMPTY=
+#   TAGS='web,api,v2'
+
+from parse_env import parse_env
+
+env = parse_env(".env")
+
+print(env["DATABASE_URL"])  # "postgresql://user:pass@localhost/mydb"
+print(env["SECRET_KEY"])    # "s3cr3t with spaces"
+print(env["PORT"])          # "5432"  (always a str — cast yourself if needed)
+print(env["DEBUG"])         # "false"
+print(env["EMPTY"])         # ""
+print(env["TAGS"])          # "web,api,v2"
+
+# os.environ is untouched
+import os
+print("PORT" in os.environ)  # False
+```
+
+Layering a `.env` file over existing environment variables without replacing them:
+
+```python
+import os
+from parse_env import parse_env
+
+file_vars = parse_env(".env")
+# os.environ takes priority; fill in only what's missing
+merged = {**file_vars, **os.environ}
+```
+
+## Notes
+
+- **Values are always strings.** Cast to `int`, `bool`, etc. as needed — see the [Env Config Loader](/snippets/env-config) snippet for a typed wrapper built on top of this parser.
+- **Inline comments require a space before `#`.** A bare `#` inside a value (e.g. a colour hex code `COLOR=#ff0000`) is preserved correctly.
+- **Quoted values are not unescaped.** Escape sequences like `\n` inside quotes are kept as-is. If you need escape processing, run the value through `bytes(..., "raw_unicode_escape").decode("unicode_escape")` afterwards.
+- **No multiline values.** The parser is line-oriented. Shell-style `\` line continuations are not supported.
+
+## How it works
+
+The parser reads the file line by line, skipping blanks and comment lines. For each assignment line it splits on the first `=`, strips an optional `export` prefix, then decides whether the value is quoted or unquoted. Quoted values are extracted between the first matching pair of quote characters; unquoted values have any trailing inline comment removed before whitespace trimming. The result is a plain `dict[str, str]` with no global side effects.
