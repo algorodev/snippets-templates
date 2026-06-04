@@ -1,0 +1,100 @@
+---
+title: Process Finder
+description: Search running processes by name or keyword and display PID, CPU, memory, and command with a clean table layout.
+category: cli
+language: bash
+tags: [system, processes, monitoring, debugging]
+---
+
+Quickly locate any running process by name or keyword and see its PID, CPU usage, memory footprint, and full command in a readable table — without wading through raw `ps` output.
+
+## Usage
+
+```bash
+# One-shot search (no shell function needed)
+ps aux | awk -v term="$1" '
+  NR==1 { print; next }
+  tolower($0) ~ tolower(term) { print }
+' | column -t
+```
+
+## Shell function version
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+psfind() {
+  local term="${1:?Usage: psfind <name|keyword>}"
+
+  # Header + matching lines, skip the grep process itself
+  local results
+  results=$(ps aux | awk -v t="$term" '
+    BEGIN { IGNORECASE = 1 }
+    NR == 1 { header = $0; next }
+    tolower($0) ~ tolower(t) && !/awk/ { lines[++n] = $0 }
+    END {
+      if (n == 0) { exit 1 }
+      print header
+      for (i = 1; i <= n; i++) print lines[i]
+    }
+  ')
+
+  if [ $? -ne 0 ]; then
+    echo "No processes found matching: $term" >&2
+    return 1
+  fi
+
+  # Pretty-print: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
+  echo "$results" | awk '
+    NR == 1 {
+      printf "%-10s %7s %5s %5s %s\n", "USER", "PID", "%CPU", "%MEM", "COMMAND"
+      printf "%-10s %7s %5s %5s %s\n", "----", "---", "----", "----", "-------"
+      next
+    }
+    {
+      user = $1; pid = $2; cpu = $3; mem = $4
+      # Reconstruct full command from field 11 onward
+      cmd = ""
+      for (i = 11; i <= NF; i++) cmd = cmd (i > 11 ? " " : "") $i
+      # Truncate long commands for readability
+      if (length(cmd) > 60) cmd = substr(cmd, 1, 57) "..."
+      printf "%-10s %7s %5s %5s %s\n", user, pid, cpu, mem, cmd
+    }
+  '
+
+  local count
+  count=$(echo "$results" | tail -n +2 | wc -l | tr -d ' ')
+  echo ""
+  echo "$count process(es) found."
+}
+```
+
+## Examples
+
+```bash
+# Find all node processes
+psfind node
+
+# Find Python workers
+psfind python
+
+# Find anything listening (broad keyword)
+psfind listen
+
+# Check if a specific app is running
+psfind "Google Chrome"
+```
+
+## Options
+
+| Flag / argument | Meaning |
+|---|---|
+| `term` | Case-insensitive substring matched against the full `ps` line |
+
+## Notes
+
+- The search is case-insensitive via `tolower()` so `psfind NGINX` and `psfind nginx` are equivalent.
+- The `awk` self-match (`!/awk/`) prevents the search process from appearing in its own results.
+- On macOS, `ps aux` columns are identical to Linux; `VSZ` and `RSS` are in kilobytes.
+- To sort results by CPU descending, pipe the output through `sort -k3 -rn` (skip the header first with `tail -n +3`).
+- For a live, auto-refreshing view of matching processes use `watch -n 2 'ps aux | grep <term>'`.
