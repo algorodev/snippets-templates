@@ -1,0 +1,85 @@
+---
+title: Prettier Config (Full)
+description: A full Prettier configuration with all common options explicitly set for maximum team consistency. Covers print width, trailing commas, bracket spacing, and more.
+category: configs
+language: json
+tags: [prettier, formatting, code-style]
+---
+
+Every Prettier option that teams typically argue about, set explicitly so there are no surprises. Save as `.prettierrc` at the project root.
+
+## Usage
+
+```json
+{
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": false,
+  "singleQuote": true,
+  "quoteProps": "as-needed",
+  "jsxSingleQuote": false,
+  "trailingComma": "all",
+  "bracketSpacing": true,
+  "bracketSameLine": false,
+  "arrowParens": "always",
+  "proseWrap": "preserve",
+  "htmlWhitespaceSensitivity": "css",
+  "endOfLine": "lf",
+  "embeddedLanguageFormatting": "auto",
+  "singleAttributePerLine": false,
+  "experimentalTernaries": false,
+  "plugins": ["prettier-plugin-tailwindcss"]
+}
+```
+
+**Install:**
+
+```bash
+npm install -D prettier prettier-plugin-tailwindcss
+```
+
+Drop `"plugins"` entirely if you are not using Tailwind CSS.
+
+**Add a `.prettierignore`:**
+
+```
+node_modules
+.next
+dist
+build
+coverage
+*.min.js
+pnpm-lock.yaml
+package-lock.json
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  }
+}
+```
+
+## Options
+
+| Option | Value | Effect |
+|--------|-------|--------|
+| `printWidth` | `100` | Wrap lines longer than 100 characters |
+| `semi` | `false` | Omit semicolons (ASI-safe output) |
+| `singleQuote` | `true` | Use `'` for JS/TS strings |
+| `jsxSingleQuote` | `false` | Use `"` for JSX attributes (HTML convention) |
+| `trailingComma` | `"all"` | Add trailing commas everywhere valid in ES5+ |
+| `bracketSameLine` | `false` | Put JSX `>` on its own line |
+| `arrowParens` | `"always"` | Always wrap arrow function params: `(x) => x` |
+| `endOfLine` | `"lf"` | Enforce Unix line endings across platforms |
+
+## Notes
+
+- Set `semi: true` and `singleQuote: false` if your team prefers a more Java-like style — the rest of the config is style-agnostic.
+- `prettier-plugin-tailwindcss` must be the last plugin in the array when combined with other Prettier plugins.
+- For VS Code auto-format on save, add `"editor.formatOnSave": true` and `"editor.defaultFormatter": "esbenp.prettier-vscode"` to `.vscode/settings.json`.
