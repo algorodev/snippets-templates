@@ -1,0 +1,150 @@
+---
+title: Base64 Utilities
+description: Encode and decode base64 strings or files from the command line, with URL-safe variant support and automatic padding correction.
+category: cli
+language: bash
+tags: [misc, base64, encoding, utilities]
+---
+
+Add these functions to your `~/.zshrc` or `~/.bashrc` for quick base64 encoding and decoding with URL-safe support and automatic padding correction — no manual `tr` pipelines needed.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+# Encode a string or file to standard base64
+b64enc() {
+  if [[ $# -eq 0 ]]; then
+    # Read from stdin
+    base64
+  elif [[ -f "$1" ]]; then
+    base64 < "$1"
+  else
+    printf '%s' "$1" | base64
+  fi
+}
+
+# Decode standard base64 (auto-corrects missing padding)
+b64dec() {
+  local input
+
+  if [[ $# -eq 0 ]]; then
+    input=$(cat)
+  else
+    input="$1"
+  fi
+
+  # Add padding if needed
+  local mod=$(( ${#input} % 4 ))
+  if (( mod == 2 )); then input="${input}=="; fi
+  if (( mod == 3 )); then input="${input}=";  fi
+
+  printf '%s' "$input" | base64 --decode
+}
+
+# Encode to URL-safe base64 (RFC 4648 §5: + → -, / → _, strip =)
+b64url-enc() {
+  if [[ $# -eq 0 ]]; then
+    base64 | tr '+/' '-_' | tr -d '='
+  elif [[ -f "$1" ]]; then
+    base64 < "$1" | tr '+/' '-_' | tr -d '='
+  else
+    printf '%s' "$1" | base64 | tr '+/' '-_' | tr -d '='
+  fi
+}
+
+# Decode URL-safe base64 (converts back to standard then decodes)
+b64url-dec() {
+  local input
+
+  if [[ $# -eq 0 ]]; then
+    input=$(cat)
+  else
+    input="$1"
+  fi
+
+  # Convert URL-safe chars to standard base64
+  local standard="${input//-/+}"
+  standard="${standard//_//}"
+
+  # Add padding
+  local mod=$(( ${#standard} % 4 ))
+  if (( mod == 2 )); then standard="${standard}=="; fi
+  if (( mod == 3 )); then standard="${standard}=";  fi
+
+  printf '%s' "$standard" | base64 --decode
+}
+
+# Encode and copy result to clipboard (macOS / Linux)
+b64copy() {
+  local encoded
+  encoded=$(b64enc "$@")
+  if command -v pbcopy &>/dev/null; then
+    printf '%s' "$encoded" | pbcopy
+  elif command -v xclip &>/dev/null; then
+    printf '%s' "$encoded" | xclip -selection clipboard
+  elif command -v xsel &>/dev/null; then
+    printf '%s' "$encoded" | xsel --clipboard --input
+  else
+    echo "No clipboard tool found (tried pbcopy, xclip, xsel)" >&2
+    return 1
+  fi
+  echo "Copied $(printf '%s' "$encoded" | wc -c | tr -d ' ') chars to clipboard"
+}
+```
+
+After adding the functions, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# Encode a string
+b64enc "Hello, World!"
+# SGVsbG8sIFdvcmxkIQ==
+
+# Decode a string
+b64dec "SGVsbG8sIFdvcmxkIQ=="
+# Hello, World!
+
+# Encode a file
+b64enc /path/to/image.png > image.b64
+
+# Decode a file
+b64dec "$(cat image.b64)" > image_restored.png
+
+# URL-safe encoding (useful for JWTs, OAuth tokens, URLs)
+b64url-enc "Hello, World!"
+# SGVsbG8sIFdvcmxkIQ
+
+# URL-safe decoding (no padding required)
+b64url-dec "SGVsbG8sIFdvcmxkIQ"
+# Hello, World!
+
+# Pipe from another command
+curl -s https://example.com/data | b64enc
+
+# Encode and copy to clipboard
+b64enc "my-secret-string"
+b64copy "my-secret-string"   # encode + copy in one step
+```
+
+## Options
+
+| Function | Input | Output |
+|---|---|---|
+| `b64enc` | string or file path | standard base64 |
+| `b64dec` | base64 string | original bytes |
+| `b64url-enc` | string or file path | URL-safe base64 (no padding) |
+| `b64url-dec` | URL-safe base64 string | original bytes |
+| `b64copy` | string or file path | encodes and copies to clipboard |
+
+## Notes
+
+- On macOS, `base64` does not accept `--decode`; use `-D` instead. If you need cross-platform compatibility, replace `base64 --decode` with `base64 -d 2>/dev/null || base64 -D`.
+- The URL-safe variant omits trailing `=` padding. The decode functions restore padding automatically before decoding.
+- For binary files, pipe the output to a file rather than printing to the terminal to avoid corrupting your terminal session.
