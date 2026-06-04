@@ -1,0 +1,79 @@
+---
+title: TSConfig for React Native
+description: TypeScript configuration tailored for React Native projects targeting the Hermes engine. Sets correct JSX transform and lib targets for the React Native runtime environment.
+category: configs
+language: json
+tags: [typescript, tsconfig, react-native, mobile]
+---
+
+TypeScript configuration for React Native projects running on the Hermes JavaScript engine. Hermes targets ES2019 and does not ship browser globals, so the `lib` and `target` settings differ significantly from a web config.
+
+## Usage
+
+```json
+{
+  "compilerOptions": {
+    /* Hermes supports ES2019 and a subset of ES2020 */
+    "target": "ES2019",
+    "lib": ["ES2019"],
+
+    "allowJs": true,
+    "skipLibCheck": true,
+
+    /* Use the automatic JSX transform introduced in React 17 */
+    "jsx": "react-jsx",
+
+    /* Module */
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
+
+    /* Output — Metro handles compilation; TS is for type-checking only */
+    "noEmit": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* Path aliases — mirror the babel-plugin-module-resolver aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@components/*": ["src/components/*"],
+      "@hooks/*": ["src/hooks/*"],
+      "@screens/*": ["src/screens/*"],
+      "@utils/*": ["src/utils/*"]
+    }
+  },
+  "include": ["src", "index.js", "*.ts", "*.tsx"],
+  "exclude": ["node_modules", "android", "ios", "__tests__"]
+}
+```
+
+## How it works
+
+React Native ships its own type definitions in `@types/react-native` — there are no DOM globals. Setting `lib: ["ES2019"]` prevents TypeScript from injecting browser-only globals (`window`, `document`, `fetch`) into scope, which would mask missing polyfills or incorrect assumptions about the runtime environment.
+
+Metro, the React Native bundler, handles transpilation at build time. Setting `noEmit: true` means TypeScript is used exclusively for type checking (`tsc --noEmit` in CI) rather than compilation.
+
+## Options
+
+| Flag | Reason for React Native |
+|------|------------------------|
+| `target: "ES2019"` | Hermes supports ES2019; higher targets may use syntax Hermes cannot parse |
+| `lib: ["ES2019"]` | Excludes DOM and browser globals absent from the RN runtime |
+| `jsx: "react-jsx"` | Uses the automatic JSX transform — no need to `import React` in every file |
+| `module: "CommonJS"` | Metro's module system is CommonJS-based |
+| `allowJs: true` | Many RN projects mix JS and TS during migration |
+| `allowSyntheticDefaultImports: true` | Required by several popular RN libraries that use default exports |
+
+## Notes
+
+- Path aliases defined in `paths` must also be added to `babel.config.js` via `babel-plugin-module-resolver` — TypeScript aliases are compile-time only and Metro will not resolve them at runtime otherwise.
+- If you use Expo, set `"extends": "expo/tsconfig.base"` and merge only the fields you want to override.
+- For Hermes-specific ES2020+ features (optional chaining, nullish coalescing), add the relevant `lib` entries individually, e.g. `"ES2020.Promise"`.
+- Run `yarn tsc --noEmit` in your CI pipeline alongside Metro bundling to catch type errors before they reach devices.
