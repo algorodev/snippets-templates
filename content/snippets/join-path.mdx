@@ -1,0 +1,47 @@
+---
+title: Join URL Path Segments
+description: Joins multiple URL path segments, normalising double slashes and ensuring a single separator between segments. Similar to Node's path.join but URL-aware.
+category: snippets
+language: typescript
+tags: [url, utils, path]
+---
+
+Concatenates URL path segments with exactly one `/` between each part, collapsing any accidental double slashes. Preserves a leading slash and never adds a trailing slash.
+
+```typescript
+function joinPath(...segments: string[]): string {
+  return (
+    segments
+      .map((segment, index) => {
+        // Strip leading slash from every segment except the first
+        const trimmed = index === 0 ? segment : segment.replace(/^\/+/, '')
+        // Strip trailing slash from every segment except the last
+        return index === segments.length - 1
+          ? trimmed
+          : trimmed.replace(/\/+$/, '')
+      })
+      .filter(Boolean)
+      .join('/')
+      // Collapse any remaining double slashes (e.g. first segment was '')
+      .replace(/\/{2,}/g, '/')
+  )
+}
+
+export default joinPath
+```
+
+## Usage
+
+```typescript
+joinPath('/api', 'users', '42')          // '/api/users/42'
+joinPath('/api/', '/users/', '/42')      // '/api/users/42'
+joinPath('https://example.com', 'blog') // 'https://example.com/blog'
+joinPath('posts', 'my-post')            // 'posts/my-post'
+joinPath('/images', '', 'avatar.png')   // '/images/avatar.png'
+```
+
+## Notes
+
+- Empty string segments are filtered out, so stray empty values in a dynamic array will not introduce double slashes.
+- This function operates purely on strings — it does not validate that the result is a well-formed URL. For full URL construction, pass the result as the pathname to `new URL()`.
+- Unlike `path.join`, this function does not resolve `..` or `.` segments. Use `new URL(result, base).pathname` if you need path normalisation.
