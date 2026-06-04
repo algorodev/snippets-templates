@@ -1,0 +1,58 @@
+---
+title: Word Count
+description: Counts the number of words in a string, ignoring extra whitespace and punctuation-only tokens. Returns both total word count and unique word count.
+category: snippets
+language: typescript
+tags: [string, utils, text, analysis]
+---
+
+Splits a string into tokens, strips punctuation-only tokens, and returns both the total word count and the number of unique words (case-insensitive). Extra whitespace and leading/trailing spaces are ignored.
+
+## Usage
+
+```typescript
+interface WordCountResult {
+  total: number
+  unique: number
+}
+
+function wordCount(text: string): WordCountResult {
+  if (!text.trim()) return { total: 0, unique: 0 }
+
+  const tokens = text
+    .trim()
+    .split(/\s+/)
+    .map((token) => token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter((token) => token.length > 0)
+
+  const total = tokens.length
+  const unique = new Set(tokens.map((t) => t.toLowerCase())).size
+
+  return { total, unique }
+}
+
+export default wordCount
+```
+
+## Examples
+
+```typescript
+wordCount('The quick brown fox')
+// { total: 4, unique: 4 }
+
+wordCount('To be, or not to be — that is the question.')
+// { total: 10, unique: 8 }  ("to" and "be" appear twice each)
+
+wordCount('  Hello,   world!  ')
+// { total: 2, unique: 2 }  (extra whitespace ignored, punctuation stripped)
+
+wordCount('')
+// { total: 0, unique: 0 }
+```
+
+## How it works
+
+1. Split on any run of whitespace (`\s+`).
+2. Strip leading and trailing non-alphanumeric characters from each token using the Unicode `\p{L}` (letter) and `\p{N}` (number) categories, so punctuation attached to words (`"hello,"`, `"end."`) does not create false tokens.
+3. Filter out tokens that are entirely punctuation (empty after stripping).
+4. Count total tokens and load them into a `Set` (lowercased) for the unique count.
