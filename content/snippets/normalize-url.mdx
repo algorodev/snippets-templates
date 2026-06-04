@@ -1,0 +1,74 @@
+---
+title: Normalize URL
+description: Normalises a URL by sorting query parameters, removing default ports, lowercasing the hostname, and stripping trailing slashes. Useful for URL deduplication.
+category: snippets
+language: typescript
+tags: [url, utils, normalize]
+---
+
+Produces a canonical form of any absolute URL so that two URLs pointing to the same resource compare as equal — ideal for deduplication, caching keys, and crawl queues.
+
+## Usage
+
+```typescript
+function normalizeUrl(raw: string): string {
+  const url = new URL(raw)
+
+  // Lowercase the hostname
+  url.hostname = url.hostname.toLowerCase()
+
+  // Remove default ports
+  if (
+    (url.protocol === 'http:' && url.port === '80') ||
+    (url.protocol === 'https:' && url.port === '443')
+  ) {
+    url.port = ''
+  }
+
+  // Sort query parameters alphabetically
+  url.searchParams.sort()
+
+  // Strip trailing slash from pathname (keep bare root slash)
+  if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
+    url.pathname = url.pathname.slice(0, -1)
+  }
+
+  // Remove trailing ? when there are no query params
+  return url.toString().replace(/\?$/, '')
+}
+
+export default normalizeUrl
+```
+
+## Examples
+
+```typescript
+normalizeUrl('HTTP://Example.COM/foo/')
+// 'http://example.com/foo'
+
+normalizeUrl('https://example.com:443/search?z=1&a=2')
+// 'https://example.com/search?a=2&z=1'
+
+normalizeUrl('http://example.com:80/page')
+// 'http://example.com/page'
+
+normalizeUrl('https://api.example.com/v1/users/?page=2&limit=10')
+// 'https://api.example.com/v1/users?limit=10&page=2'
+
+normalizeUrl('https://example.com/')
+// 'https://example.com/'
+```
+
+## How it works
+
+1. `new URL()` parses and validates the input, throwing a `TypeError` for invalid URLs — free input validation.
+2. Hostname is lowercased because the DNS spec treats hostnames as case-insensitive.
+3. Default ports (`80` for HTTP, `443` for HTTPS) are stripped because they are implied by the protocol and would otherwise produce two distinct strings for the same resource.
+4. `searchParams.sort()` lexicographically sorts query parameters so `?a=1&b=2` and `?b=2&a=1` produce the same canonical string.
+5. A trailing slash on any path segment other than the bare root (`/`) is removed because servers commonly treat `/page` and `/page/` identically.
+
+## Notes
+
+- The function throws if `raw` is not a valid absolute URL. Wrap in a `try/catch` or validate first with [`isUrl`](/snippets/is-url) if the input is untrusted.
+- Fragment identifiers (`#hash`) are preserved as-is — strip them beforehand if they should be ignored for your use case.
+- Percent-encoding normalisation (e.g. `%2F` → `/`) is handled automatically by the `URL` constructor.
