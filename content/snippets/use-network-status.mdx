@@ -1,0 +1,144 @@
+---
+title: useNetworkStatus Hook
+description: Returns detailed network information including effective connection type, downlink speed, and RTT from the Network Information API. Falls back gracefully in unsupported browsers.
+category: snippets
+language: typescript
+tags: [react, hooks, network, browser]
+---
+
+Wraps the [Network Information API](https://developer.mozilla.org/en-US/docs/Web/API/NetworkInformation) to expose live connection metrics in React components, automatically updating whenever the connection changes.
+
+## Usage
+
+```typescript
+import { useState, useEffect } from 'react'
+
+type EffectiveConnectionType = '2g' | '3g' | '4g' | 'slow-2g'
+
+interface NetworkInformation extends EventTarget {
+  readonly effectiveType: EffectiveConnectionType
+  readonly downlink: number
+  readonly rtt: number
+  readonly saveData: boolean
+  readonly type?: string
+  onchange: ((this: NetworkInformation, ev: Event) => unknown) | null
+}
+
+interface NavigatorWithConnection extends Navigator {
+  connection?: NetworkInformation
+  mozConnection?: NetworkInformation
+  webkitConnection?: NetworkInformation
+}
+
+interface NetworkStatus {
+  /** Whether the browser has network connectivity at all. */
+  online: boolean
+  /** Effective connection type reported by the browser, or null if unsupported. */
+  effectiveType: EffectiveConnectionType | null
+  /** Estimated downlink speed in Mbps, or null if unsupported. */
+  downlink: number | null
+  /** Round-trip time estimate in milliseconds, or null if unsupported. */
+  rtt: number | null
+  /** Whether the user has requested reduced data usage. */
+  saveData: boolean
+  /** Whether the Network Information API is available in this browser. */
+  supported: boolean
+}
+
+function getConnection(): NetworkInformation | null {
+  const nav = navigator as NavigatorWithConnection
+  return nav.connection ?? nav.mozConnection ?? nav.webkitConnection ?? null
+}
+
+function readStatus(): NetworkStatus {
+  const connection = getConnection()
+  return {
+    online: navigator.onLine,
+    effectiveType: connection?.effectiveType ?? null,
+    downlink: connection?.downlink ?? null,
+    rtt: connection?.rtt ?? null,
+    saveData: connection?.saveData ?? false,
+    supported: connection !== null,
+  }
+}
+
+function useNetworkStatus(): NetworkStatus {
+  const [status, setStatus] = useState<NetworkStatus>(() => {
+    if (typeof navigator === 'undefined') {
+      return {
+        online: true,
+        effectiveType: null,
+        downlink: null,
+        rtt: null,
+        saveData: false,
+        supported: false,
+      }
+    }
+    return readStatus()
+  })
+
+  useEffect(() => {
+    const update = () => setStatus(readStatus())
+
+    window.addEventListener('online', update)
+    window.addEventListener('offline', update)
+
+    const connection = getConnection()
+    connection?.addEventListener('change', update)
+
+    return () => {
+      window.removeEventListener('online', update)
+      window.removeEventListener('offline', update)
+      connection?.removeEventListener('change', update)
+    }
+  }, [])
+
+  return status
+}
+
+export default useNetworkStatus
+```
+
+## Options
+
+The hook takes no arguments and returns a `NetworkStatus` object.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `online` | `boolean` | `true` when the browser considers itself connected |
+| `effectiveType` | `'slow-2g' \| '2g' \| '3g' \| '4g' \| null` | Effective connection category |
+| `downlink` | `number \| null` | Estimated bandwidth in Mbps |
+| `rtt` | `number \| null` | Estimated round-trip time in ms |
+| `saveData` | `boolean` | Whether the user enabled data-saver mode |
+| `supported` | `boolean` | Whether the Network Information API exists |
+
+## Examples
+
+```typescript
+function AdaptiveImage() {
+  const { effectiveType, saveData } = useNetworkStatus()
+
+  const quality = saveData || effectiveType === '2g' || effectiveType === 'slow-2g'
+    ? 'low'
+    : effectiveType === '3g'
+    ? 'medium'
+    : 'high'
+
+  return <img src={`/photo?q=${quality}`} alt="Adaptive" />
+}
+```
+
+```typescript
+function OfflineBanner() {
+  const { online } = useNetworkStatus()
+
+  if (online) return null
+  return <div role="alert">You are offline. Changes will sync when reconnected.</div>
+}
+```
+
+## Notes
+
+- The Network Information API is supported in Chromium-based browsers. Firefox and Safari return `supported: false`, and all fields except `online` will be `null`.
+- The hook is SSR-safe: the initial state is derived inside `useState` with a `typeof navigator` guard, so it never runs on the server.
+- `downlink` and `rtt` values are intentionally coarsened by browsers to prevent fingerprinting.
