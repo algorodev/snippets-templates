@@ -1,0 +1,134 @@
+---
+title: Outdated Dependency Checker
+description: Check for outdated packages across npm, pip, gem, or cargo in one pass and output a unified sorted report.
+category: cli
+language: bash
+tags: [node, dependencies, updates, maintenance]
+---
+
+A single script that detects which package managers are in use within a directory tree and runs each one's outdated check, then collects the results into one readable report.
+
+## Usage
+
+```bash
+#!/usr/bin/env bash
+# check-outdated.sh — unified outdated dependency report
+# Usage: ./check-outdated.sh [directory]
+set -euo pipefail
+
+TARGET="${1:-.}"
+REPORT=$(mktemp)
+trap 'rm -f "$REPORT"' EXIT
+
+hr() { printf '\n%s\n' "$(printf '─%.0s' {1..60})"; }
+
+check_npm() {
+  local dir="$1"
+  if [ -f "$dir/package.json" ]; then
+    hr
+    echo "NPM/PNPM/YARN — $dir"
+    hr
+    local mgr="npm"
+    [ -f "$dir/pnpm-lock.yaml" ] && mgr="pnpm"
+    [ -f "$dir/yarn.lock" ] && mgr="yarn"
+    [ -f "$dir/bun.lockb" ] || [ -f "$dir/bun.lock" ] && mgr="bun"
+    (cd "$dir" && "$mgr" outdated --color 2>/dev/null || true) | tee -a "$REPORT"
+  fi
+}
+
+check_pip() {
+  local dir="$1"
+  if [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/setup.py" ]; then
+    hr
+    echo "PIP — $dir"
+    hr
+    if command -v pip3 &>/dev/null; then
+      (cd "$dir" && pip3 list --outdated --format=columns 2>/dev/null || true) | tee -a "$REPORT"
+    else
+      echo "  pip3 not found — skipping"
+    fi
+  fi
+}
+
+check_gem() {
+  local dir="$1"
+  if [ -f "$dir/Gemfile" ]; then
+    hr
+    echo "BUNDLER (gem) — $dir"
+    hr
+    if command -v bundle &>/dev/null; then
+      (cd "$dir" && bundle outdated --parseable 2>/dev/null || true) | tee -a "$REPORT"
+    else
+      echo "  bundler not found — skipping"
+    fi
+  fi
+}
+
+check_cargo() {
+  local dir="$1"
+  if [ -f "$dir/Cargo.toml" ]; then
+    hr
+    echo "CARGO — $dir"
+    hr
+    if command -v cargo &>/dev/null; then
+      if cargo install --list 2>/dev/null | grep -q "cargo-outdated"; then
+        (cd "$dir" && cargo outdated 2>/dev/null || true) | tee -a "$REPORT"
+      else
+        echo "  cargo-outdated not installed. Run: cargo install cargo-outdated"
+      fi
+    else
+      echo "  cargo not found — skipping"
+    fi
+  fi
+}
+
+echo "Outdated Dependency Report — $(date '+%Y-%m-%d %H:%M')"
+echo "Scanning: $TARGET"
+
+# Walk up to 2 levels deep for multi-project directories
+while IFS= read -r -d '' dir; do
+  check_npm "$dir"
+  check_pip "$dir"
+  check_gem "$dir"
+  check_cargo "$dir"
+done < <(find "$TARGET" -maxdepth 2 -name "package.json" -o -name "requirements.txt" \
+  -o -name "Gemfile" -o -name "Cargo.toml" 2>/dev/null \
+  | xargs -I{} dirname {} | sort -u | tr '\n' '\0')
+
+hr
+echo ""
+echo "Scan complete. Review output above for outdated packages."
+```
+
+## Examples
+
+```bash
+# Check current directory
+chmod +x check-outdated.sh
+./check-outdated.sh
+
+# Check a specific project
+./check-outdated.sh ~/projects/my-app
+
+# Check a monorepo root (scans up to 2 levels deep)
+./check-outdated.sh ~/projects/my-monorepo
+
+# Pipe output to a file for sharing
+./check-outdated.sh 2>&1 | tee outdated-report.txt
+```
+
+## How it works
+
+The script uses `find` to locate manifest files (`package.json`, `requirements.txt`, `Gemfile`, `Cargo.toml`) up to two directory levels deep. For each directory that contains one or more of these files, it:
+
+1. Detects which package manager is active (for Node.js projects, it reads the lockfile).
+2. Calls the native `outdated` subcommand for that ecosystem.
+3. Appends the results to a unified report printed to stdout.
+
+If a required CLI tool is not installed the section is skipped with a message instead of aborting the whole run.
+
+## Notes
+
+- **cargo-outdated** is a third-party plugin and must be installed separately: `cargo install cargo-outdated`
+- For large monorepos, increase `maxdepth` from `2` to `3` or higher.
+- To check only one ecosystem, call `check_npm .`, `check_pip .`, etc. directly after sourcing the script.
