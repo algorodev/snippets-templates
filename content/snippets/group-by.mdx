@@ -1,0 +1,80 @@
+---
+title: Group Array By Key
+description: Groups an array of objects into a record keyed by the result of a selector function. Preserves insertion order within each group.
+category: snippets
+language: typescript
+tags: [array, utils, object, grouping]
+---
+
+Reduces an array of objects into a `Record` where each key holds the subset of items that share the same selector result. Insertion order within every group matches the original array order.
+
+## Usage
+
+```typescript
+function groupBy<T, K extends PropertyKey>(
+  array: T[],
+  selector: (item: T) => K
+): Partial<Record<K, T[]>> {
+  return array.reduce<Partial<Record<K, T[]>>>((acc, item) => {
+    const key = selector(item)
+    if (!acc[key]) {
+      acc[key] = []
+    }
+    acc[key]!.push(item)
+    return acc
+  }, {})
+}
+
+export default groupBy
+```
+
+## Examples
+
+```typescript
+// Group by a string property
+const people = [
+  { name: 'Alice', department: 'engineering' },
+  { name: 'Bob',   department: 'design' },
+  { name: 'Carol', department: 'engineering' },
+  { name: 'Dave',  department: 'design' },
+]
+
+groupBy(people, (p) => p.department)
+// → {
+//     engineering: [{ name: 'Alice', ... }, { name: 'Carol', ... }],
+//     design:      [{ name: 'Bob', ... },   { name: 'Dave', ... }],
+//   }
+
+// Group by a numeric property
+const scores = [
+  { player: 'Alice', score: 10 },
+  { player: 'Bob',   score: 20 },
+  { player: 'Carol', score: 10 },
+]
+
+groupBy(scores, (s) => s.score)
+// → {
+//     10: [{ player: 'Alice', score: 10 }, { player: 'Carol', score: 10 }],
+//     20: [{ player: 'Bob',   score: 20 }],
+//   }
+
+// Computed key — group by first letter
+const words = ['apple', 'avocado', 'banana', 'blueberry', 'cherry']
+groupBy(words.map((w) => ({ word: w })), (w) => w.word[0])
+// → { a: [...], b: [...], c: [...] }
+```
+
+## Options
+
+| Parameter  | Type                   | Description                                                  |
+| ---------- | ---------------------- | ------------------------------------------------------------ |
+| `array`    | `T[]`                  | The source array to group.                                   |
+| `selector` | `(item: T) => K`       | Function that returns the group key for each item.           |
+
+The return type is `Partial<Record<K, T[]>>` because not every possible value of `K` is guaranteed to appear as a key in the result.
+
+## Notes
+
+- The selector can return any `PropertyKey` — string, number, or symbol.
+- Keys appear in the order their first matching item is encountered, following ES2015+ object insertion-order guarantees.
+- For a non-`Partial` return type you can cast the result or use a `Map<K, T[]>` if you need stricter key guarantees.
