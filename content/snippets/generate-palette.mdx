@@ -1,0 +1,108 @@
+---
+title: Generate Color Palette
+description: Generates an n-step color palette from a base hex color by adjusting lightness in equal steps. Returns an array of hex color strings.
+category: snippets
+language: typescript
+tags: [color, utils, palette, design]
+---
+
+Takes a base hex colour and a step count, then produces a full palette by spreading the lightness evenly across the 0–100% range while keeping the original hue and saturation. Great for generating design-system swatches, CSS custom properties, and chart colour scales on the fly.
+
+## Usage
+
+```typescript
+function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace(/^#/, '')
+  const full = clean.length === 3
+    ? clean.split('').map((c) => c + c).join('')
+    : clean
+  const int = parseInt(full, 16)
+  return [(int >> 16) & 255, (int >> 8) & 255, int & 255]
+}
+
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  const rn = r / 255, gn = g / 255, bn = b / 255
+  const max = Math.max(rn, gn, bn)
+  const min = Math.min(rn, gn, bn)
+  const delta = max - min
+  let h = 0, s = 0
+  const l = (max + min) / 2
+
+  if (delta !== 0) {
+    s = delta / (1 - Math.abs(2 * l - 1))
+    switch (max) {
+      case rn: h = ((gn - bn) / delta) % 6; break
+      case gn: h = (bn - rn) / delta + 2; break
+      case bn: h = (rn - gn) / delta + 4; break
+    }
+    h = h * 60
+    if (h < 0) h += 360
+  }
+
+  return [h, s * 100, l * 100]
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const sNorm = s / 100
+  const lNorm = l / 100
+  const a = sNorm * Math.min(lNorm, 1 - lNorm)
+
+  const toChannel = (n: number): string => {
+    const k = (n + h / 30) % 12
+    const value = lNorm - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))
+    return Math.round(value * 255)
+      .toString(16)
+      .padStart(2, '0')
+  }
+
+  return `#${toChannel(0)}${toChannel(8)}${toChannel(4)}`
+}
+
+/**
+ * Generates an `steps`-length palette from a base hex colour.
+ * Lightness is distributed evenly from near-white to near-black
+ * (clamped to 5–95 % to avoid pure white/black edges).
+ */
+function generatePalette(baseHex: string, steps: number = 10): string[] {
+  const [r, g, b] = hexToRgb(baseHex)
+  const [h, s] = rgbToHsl(r, g, b)
+
+  return Array.from({ length: steps }, (_, i) => {
+    const l = 95 - (i / (steps - 1)) * 90 // 95 % → 5 %
+    return hslToHex(h, s, l)
+  })
+}
+
+export default generatePalette
+```
+
+## Examples
+
+```typescript
+generatePalette('#3b82f6', 5)
+// [
+//   '#dbeafe',  // very light blue (step 1)
+//   '#93c5fd',  // light blue      (step 2)
+//   '#3b82f6',  // base blue       (step 3)
+//   '#1d4ed8',  // dark blue       (step 4)
+//   '#1e3a5f',  // very dark blue  (step 5)
+// ]
+
+generatePalette('#ef4444', 3)
+// ['#fecaca', '#ef4444', '#7f1d1d']
+
+generatePalette('#10b981')       // defaults to 10 steps
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `baseHex` | `string` | — | Source colour as a 3- or 6-digit hex string (with or without `#`). |
+| `steps` | `number` | `10` | Number of swatches to generate. Minimum useful value is `2`. |
+
+## Notes
+
+- Lightness is clamped between 5 % and 95 % so the palette never includes pure white or pure black, which tends to look better in design systems.
+- Hue and saturation are taken from the base colour and held constant across the palette. For vivid hues this may produce visually uneven steps; consider using a perceptual colour space (e.g. OKLCH) for production design systems.
+- The three-character hex shorthand (`#fff`) is expanded automatically.
