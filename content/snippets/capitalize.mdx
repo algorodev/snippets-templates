@@ -1,0 +1,40 @@
+---
+title: Capitalize String
+description: Capitalizes the first letter of a string while optionally lowercasing the remainder. Handles empty strings and Unicode code points safely.
+category: snippets
+language: typescript
+tags: [string, utils, formatting, case]
+---
+
+Uppercases the first Unicode code point of a string and optionally lowercases the rest. Handles empty strings without throwing and uses `codePointAt` / `String.fromCodePoint` to avoid breaking surrogate pairs on emoji or non-BMP characters.
+
+## Usage
+
+```typescript
+function capitalize(value: string, lowercaseRest: boolean = false): string {
+  if (!value) return value
+
+  const firstCodePoint = value.codePointAt(0)!
+  const first = String.fromCodePoint(firstCodePoint).toUpperCase()
+  const rest = value.slice(String.fromCodePoint(firstCodePoint).length)
+
+  return first + (lowercaseRest ? rest.toLowerCase() : rest)
+}
+
+export default capitalize
+```
+
+## Examples
+
+```typescript
+capitalize('hello world')          // 'Hello world'
+capitalize('hello world', true)    // 'Hello world'
+capitalize('hELLO WORLD', true)    // 'Hello world'
+capitalize('hELLO WORLD')          // 'HELLO WORLD'  — rest unchanged
+capitalize('')                      // ''             — no error
+capitalize('😀 greetings')         // '😀 greetings' — emoji first char, unchanged
+```
+
+## How it works
+
+JavaScript strings are UTF-16. Accessing `str[0]` or `str.charAt(0)` on a string that starts with an emoji or any character outside the Basic Multilingual Plane (code point > U+FFFF) returns only the first surrogate half, producing a broken character. Using `codePointAt(0)` reads the full code point, and `String.fromCodePoint(cp)` reconstructs the correct character before slicing the remainder at the right byte offset.
