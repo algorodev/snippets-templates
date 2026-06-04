@@ -1,0 +1,94 @@
+---
+title: Dependabot Config
+description: A Dependabot configuration that schedules weekly updates for npm and GitHub Actions dependencies. Groups minor and patch updates into a single PR to reduce noise.
+category: configs
+language: yaml
+tags: [dependabot, dependencies, github, security, automation]
+---
+
+Dependabot is built into GitHub and requires no installation — just drop this file in `.github/` and it starts opening dependency update PRs. This config groups minor and patch bumps to keep your PR queue short.
+
+## Usage
+
+```yaml
+# .github/dependabot.yml
+
+version: 2
+
+updates:
+  # ── npm / Node.js ────────────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      # All minor and patch updates in one PR
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Ignore major version bumps — review these manually
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # ── GitHub Actions ───────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(actions)"
+    groups:
+      all-actions:
+        patterns:
+          - "*"
+```
+
+**Enable:**
+
+Place the file at `.github/dependabot.yml` in your repository root. Dependabot activates automatically on the next scheduled run — no GitHub App or token is required.
+
+```bash
+mkdir -p .github
+# copy the config above into .github/dependabot.yml
+```
+
+**Trigger an immediate check (GitHub UI):**
+
+Go to **Insights > Dependency graph > Dependabot** and click **Check for updates**.
+
+## Options
+
+| Field | Purpose |
+|-------|---------|
+| `package-ecosystem` | Package manager to scan (`npm`, `pip`, `cargo`, `docker`, `github-actions`, etc.) |
+| `directory` | Root directory containing the manifest file (`/` for repo root, `/apps/web` for a workspace) |
+| `schedule.interval` | How often to check: `daily`, `weekly`, or `monthly` |
+| `open-pull-requests-limit` | Max open Dependabot PRs at once — set to `0` to pause updates |
+| `groups` | Bundles matching packages into a single PR instead of one PR per package |
+| `ignore` | Skips specific packages or update types |
+| `commit-message.prefix` | Conventional Commits prefix applied to the commit Dependabot creates |
+
+## Notes
+
+- Grouped PRs (`groups`) significantly reduce noise. Without grouping, a project with 50 dependencies can generate 50 PRs per week.
+- Major version bumps are ignored by default in this config so they do not land silently — remove the `ignore` block if you want them included.
+- For monorepos, duplicate the `npm` entry with a different `directory` for each workspace that has its own `package.json`.
+- Enable auto-merge for Dependabot PRs in **Settings > General > Allow auto-merge**, then add a GitHub Actions workflow that calls `gh pr merge --auto --squash` after CI passes.
+- Security updates bypass the schedule and open immediately regardless of `interval`.
