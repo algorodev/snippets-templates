@@ -1,0 +1,60 @@
+---
+title: End Of Month
+description: Returns a new Date set to the last millisecond of the month for a given date. Correctly handles February in leap years.
+category: snippets
+language: typescript
+tags: [date, utils, boundary, month]
+---
+
+Returns a new `Date` representing `23:59:59.999` on the final day of the month for any given date. Leap years and varying month lengths are handled automatically by the runtime.
+
+## Usage
+
+```typescript
+function endOfMonth(date: Date): Date {
+  // Day 0 of next month = last day of current month
+  const result = new Date(date.getFullYear(), date.getMonth() + 1, 0)
+  result.setHours(23, 59, 59, 999)
+  return result
+}
+
+export default endOfMonth
+```
+
+## Examples
+
+```typescript
+// Regular month
+endOfMonth(new Date('2024-06-15'))
+// => 2024-06-30T23:59:59.999 (local time)
+
+// February in a leap year
+endOfMonth(new Date('2024-02-01'))
+// => 2024-02-29T23:59:59.999
+
+// February in a non-leap year
+endOfMonth(new Date('2023-02-01'))
+// => 2023-02-28T23:59:59.999
+
+// December wraps correctly
+endOfMonth(new Date('2024-12-10'))
+// => 2024-12-31T23:59:59.999
+
+// Build an inclusive range for the current month
+function getCurrentMonthRange(): { from: Date; to: Date } {
+  const now = new Date()
+  const from = new Date(now.getFullYear(), now.getMonth(), 1)
+  from.setHours(0, 0, 0, 0)
+  const to = endOfMonth(now)
+  return { from, to }
+}
+```
+
+## How it works
+
+`new Date(year, month + 1, 0)` exploits the fact that JavaScript's `Date` constructor normalises out-of-range day values. Passing `0` as the day rolls back to the last day of the previous month, which is the last day of the intended month. No lookup tables or leap-year arithmetic are needed.
+
+## Notes
+
+- All calculations are in **local** time. For UTC month boundaries swap `getFullYear/getMonth` for `getUTCFullYear/getUTCMonth` and `setHours` for `setUTCHours`.
+- The returned `Date` is always a new instance; the input is never mutated.
