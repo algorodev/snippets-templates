@@ -1,0 +1,52 @@
+---
+title: Start Of Day
+description: Returns a new Date set to midnight (00:00:00.000) of the given date in local time. Useful for range queries and calendar calculations.
+category: snippets
+language: typescript
+tags: [date, utils, boundary]
+---
+
+Creates a copy of a date with the time component zeroed out to `00:00:00.000` in the local timezone. The original date is never mutated.
+
+## Usage
+
+```typescript
+function startOfDay(date: Date): Date {
+  const result = new Date(date)
+  result.setHours(0, 0, 0, 0)
+  return result
+}
+
+export default startOfDay
+```
+
+## Examples
+
+```typescript
+const now = new Date('2024-06-15T14:32:07.891Z') // some point in the afternoon
+
+const dayStart = startOfDay(now)
+// => 2024-06-15T00:00:00.000 (local time)
+
+// Check whether two dates fall on the same calendar day
+function isSameDay(a: Date, b: Date): boolean {
+  return startOfDay(a).getTime() === startOfDay(b).getTime()
+}
+
+isSameDay(new Date('2024-06-15T08:00:00'), new Date('2024-06-15T23:59:59'))
+// => true
+
+// Build a date range for "today"
+function getTodayRange(): { from: Date; to: Date } {
+  const today = new Date()
+  const from = startOfDay(today)
+  const to = new Date(from.getTime() + 86_400_000 - 1) // 23:59:59.999
+  return { from, to }
+}
+```
+
+## Notes
+
+- Uses `setHours(0, 0, 0, 0)` which operates in the **local** timezone. If you need UTC midnight, use `setUTCHours(0, 0, 0, 0)` instead.
+- The function always returns a new `Date` instance, so the input is never modified.
+- Pair with `endOfDay` (or `endOfMonth`) to build inclusive date ranges for database queries.
