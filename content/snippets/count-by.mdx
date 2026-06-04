@@ -1,0 +1,72 @@
+---
+title: Count Array Items By Key
+description: Counts array elements by the result of a selector function, returning a record of counts. Useful for building frequency maps and histograms.
+category: snippets
+language: typescript
+tags: [array, utils, aggregation, count]
+---
+
+Reduces an array into a frequency map where each key is produced by a selector function and each value is the number of elements that produced that key.
+
+```typescript
+function countBy<T>(
+  array: T[],
+  selector: (item: T) => string | number
+): Record<string, number> {
+  return array.reduce<Record<string, number>>((acc, item) => {
+    const key = String(selector(item))
+    acc[key] = (acc[key] ?? 0) + 1
+    return acc
+  }, {})
+}
+
+export default countBy
+```
+
+## Usage
+
+```typescript
+const words = ['apple', 'banana', 'avocado', 'blueberry', 'cherry']
+const byFirstLetter = countBy(words, (w) => w[0])
+// { a: 2, b: 2, c: 1 }
+```
+
+## Examples
+
+### Count by object property
+
+```typescript
+interface Order { status: 'pending' | 'shipped' | 'delivered' }
+const orders: Order[] = [
+  { status: 'shipped' },
+  { status: 'pending' },
+  { status: 'shipped' },
+  { status: 'delivered' },
+  { status: 'pending' },
+]
+
+const byStatus = countBy(orders, (o) => o.status)
+// { shipped: 2, pending: 2, delivered: 1 }
+```
+
+### Build a histogram by numeric bucket
+
+```typescript
+const scores = [45, 72, 88, 55, 91, 63, 79, 34, 82, 67]
+const histogram = countBy(scores, (s) => `${Math.floor(s / 10) * 10}s`)
+// { '40s': 1, '70s': 2, '80s': 2, '50s': 1, '90s': 1, '60s': 2, '30s': 1 }
+```
+
+### Count by derived value
+
+```typescript
+const dates = [new Date('2024-01-15'), new Date('2024-03-02'), new Date('2024-01-28')]
+const byMonth = countBy(dates, (d) => d.toLocaleString('default', { month: 'long' }))
+// { January: 2, March: 1 }
+```
+
+## Notes
+
+- All keys are coerced to strings via `String()`, matching the behaviour of `Object` property access.
+- Returns a plain `Record<string, number>` — pipe it into `Object.entries` to sort, filter, or render the counts.
+- For grouping (returning the actual items rather than counts), pair this with a `groupBy` utility.
