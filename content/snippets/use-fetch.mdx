@@ -1,0 +1,138 @@
+---
+title: useFetch Hook
+description: Fetches a URL and returns data, loading, and error state, re-fetching when the URL changes. Cancels in-flight requests with AbortController on cleanup or re-fetch.
+category: snippets
+language: typescript
+tags: [react, hooks, fetch, data-fetching]
+---
+
+A minimal data-fetching hook that handles loading and error state out of the box, and cleans up stale requests automatically so you never set state on an unmounted component.
+
+## Usage
+
+```typescript
+import { useEffect, useReducer, useRef } from 'react'
+
+interface FetchState<T> {
+  data: T | null
+  loading: boolean
+  error: Error | null
+}
+
+type FetchAction<T> =
+  | { type: 'loading' }
+  | { type: 'success'; payload: T }
+  | { type: 'error'; payload: Error }
+
+function fetchReducer<T>(state: FetchState<T>, action: FetchAction<T>): FetchState<T> {
+  switch (action.type) {
+    case 'loading':
+      return { data: null, loading: true, error: null }
+    case 'success':
+      return { data: action.payload, loading: false, error: null }
+    case 'error':
+      return { data: null, loading: false, error: action.payload }
+  }
+}
+
+interface UseFetchOptions extends Omit<RequestInit, 'signal'> {}
+
+function useFetch<T = unknown>(
+  url: string | null,
+  options?: UseFetchOptions,
+): FetchState<T> {
+  const [state, dispatch] = useReducer(fetchReducer<T>, {
+    data: null,
+    loading: url !== null,
+    error: null,
+  })
+
+  // Stable reference so changing `options` object identity doesn't re-fetch
+  const optionsRef = useRef(options)
+  optionsRef.current = options
+
+  useEffect(() => {
+    if (url === null) return
+
+    const controller = new AbortController()
+    dispatch({ type: 'loading' })
+
+    async function run() {
+      try {
+        const response = await fetch(url as string, {
+          ...optionsRef.current,
+          signal: controller.signal,
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+
+        const json = (await response.json()) as T
+        dispatch({ type: 'success', payload: json })
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return
+        dispatch({ type: 'error', payload: err instanceof Error ? err : new Error(String(err)) })
+      }
+    }
+
+    run()
+
+    return () => controller.abort()
+  }, [url])
+
+  return state
+}
+
+export { useFetch }
+export type { FetchState, UseFetchOptions }
+```
+
+## Examples
+
+```typescript
+interface Post {
+  id: number
+  title: string
+  body: string
+}
+
+// Basic usage
+function PostDetail({ id }: { id: number }) {
+  const { data, loading, error } = useFetch<Post>(`/api/posts/${id}`)
+
+  if (loading) return <p>Loading…</p>
+  if (error) return <p>Error: {error.message}</p>
+  if (!data) return null
+
+  return (
+    <article>
+      <h1>{data.title}</h1>
+      <p>{data.body}</p>
+    </article>
+  )
+}
+
+// Conditionally skip the fetch by passing null
+function MaybePost({ id }: { id: number | null }) {
+  const { data, loading } = useFetch<Post>(id !== null ? `/api/posts/${id}` : null)
+
+  return <div>{loading ? 'Fetching…' : data?.title ?? 'No post selected'}</div>
+}
+
+// Custom headers
+function AuthedResource({ token }: { token: string }) {
+  const { data } = useFetch<{ name: string }>('/api/me', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  return <p>{data?.name}</p>
+}
+```
+
+## Notes
+
+- Pass `null` as the URL to skip fetching entirely — useful when a required value (ID, token) is not yet available.
+- The `options` object is captured in a ref so you can pass an inline object literal without causing a re-fetch on every render.
+- Only `GET` requests are covered; for mutations (`POST`, `PATCH`, `DELETE`) prefer a dedicated action function or a library like SWR / TanStack Query.
+- The hook does not cache responses. For caching, deduplication, and revalidation, build on top of this hook or adopt a full data-fetching library.
