@@ -1,0 +1,49 @@
+---
+title: Invert Object
+description: Swaps the keys and values of a plain object, returning a new object. Handles duplicate values by keeping the last key seen.
+category: snippets
+language: typescript
+tags: [object, utils, transform]
+---
+
+Produces a new object where every original value becomes a key and every original key becomes a value. When multiple keys share the same value, the last one wins.
+
+## Usage
+
+```typescript
+function invertObj<K extends string, V extends string>(
+  obj: Record<K, V>
+): Record<V, K> {
+  return Object.entries(obj).reduce<Record<string, string>>(
+    (acc, [key, value]) => {
+      acc[value as string] = key
+      return acc
+    },
+    {}
+  ) as Record<V, K>
+}
+
+export default invertObj
+```
+
+## Examples
+
+```typescript
+const statusCodes = { ok: '200', created: '201', notFound: '404' }
+
+invertObj(statusCodes)
+// { '200': 'ok', '201': 'created', '404': 'notFound' }
+
+// Duplicate values — last key wins
+const roles = { admin: 'superuser', owner: 'superuser', guest: 'readonly' }
+
+invertObj(roles)
+// { superuser: 'owner', readonly: 'guest' }
+// 'admin' is overwritten because 'owner' appears later
+```
+
+## Notes
+
+- Both keys and values must be strings (or string-assignable types like string literal unions). Number or symbol values are coerced to strings by `Object.entries`.
+- The original object is never mutated.
+- If you need a lossless inversion when duplicate values exist, consider mapping each value to an array of keys instead.
