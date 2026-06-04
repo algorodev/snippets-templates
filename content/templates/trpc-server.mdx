@@ -1,0 +1,239 @@
+---
+title: tRPC Standalone Server
+description: A standalone tRPC server with Express adapter, Zod input validation, and context-based authentication. Demonstrates procedures, routers, and middleware for building fully type-safe APIs.
+category: templates
+language: typescript
+tags: [trpc, node.js, typescript, rest-api, zod]
+repo: https://github.com/trpc/trpc
+---
+
+A self-contained tRPC v11 server running on Express. Defines a context that extracts a JWT user, applies a reusable `authedProcedure` middleware, and wires up nested routers — all with zero generated code.
+
+## Usage
+
+```typescript
+// src/trpc.ts  — core initialisation
+import { initTRPC, TRPCError } from '@trpc/server'
+import { z } from 'zod'
+import type { Request } from 'express'
+import jwt from 'jsonwebtoken'
+
+// ── Context ──────────────────────────────────────────────────────────────────
+
+export type User = { id: string; email: string; role: 'user' | 'admin' }
+
+export async function createContext({ req }: { req: Request }) {
+  const token = req.headers.authorization?.replace('Bearer ', '')
+  let user: User | null = null
+  if (token) {
+    try {
+      user = jwt.verify(token, process.env.JWT_SECRET!) as User
+    } catch {
+      // invalid token — treat as unauthenticated
+    }
+  }
+  return { user }
+}
+
+export type Context = Awaited<ReturnType<typeof createContext>>
+
+// ── tRPC init ────────────────────────────────────────────────────────────────
+
+const t = initTRPC.context<Context>().create()
+
+export const router = t.router
+export const publicProcedure = t.procedure
+
+export const authedProcedure = t.procedure.use(({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Not authenticated' })
+  }
+  return next({ ctx: { ...ctx, user: ctx.user } }) // narrows user to non-null
+})
+
+export const adminProcedure = authedProcedure.use(({ ctx, next }) => {
+  if (ctx.user.role !== 'admin') {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Admins only' })
+  }
+  return next({ ctx })
+})
+```
+
+```typescript
+// src/routers/posts.ts
+import { z } from 'zod'
+import { router, publicProcedure, authedProcedure } from '../trpc'
+
+const posts: Array<{ id: string; title: string; body: string; authorId: string }> = []
+
+export const postsRouter = router({
+  list: publicProcedure
+    .input(z.object({ limit: z.number().min(1).max(100).default(20) }).optional())
+    .query(({ input }) => {
+      return posts.slice(0, input?.limit ?? 20)
+    }),
+
+  byId: publicProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .query(({ input }) => {
+      const post = posts.find((p) => p.id === input.id)
+      if (!post) throw new TRPCError({ code: 'NOT_FOUND' })
+      return post
+    }),
+
+  create: authedProcedure
+    .input(
+      z.object({
+        title: z.string().min(1).max(200),
+        body: z.string().min(1),
+      })
+    )
+    .mutation(({ input, ctx }) => {
+      const post = {
+        id: crypto.randomUUID(),
+        ...input,
+        authorId: ctx.user.id,
+      }
+      posts.push(post)
+      return post
+    }),
+
+  delete: authedProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(({ input, ctx }) => {
+      const idx = posts.findIndex((p) => p.id === input.id)
+      if (idx === -1) throw new TRPCError({ code: 'NOT_FOUND' })
+      if (posts[idx].authorId !== ctx.user.id) {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+      posts.splice(idx, 1)
+      return { success: true }
+    }),
+})
+```
+
+```typescript
+// src/routers/index.ts
+import { router } from '../trpc'
+import { postsRouter } from './posts'
+
+export const appRouter = router({
+  posts: postsRouter,
+})
+
+export type AppRouter = typeof appRouter
+```
+
+```typescript
+// src/server.ts
+import express from 'express'
+import cors from 'cors'
+import { createExpressMiddleware } from '@trpc/server/adapters/express'
+import { appRouter } from './routers'
+import { createContext } from './trpc'
+
+const app = express()
+
+app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:3000' }))
+app.use(express.json())
+
+app.use(
+  '/trpc',
+  createExpressMiddleware({
+    router: appRouter,
+    createContext,
+    onError({ error, path }) {
+      if (error.code === 'INTERNAL_SERVER_ERROR') {
+        console.error(`tRPC error on ${path}:`, error)
+      }
+    },
+  })
+)
+
+app.get('/health', (_req, res) => res.json({ status: 'ok' }))
+
+const PORT = Number(process.env.PORT ?? 4000)
+app.listen(PORT, () => console.log(`tRPC server listening on :${PORT}`))
+```
+
+## How it works
+
+`initTRPC.context<Context>()` locks every procedure to the same context shape. Middleware (`use()`) runs before the resolver and can narrow the context type — `authedProcedure` guarantees `ctx.user` is non-null downstream. The `AppRouter` type export is the only thing the client needs; call `createTRPCClient<AppRouter>()` on the frontend and every procedure input and output is inferred automatically.
+
+## Notes
+
+- Replace the in-memory `posts` array with your ORM of choice (Prisma, Drizzle, Kysely).
+- For subscriptions, swap the Express adapter for `@trpc/server/adapters/ws` and add a WebSocket server alongside Express.
+- The `AppRouter` type can be published as an internal package so multiple frontend apps share the same types without a shared monorepo.
+
+## README
+
+### What this includes
+
+- `initTRPC` setup with typed context carrying an authenticated user
+- `publicProcedure`, `authedProcedure`, and `adminProcedure` middleware chain
+- Nested `postsRouter` with `query` and `mutation` procedures
+- Zod input validation on every procedure
+- Express adapter with CORS and JSON body parsing
+- Centralised `onError` handler for server errors
+- Exported `AppRouter` type for use with tRPC client
+
+### Prerequisites
+
+- Node.js 18+
+- `npm` / `pnpm` / `yarn`
+
+### Create this template
+
+```bash
+# 1. Create project
+mkdir my-trpc-server && cd my-trpc-server
+npm init -y
+
+# 2. Install runtime dependencies
+npm install @trpc/server express cors zod jsonwebtoken
+
+# 3. Install dev dependencies
+npm install -D typescript ts-node nodemon @types/express @types/cors @types/jsonwebtoken
+
+# 4. Initialise TypeScript
+npx tsc --init --rootDir src --outDir dist --module nodenext --moduleResolution nodenext --strict
+
+# 5. Add start scripts to package.json
+# "dev": "nodemon --exec ts-node src/server.ts"
+# "build": "tsc"
+# "start": "node dist/server.js"
+
+# 6. Create src/ files as shown above
+
+# 7. Add .env
+# JWT_SECRET=change-me-in-production
+# PORT=4000
+# CLIENT_ORIGIN=http://localhost:3000
+
+# 8. Start dev server
+npm run dev
+```
+
+### Project structure
+
+```
+my-trpc-server/
+├── src/
+│   ├── trpc.ts            # initTRPC, context, base procedures
+│   ├── server.ts          # Express app + tRPC middleware
+│   └── routers/
+│       ├── index.ts       # Root appRouter + AppRouter type export
+│       └── posts.ts       # Example resource router
+├── .env
+├── tsconfig.json
+└── package.json
+```
+
+### First things to customize
+
+- `src/trpc.ts` — replace `jwt.verify` with your real auth logic (Clerk, Auth.js, etc.)
+- `src/routers/posts.ts` — swap the in-memory array for a real database client
+- `CORS origin` — set `CLIENT_ORIGIN` to your frontend's URL
+- `JWT_SECRET` — use a strong random secret (at minimum 32 chars) in production
+- Add more routers in `src/routers/` and register them in `appRouter`
