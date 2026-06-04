@@ -1,0 +1,125 @@
+---
+title: useIdleTimer Hook
+description: Fires a callback after the user has been idle for a configurable duration, resetting on any mouse, touch, or keyboard activity. Useful for session timeout warnings.
+category: snippets
+language: typescript
+tags: [react, hooks, idle, timer]
+---
+
+Detects user inactivity by tracking mouse, touch, and keyboard events, then fires a callback once the idle threshold is crossed. The timer resets automatically on any new activity.
+
+## Usage
+
+```typescript
+import { useEffect, useRef, useCallback } from 'react'
+
+interface UseIdleTimerOptions {
+  /** Idle duration in milliseconds before the callback fires. Defaults to 5 minutes. */
+  timeout?: number
+  /** Called once when the user becomes idle. */
+  onIdle: () => void
+  /** Called when the user returns from idle (optional). */
+  onActive?: () => void
+  /** Extra DOM events that count as activity (merged with defaults). */
+  events?: string[]
+}
+
+function useIdleTimer({
+  timeout = 5 * 60 * 1000,
+  onIdle,
+  onActive,
+  events = [],
+}: UseIdleTimerOptions): void {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isIdleRef = useRef(false)
+
+  const onIdleStable = useRef(onIdle)
+  const onActiveStable = useRef(onActive)
+
+  useEffect(() => {
+    onIdleStable.current = onIdle
+  }, [onIdle])
+
+  useEffect(() => {
+    onActiveStable.current = onActive
+  }, [onActive])
+
+  const resetTimer = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+
+    if (isIdleRef.current) {
+      isIdleRef.current = false
+      onActiveStable.current?.()
+    }
+
+    timerRef.current = setTimeout(() => {
+      isIdleRef.current = true
+      onIdleStable.current()
+    }, timeout)
+  }, [timeout])
+
+  useEffect(() => {
+    const defaultEvents = [
+      'mousemove',
+      'mousedown',
+      'keydown',
+      'touchstart',
+      'touchmove',
+      'wheel',
+      'scroll',
+      'visibilitychange',
+    ]
+
+    const listenedEvents = [...new Set([...defaultEvents, ...events])]
+
+    listenedEvents.forEach((event) =>
+      document.addEventListener(event, resetTimer, { passive: true })
+    )
+
+    resetTimer()
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      listenedEvents.forEach((event) =>
+        document.removeEventListener(event, resetTimer)
+      )
+    }
+  }, [resetTimer, events])
+}
+
+export default useIdleTimer
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `timeout` | `number` | `300000` | Milliseconds of inactivity before `onIdle` fires |
+| `onIdle` | `() => void` | required | Callback fired when the user goes idle |
+| `onActive` | `() => void` | `undefined` | Callback fired when activity resumes after idle |
+| `events` | `string[]` | `[]` | Additional DOM event names to track |
+
+## Examples
+
+```typescript
+// Session timeout warning after 10 minutes of inactivity
+useIdleTimer({
+  timeout: 10 * 60 * 1000,
+  onIdle: () => setShowTimeoutModal(true),
+  onActive: () => setShowTimeoutModal(false),
+})
+```
+
+```typescript
+// Auto-save draft after 30 seconds of inactivity
+useIdleTimer({
+  timeout: 30_000,
+  onIdle: () => saveDraft(editorContent),
+})
+```
+
+## Notes
+
+- The hook is safe to use in SSR environments — all DOM access is inside `useEffect`.
+- `onIdle` and `onActive` refs are updated on every render, so you can pass inline arrow functions without triggering re-subscription.
+- The `visibilitychange` event is included by default so switching browser tabs also counts as activity.
