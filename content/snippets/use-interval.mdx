@@ -1,0 +1,98 @@
+---
+title: useInterval Hook
+description: Sets up a setInterval inside a React component and clears it on unmount or when the delay changes. Handles the stale-closure problem by using a ref for the callback.
+category: snippets
+language: typescript
+tags: [react, hooks, timer, interval]
+---
+
+A declarative wrapper around `setInterval` that keeps the callback fresh on every render without restarting the interval, avoiding the stale-closure bug that bites when you use `setInterval` directly in an effect.
+
+## Usage
+
+```typescript
+import { useEffect, useRef } from 'react'
+
+function useInterval(callback: () => void, delay: number | null): void {
+  const savedCallback = useRef(callback)
+
+  // Keep the ref current so the interval always calls the latest version
+  // of the callback without restarting the interval.
+  useEffect(() => {
+    savedCallback.current = callback
+  }, [callback])
+
+  useEffect(() => {
+    // Passing null opts out of the interval (pause pattern).
+    if (delay === null) return
+
+    const id = setInterval(() => savedCallback.current(), delay)
+    return () => clearInterval(id)
+  }, [delay])
+}
+
+export default useInterval
+```
+
+## Examples
+
+```typescript
+import { useState } from 'react'
+import useInterval from './useInterval'
+
+// Basic counter that increments every second
+function Counter() {
+  const [count, setCount] = useState(0)
+
+  useInterval(() => {
+    setCount((c) => c + 1)
+  }, 1000)
+
+  return <p>Count: {count}</p>
+}
+
+// Pausable interval — pass null to stop, a number to (re)start
+function PausableTimer() {
+  const [running, setRunning] = useState(true)
+  const [ticks, setTicks] = useState(0)
+
+  useInterval(
+    () => setTicks((t) => t + 1),
+    running ? 500 : null,
+  )
+
+  return (
+    <div>
+      <p>Ticks: {ticks}</p>
+      <button onClick={() => setRunning((r) => !r)}>
+        {running ? 'Pause' : 'Resume'}
+      </button>
+    </div>
+  )
+}
+
+// Slideshow that reads current state without stale closure issues
+function Slideshow({ slides }: { slides: string[] }) {
+  const [index, setIndex] = useState(0)
+
+  useInterval(() => {
+    setIndex((i) => (i + 1) % slides.length)
+  }, 3000)
+
+  return <img src={slides[index]} alt={`Slide ${index}`} />
+}
+```
+
+## Options
+
+| Parameter  | Type               | Description                                                     |
+| ---------- | ------------------ | --------------------------------------------------------------- |
+| `callback` | `() => void`       | Function to call on each interval tick                          |
+| `delay`    | `number \| null`   | Interval duration in milliseconds. Pass `null` to pause/disable |
+
+## Notes
+
+- Passing `null` as the delay is the idiomatic way to pause the interval without unmounting the component.
+- The interval is restarted whenever `delay` changes. If you want to change the callback without restarting the interval, just update the function reference — the ref handles it transparently.
+- For one-shot timers use `useTimeout` (a `setTimeout` equivalent) instead.
+- This pattern was popularised by Dan Abramov's "Making setInterval Declarative with React Hooks" blog post.
