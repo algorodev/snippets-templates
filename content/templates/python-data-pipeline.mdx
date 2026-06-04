@@ -1,0 +1,354 @@
+---
+title: Python Data Pipeline
+description: A structured data pipeline template using Pandas, DuckDB, and Prefect for orchestration. Includes schema validation with Pandera, logging, and an example ETL workflow.
+category: templates
+language: python
+tags: [python, data, pipeline, pandas, prefect]
+---
+
+A production-ready ETL pipeline template that reads raw data, validates it with Pandera schemas, transforms it with Pandas and DuckDB, and orchestrates the full workflow with Prefect — complete with retries, logging, and artifact tracking.
+
+## Usage
+
+```python
+# pipeline/schemas.py
+"""Pandera schemas for input and output validation."""
+import pandera as pa
+from pandera import Column, DataFrameSchema, Check
+
+
+raw_orders_schema = DataFrameSchema(
+    {
+        "order_id": Column(str, Check.str_length(min_value=1), nullable=False, unique=True),
+        "customer_id": Column(str, nullable=False),
+        "amount": Column(float, Check.greater_than(0), nullable=False),
+        "status": Column(
+            str,
+            Check.isin(["pending", "completed", "cancelled", "refunded"]),
+            nullable=False,
+        ),
+        "order_date": Column(pa.DateTime, nullable=False),
+    },
+    coerce=True,
+    strict=False,  # allow extra columns in source data
+)
+
+clean_orders_schema = DataFrameSchema(
+    {
+        "order_id": Column(str, nullable=False, unique=True),
+        "customer_id": Column(str, nullable=False),
+        "amount_usd": Column(float, Check.greater_than_or_equal_to(0), nullable=False),
+        "is_completed": Column(bool, nullable=False),
+        "order_date": Column(pa.DateTime, nullable=False),
+        "year_month": Column(str, Check.str_matches(r"^\d{4}-\d{2}$"), nullable=False),
+    },
+    coerce=True,
+)
+```
+
+```python
+# pipeline/extract.py
+"""Extract step — load raw data from CSV, Parquet, or a database."""
+import logging
+from pathlib import Path
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+def extract_from_csv(path: str | Path) -> pd.DataFrame:
+    path = Path(path)
+    logger.info("Extracting from CSV: %s", path)
+    df = pd.read_csv(
+        path,
+        parse_dates=["order_date"],
+        dtype={"order_id": str, "customer_id": str},
+    )
+    logger.info("Extracted %d rows from %s", len(df), path.name)
+    return df
+
+
+def extract_from_parquet(path: str | Path) -> pd.DataFrame:
+    path = Path(path)
+    logger.info("Extracting from Parquet: %s", path)
+    df = pd.read_parquet(path)
+    logger.info("Extracted %d rows", len(df))
+    return df
+```
+
+```python
+# pipeline/transform.py
+"""Transform step — clean, validate, and enrich data using Pandas + DuckDB."""
+import logging
+import duckdb
+import pandas as pd
+from pipeline.schemas import raw_orders_schema, clean_orders_schema
+
+logger = logging.getLogger(__name__)
+
+
+def validate_raw(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate incoming data against the raw schema and return the validated frame."""
+    logger.info("Validating raw data (%d rows)...", len(df))
+    validated = raw_orders_schema.validate(df, lazy=True)
+    logger.info("Validation passed.")
+    return validated
+
+
+def transform_orders(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply business logic and return the clean dataframe."""
+    logger.info("Transforming %d rows...", len(df))
+
+    # Use DuckDB for fast SQL-based transforms on the in-memory frame
+    con = duckdb.connect()
+    con.register("orders", df)
+
+    clean = con.execute(
+        """
+        SELECT
+            order_id,
+            customer_id,
+            ROUND(amount, 2)                      AS amount_usd,
+            status = 'completed'                   AS is_completed,
+            order_date,
+            STRFTIME(order_date, '%Y-%m')          AS year_month
+        FROM orders
+        WHERE status != 'cancelled'
+        """
+    ).df()
+
+    con.close()
+
+    # Validate the output shape before returning
+    clean = clean_orders_schema.validate(clean, lazy=True)
+
+    logger.info("Transform complete: %d rows remain after filtering.", len(clean))
+    return clean
+
+
+def aggregate_by_month(df: pd.DataFrame) -> pd.DataFrame:
+    """Return monthly revenue and order count summary."""
+    return (
+        df.groupby("year_month")
+        .agg(
+            total_revenue=("amount_usd", "sum"),
+            order_count=("order_id", "count"),
+            avg_order_value=("amount_usd", "mean"),
+        )
+        .reset_index()
+        .sort_values("year_month")
+    )
+```
+
+```python
+# pipeline/load.py
+"""Load step — persist clean data to Parquet, CSV, or DuckDB."""
+import logging
+from pathlib import Path
+import duckdb
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+def load_to_parquet(df: pd.DataFrame, path: str | Path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, index=False, compression="zstd")
+    logger.info("Wrote %d rows to %s (%.1f KB)", len(df), path, path.stat().st_size / 1024)
+
+
+def load_to_duckdb(df: pd.DataFrame, db_path: str | Path, table: str) -> None:
+    con = duckdb.connect(str(db_path))
+    con.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM df")
+    count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    con.close()
+    logger.info("Loaded %d rows into DuckDB table '%s' at %s", count, table, db_path)
+```
+
+```python
+# pipeline/flows.py
+"""Prefect flow that wires Extract → Validate → Transform → Load."""
+import logging
+from pathlib import Path
+from prefect import flow, task, get_run_logger
+from prefect.artifacts import create_table_artifact
+import pandas as pd
+from pipeline.extract import extract_from_csv
+from pipeline.transform import validate_raw, transform_orders, aggregate_by_month
+from pipeline.load import load_to_parquet, load_to_duckdb
+
+
+@task(retries=3, retry_delay_seconds=10, name="extract-orders")
+def extract_task(source_path: str) -> pd.DataFrame:
+    logger = get_run_logger()
+    logger.info("Starting extract from %s", source_path)
+    return extract_from_csv(source_path)
+
+
+@task(name="validate-raw")
+def validate_task(df: pd.DataFrame) -> pd.DataFrame:
+    return validate_raw(df)
+
+
+@task(name="transform-orders")
+def transform_task(df: pd.DataFrame) -> pd.DataFrame:
+    return transform_orders(df)
+
+
+@task(name="load-parquet")
+def load_parquet_task(df: pd.DataFrame, output_path: str) -> None:
+    load_to_parquet(df, output_path)
+
+
+@task(name="load-duckdb")
+def load_duckdb_task(df: pd.DataFrame, db_path: str, table: str) -> None:
+    load_to_duckdb(df, db_path, table)
+
+
+@task(name="publish-summary-artifact")
+def publish_summary(df: pd.DataFrame) -> None:
+    logger = get_run_logger()
+    summary = aggregate_by_month(df)
+    create_table_artifact(
+        key="monthly-revenue-summary",
+        table=summary.to_dict(orient="records"),
+        description="Monthly revenue aggregated from the current pipeline run.",
+    )
+    logger.info("Published monthly summary artifact.")
+
+
+@flow(name="orders-etl", log_prints=True)
+def orders_etl_flow(
+    source_path: str = "data/raw/orders.csv",
+    output_parquet: str = "data/clean/orders.parquet",
+    duckdb_path: str = "data/warehouse.duckdb",
+    duckdb_table: str = "orders",
+) -> None:
+    """Full ETL pipeline: extract CSV → validate → transform → load Parquet + DuckDB."""
+    raw = extract_task(source_path)
+    validated = validate_task(raw)
+    clean = transform_task(validated)
+    load_parquet_task(clean, output_parquet)
+    load_duckdb_task(clean, duckdb_path, duckdb_table)
+    publish_summary(clean)
+
+
+if __name__ == "__main__":
+    orders_etl_flow()
+```
+
+```toml
+# pyproject.toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "my-data-pipeline"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "duckdb>=1.0",
+    "prefect>=3.0",
+    "pandera>=0.20",
+    "pyarrow>=16.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-datadir>=1.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pipeline"]
+```
+
+## Options
+
+| Feature | How to configure |
+|---|---|
+| Scheduled runs | Use `prefect deployment serve` or `prefect deploy` with a cron schedule |
+| Parquet partitioning | Pass `partition_cols=["year_month"]` to `df.to_parquet()` |
+| Email/Slack alerts | Add a Prefect notification block to the flow via the UI or `prefect.yaml` |
+| Incremental loads | Filter `extract_from_csv` by a watermark stored in a DuckDB metadata table |
+| Parallel tasks | Wrap independent tasks in `asyncio.gather` or use Prefect's task runner |
+
+## How it works
+
+Each pipeline stage is a separate `@task` so Prefect can retry individual steps without re-running the whole flow. DuckDB executes the transformation SQL directly against the Pandas DataFrame held in memory — no data is written to disk between extract and load. Pandera's `lazy=True` mode collects all schema violations before raising, so you get a full error report rather than failing on the first bad row.
+
+## README
+
+### What this includes
+
+- Prefect 3 flow with `@task` decorators and configurable retry logic
+- Pandera schemas for both raw input and clean output data frames
+- DuckDB SQL transforms executed in-memory against Pandas DataFrames
+- Extract helpers for CSV and Parquet sources
+- Load helpers for Parquet (zstd) and DuckDB table outputs
+- Monthly aggregation and a Prefect table artifact published after each run
+- `pyproject.toml` with Hatchling build backend
+
+### Prerequisites
+
+- Python 3.11+
+- `pip` or `uv`
+
+### Create this template
+
+```bash
+# 1. Create the project and virtual environment
+mkdir my-data-pipeline && cd my-data-pipeline
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 2. Install dependencies
+pip install pandas duckdb prefect pandera pyarrow
+
+# 3. Create the pipeline package
+mkdir -p pipeline data/raw data/clean
+touch pipeline/__init__.py
+
+# 4. Copy each module from above (schemas.py, extract.py, transform.py, load.py, flows.py)
+
+# 5. (Optional) start the Prefect server for the local UI
+prefect server start
+
+# 6. Run the flow directly
+python -m pipeline.flows
+
+# 7. Or deploy it with a schedule (every day at 02:00)
+prefect deploy pipeline/flows.py:orders_etl_flow \
+  --name orders-etl-daily \
+  --cron "0 2 * * *"
+```
+
+### Project structure
+
+```
+my-data-pipeline/
+├── pipeline/
+│   ├── __init__.py
+│   ├── schemas.py       # Pandera input / output schemas
+│   ├── extract.py       # CSV and Parquet readers
+│   ├── transform.py     # DuckDB SQL transform + Pandas enrichment
+│   ├── load.py          # Parquet and DuckDB writers
+│   └── flows.py         # Prefect flow + tasks wiring ETL together
+├── data/
+│   ├── raw/             # Source files (gitignored)
+│   └── clean/           # Output Parquet files (gitignored)
+├── tests/
+├── pyproject.toml
+└── .gitignore
+```
+
+### First things to customize
+
+- `pipeline/schemas.py` — replace `raw_orders_schema` columns with your actual source schema
+- `pipeline/flows.py` — update default `source_path`, `output_parquet`, and `duckdb_table` parameter values
+- `pipeline/transform.py` — rewrite the DuckDB SQL query to match your business logic
+- `pipeline/extract.py` — add a database extractor (e.g. via `duckdb.connect().execute("ATTACH ...")` or `pandas.read_sql`) for non-file sources
+- `pyproject.toml` — rename `name` and pin dependency versions for reproducibility
