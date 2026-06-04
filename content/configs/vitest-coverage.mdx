@@ -1,0 +1,137 @@
+---
+title: Vitest Coverage Config
+description: Vitest configuration extended with V8 coverage provider and coverage thresholds. Generates HTML, JSON, and LCOV reports suitable for CI badge integration.
+category: configs
+language: javascript
+tags: [vitest, coverage, testing, ci]
+---
+
+Adds V8-powered coverage to your Vitest setup with enforced thresholds that fail the build and multiple report formats so you can display a live badge in your README.
+
+## Usage
+
+```javascript
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import { resolve } from 'path';
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, './src'),
+    },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.{test,spec}.{js,jsx,ts,tsx}'],
+    exclude: ['node_modules', 'dist', '.next', 'coverage'],
+    coverage: {
+      provider: 'v8',
+      enabled: false, // Run with --coverage flag to collect
+      all: true,
+      include: ['src/**/*.{js,jsx,ts,tsx}'],
+      exclude: [
+        'src/**/*.d.ts',
+        'src/**/*.stories.{js,jsx,ts,tsx}',
+        'src/test/**',
+        'src/**/index.{js,ts}', // re-export barrels
+        'src/**/*.config.{js,ts}',
+        'src/main.{js,jsx,ts,tsx}',
+      ],
+      reporter: ['text', 'html', 'json', 'json-summary', 'lcov'],
+      reportsDirectory: './coverage',
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 75,
+        statements: 80,
+        perFile: false, // Flip to true for per-file enforcement
+      },
+    },
+  },
+});
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:watch": "vitest --coverage"
+  }
+}
+```
+
+**CI workflow (`.github/workflows/test.yml`):**
+
+```yaml
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/lcov.info
+          fail_ci_if_error: true
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+```
+
+**README badge (Codecov):**
+
+```markdown
+[![Coverage](https://codecov.io/gh/<owner>/<repo>/branch/main/graph/badge.svg)](https://codecov.io/gh/<owner>/<repo>)
+```
+
+**Install:**
+
+```bash
+npm install -D vitest @vitest/coverage-v8
+```
+
+## Options
+
+| Field | Value | Effect |
+|-------|-------|--------|
+| `provider` | `'v8'` \| `'istanbul'` | V8 is faster and requires no instrumentation; Istanbul is more precise with branches |
+| `all` | `true` | Includes files with zero tests in the report (shows true coverage gaps) |
+| `thresholds.perFile` | `true` \| `false` | Enforce minimums on every individual file rather than the aggregate |
+| `reporter` | array | `'lcov'` for Codecov/Coveralls, `'html'` for local browsing, `'json-summary'` for badge APIs |
+| `reportsDirectory` | string | Output folder — add `coverage/` to `.gitignore` |
+
+## Notes
+
+- Run `npx vitest --coverage --ui` to open an interactive browser view of your test results alongside the coverage report.
+- The `json-summary` reporter writes `coverage/coverage-summary.json`, which tools like `coverage-badges-action` can parse to generate SVG badges without a third-party service.
+- Setting `enabled: false` in config means coverage is opt-in; it only runs when you pass `--coverage`. This keeps the default `vitest` watch loop fast.
+- Switch to `provider: 'istanbul'` if you need accurate branch coverage for code paths that V8's compiler optimizes away (rare, but possible with complex ternary chains).
+- Add `coverage/` to `.gitignore` — only `lcov.info` or `coverage-summary.json` should be committed if you need them for badges.
