@@ -1,0 +1,156 @@
+---
+title: useEventListener Hook
+description: Attaches an event listener to a window, document, or element ref and automatically removes it on cleanup. Typed for all standard DOM event maps.
+category: snippets
+language: typescript
+tags: [react, hooks, events, dom]
+---
+
+Declaratively adds and removes event listeners without manual `addEventListener` / `removeEventListener` bookkeeping, with full TypeScript inference for event type and handler signature.
+
+## Usage
+
+```typescript
+import { useEffect, useRef } from 'react'
+
+type EventTarget = Window | Document | HTMLElement | null
+
+// Overload for window events
+function useEventListener<K extends keyof WindowEventMap>(
+  eventName: K,
+  handler: (event: WindowEventMap[K]) => void,
+  element?: undefined,
+  options?: boolean | AddEventListenerOptions,
+): void
+
+// Overload for document events
+function useEventListener<K extends keyof DocumentEventMap>(
+  eventName: K,
+  handler: (event: DocumentEventMap[K]) => void,
+  element: React.RefObject<Document>,
+  options?: boolean | AddEventListenerOptions,
+): void
+
+// Overload for HTML element events
+function useEventListener<
+  K extends keyof HTMLElementEventMap,
+  T extends HTMLElement = HTMLDivElement,
+>(
+  eventName: K,
+  handler: (event: HTMLElementEventMap[K]) => void,
+  element: React.RefObject<T>,
+  options?: boolean | AddEventListenerOptions,
+): void
+
+// Implementation
+function useEventListener<
+  KW extends keyof WindowEventMap,
+  KD extends keyof DocumentEventMap,
+  KH extends keyof HTMLElementEventMap,
+  T extends HTMLElement | void = void,
+>(
+  eventName: KW | KD | KH,
+  handler: (
+    event:
+      | WindowEventMap[KW]
+      | DocumentEventMap[KD]
+      | HTMLElementEventMap[KH]
+      | Event,
+  ) => void,
+  element?: React.RefObject<T>,
+  options?: boolean | AddEventListenerOptions,
+): void {
+  const savedHandler = useRef(handler)
+
+  useEffect(() => {
+    savedHandler.current = handler
+  }, [handler])
+
+  useEffect(() => {
+    const targetElement: EventTarget =
+      element?.current ?? window
+
+    if (!targetElement?.addEventListener) return
+
+    const listener: typeof handler = (event) =>
+      savedHandler.current(event)
+
+    targetElement.addEventListener(
+      eventName,
+      listener as EventListener,
+      options,
+    )
+
+    return () => {
+      targetElement.removeEventListener(
+        eventName,
+        listener as EventListener,
+        options,
+      )
+    }
+  }, [eventName, element, options])
+}
+
+export default useEventListener
+```
+
+## Examples
+
+```typescript
+import { useRef } from 'react'
+import useEventListener from './useEventListener'
+
+// Listen on window (no element argument needed)
+function KeyPressLogger() {
+  useEventListener('keydown', (event) => {
+    console.log('Key pressed:', event.key)
+  })
+
+  return null
+}
+
+// Listen on a specific element ref
+function ClickOutside({ onClose }: { onClose: () => void }) {
+  const modalRef = useRef<HTMLDivElement>(null)
+
+  useEventListener(
+    'mousedown',
+    (event) => {
+      if (!modalRef.current?.contains(event.target as Node)) {
+        onClose()
+      }
+    },
+    modalRef,
+  )
+
+  return <div ref={modalRef}>Modal content</div>
+}
+
+// Listen on document
+function VisibilityTracker() {
+  const docRef = useRef(document)
+
+  useEventListener(
+    'visibilitychange',
+    () => {
+      console.log('Visibility:', document.visibilityState)
+    },
+    docRef,
+  )
+
+  return null
+}
+```
+
+## Options
+
+| Parameter   | Type                                           | Default    | Description                                               |
+| ----------- | ---------------------------------------------- | ---------- | --------------------------------------------------------- |
+| `eventName` | `string`                                       | —          | The DOM event name (e.g. `'click'`, `'keydown'`)          |
+| `handler`   | `(event: Event) => void`                       | —          | The event callback                                        |
+| `element`   | `RefObject<HTMLElement \| Document>` \| `undefined` | `window` | Target element; omit or pass `undefined` to target `window` |
+| `options`   | `boolean \| AddEventListenerOptions`           | —          | Passed directly to `addEventListener`                     |
+
+## How it works
+
+The handler is stored in a ref so the latest version is always called without needing to be listed in the effect's dependency array — this prevents the listener from being torn down and re-added on every render. The effect only re-runs when the event name, target element, or options change, which are the only things that actually require a new `addEventListener` call.
