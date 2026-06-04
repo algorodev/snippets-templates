@@ -1,0 +1,40 @@
+---
+title: Get Base URL
+description: Returns the origin (protocol + host + port) of a URL string. Returns an empty string for relative or invalid URLs.
+category: snippets
+language: typescript
+tags: [url, utils, parsing]
+---
+
+Extracts the origin (`scheme://host:port`) from a URL string without throwing. Returns an empty string when the input is relative, malformed, or uses a non-HTTP scheme that has no meaningful origin.
+
+```typescript
+function getBaseURL(url: string): string {
+  try {
+    const { origin } = new URL(url)
+    // The URL spec sets origin to 'null' (string) for opaque origins
+    return origin === 'null' ? '' : origin
+  } catch {
+    return ''
+  }
+}
+
+export default getBaseURL
+```
+
+## Usage
+
+```typescript
+getBaseURL('https://example.com/path?q=1')   // 'https://example.com'
+getBaseURL('http://localhost:3000/api')       // 'http://localhost:3000'
+getBaseURL('https://example.com:8080/page')  // 'https://example.com:8080'
+getBaseURL('/relative/path')                 // ''
+getBaseURL('not a url at all')               // ''
+getBaseURL('blob:https://example.com/uuid') // '' (opaque origin)
+```
+
+## Notes
+
+- Standard HTTP/HTTPS URLs on port 80/443 will not include the port in the returned origin, matching browser behaviour.
+- `blob:` and `data:` URLs have opaque origins which the URL spec represents as the string `"null"`. This function maps that to an empty string to keep the return type consistently useful.
+- The function is safe to call without a try/catch — it never throws.
