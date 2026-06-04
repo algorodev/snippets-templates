@@ -1,0 +1,69 @@
+---
+title: Linear Interpolation
+description: Linearly interpolates between two numbers by a given factor between 0 and 1. Commonly used in animations, easing, and procedural generation.
+category: snippets
+language: typescript
+tags: [math, utils, interpolation, animation]
+---
+
+Returns the value that lies `t` of the way between `a` and `b`. When `t = 0` the result is `a`; when `t = 1` the result is `b`.
+
+## Usage
+
+```typescript
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t
+}
+
+export default lerp
+```
+
+## Examples
+
+```typescript
+lerp(0, 100, 0)    // 0   — start
+lerp(0, 100, 0.5)  // 50  — midpoint
+lerp(0, 100, 1)    // 100 — end
+lerp(0, 100, 0.25) // 25
+lerp(10, 20, 0.75) // 17.5
+
+// t can exceed [0, 1] for extrapolation
+lerp(0, 100, 1.5)  // 150
+lerp(0, 100, -0.5) // -50
+```
+
+```typescript
+// Smoothly animate a value toward a target each frame
+let current = 0
+const target = 400
+
+function animate() {
+  current = lerp(current, target, 0.1) // ease toward target by 10% each frame
+  element.style.transform = `translateX(${current}px)`
+  if (Math.abs(target - current) > 0.1) requestAnimationFrame(animate)
+}
+
+requestAnimationFrame(animate)
+```
+
+```typescript
+// Interpolate between two colours (RGB channels separately)
+function lerpColor(
+  a: [number, number, number],
+  b: [number, number, number],
+  t: number
+): [number, number, number] {
+  return [
+    Math.round(lerp(a[0], b[0], t)),
+    Math.round(lerp(a[1], b[1], t)),
+    Math.round(lerp(a[2], b[2], t)),
+  ]
+}
+
+lerpColor([255, 0, 0], [0, 0, 255], 0.5) // [128, 0, 128] — purple
+```
+
+## Notes
+
+- The formulation `a + (b - a) * t` is numerically stable and guarantees `lerp(a, b, 1) === b` exactly, which the alternative `a * (1 - t) + b * t` does not always satisfy due to floating-point rounding.
+- Values of `t` outside `[0, 1]` extrapolate beyond the endpoints, which is useful but should be guarded against if you want strict interpolation — combine with `clamp(t, 0, 1)` in that case.
