@@ -1,0 +1,103 @@
+---
+title: useSet Hook
+description: Manages a Set as React state with stable add, delete, toggle, and clear helpers. Useful for tracking selected items without array indexOf overhead.
+category: snippets
+language: typescript
+tags: [react, hooks, state, set]
+---
+
+A typed hook that wraps a `Set` in React state. O(1) membership checks make it the right tool for selection lists, tag pickers, and permission flags.
+
+## Usage
+
+```typescript
+import { useState, useCallback } from 'react'
+
+type SetActions<T> = {
+  add: (value: T) => void
+  delete: (value: T) => void
+  toggle: (value: T) => void
+  clear: () => void
+  reset: (values?: Iterable<T>) => void
+}
+
+function useSet<T>(initialValues?: Iterable<T>): [Set<T>, SetActions<T>] {
+  const [set, setSet] = useState<Set<T>>(() => new Set(initialValues))
+
+  const add = useCallback((value: T) => {
+    setSet(prev => new Set(prev).add(value))
+  }, [])
+
+  const del = useCallback((value: T) => {
+    setSet(prev => {
+      const next = new Set(prev)
+      next.delete(value)
+      return next
+    })
+  }, [])
+
+  const toggle = useCallback((value: T) => {
+    setSet(prev => {
+      const next = new Set(prev)
+      if (next.has(value)) {
+        next.delete(value)
+      } else {
+        next.add(value)
+      }
+      return next
+    })
+  }, [])
+
+  const clear = useCallback(() => {
+    setSet(new Set())
+  }, [])
+
+  const reset = useCallback((values?: Iterable<T>) => {
+    setSet(new Set(values))
+  }, [])
+
+  return [set, { add, delete: del, toggle, clear, reset }]
+}
+
+export default useSet
+```
+
+## Examples
+
+```typescript
+// Multi-select tag picker
+const [selectedTags, { toggle, clear }] = useSet<string>(['typescript'])
+
+return (
+  <>
+    {allTags.map(tag => (
+      <button
+        key={tag}
+        onClick={() => toggle(tag)}
+        aria-pressed={selectedTags.has(tag)}
+      >
+        {tag}
+      </button>
+    ))}
+    <button onClick={clear}>Clear all</button>
+  </>
+)
+```
+
+```typescript
+// Row selection in a table
+const [selectedIds, { toggle, add, clear }] = useSet<number>()
+
+const allSelected = rows.every(r => selectedIds.has(r.id))
+
+function toggleAll() {
+  if (allSelected) clear()
+  else rows.forEach(r => add(r.id))
+}
+```
+
+## Notes
+
+- `toggle` is the most common operation for checkbox-style UIs — it adds if absent, removes if present.
+- Each mutator copies the set so React detects the change via reference inequality.
+- All callbacks are memoised with `useCallback` and safe to pass as stable props.
