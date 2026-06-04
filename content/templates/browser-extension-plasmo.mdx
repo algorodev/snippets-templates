@@ -1,0 +1,329 @@
+---
+title: Browser Extension with Plasmo
+description: A cross-browser extension template using the Plasmo framework with React and TypeScript, providing a popup, options page, background service worker, and content script scaffolding.
+category: templates
+language: TypeScript
+tags: [browser-extension, plasmo, react, typescript, chrome]
+repo: https://github.com/PlasmoHQ/plasmo
+---
+
+Plasmo eliminates the hand-rolled `manifest.json` and build pipeline that makes browser extensions painful — you write React components and TypeScript modules, Plasmo generates the manifest and bundles everything for Chrome, Firefox, and Edge.
+
+## Usage
+
+```bash
+# Install dependencies and start the dev server
+npm install
+npm run dev
+# Then load the build/chrome-mv3-dev folder as an unpacked extension in chrome://extensions
+```
+
+## Popup
+
+```typescript
+// popup.tsx
+import { useState } from "react"
+import "./style.css"
+
+function IndexPopup() {
+  const [count, setCount] = useState(0)
+
+  return (
+    <div className="flex flex-col items-center gap-3 p-4 w-64">
+      <h2 className="text-lg font-semibold text-gray-800">My Extension</h2>
+      <p className="text-sm text-gray-500">
+        Clicked {count} time{count !== 1 ? "s" : ""}
+      </p>
+      <button
+        className="bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg w-full"
+        onClick={() => setCount((c) => c + 1)}
+      >
+        Click me
+      </button>
+      <a
+        href="#"
+        className="text-xs text-indigo-500 hover:underline"
+        onClick={(e) => {
+          e.preventDefault()
+          chrome.runtime.openOptionsPage()
+        }}
+      >
+        Options
+      </a>
+    </div>
+  )
+}
+
+export default IndexPopup
+```
+
+## Options page
+
+```typescript
+// options.tsx
+import { useEffect, useState } from "react"
+import "./style.css"
+
+function OptionsPage() {
+  const [apiKey, setApiKey] = useState("")
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    chrome.storage.sync.get(["apiKey"], (result) => {
+      if (result.apiKey) setApiKey(result.apiKey)
+    })
+  }, [])
+
+  function handleSave() {
+    chrome.storage.sync.set({ apiKey }, () => {
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    })
+  }
+
+  return (
+    <div className="max-w-md mx-auto mt-10 p-6">
+      <h1 className="text-xl font-bold text-gray-900 mb-6">Settings</h1>
+      <div className="flex flex-col gap-2 mb-4">
+        <label className="text-sm font-medium text-gray-700" htmlFor="apiKey">
+          API Key
+        </label>
+        <input
+          id="apiKey"
+          type="password"
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="sk-..."
+        />
+      </div>
+      <button
+        className="bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg"
+        onClick={handleSave}
+      >
+        {saved ? "Saved!" : "Save"}
+      </button>
+    </div>
+  )
+}
+
+export default OptionsPage
+```
+
+## Background service worker
+
+```typescript
+// background.ts
+import type { PlasmoMessaging } from "@plasmohq/messaging"
+
+// Runs as a Manifest V3 service worker
+export {}
+
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") {
+    console.log("Extension installed")
+    chrome.storage.sync.set({ apiKey: "", enabled: true })
+  }
+})
+
+// Listen for messages from content scripts or popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "GET_STATUS") {
+    chrome.storage.sync.get(["enabled"], (result) => {
+      sendResponse({ enabled: result.enabled ?? true })
+    })
+    return true // keep the message channel open for async response
+  }
+})
+```
+
+## Content script
+
+```typescript
+// contents/overlay.tsx
+import type { PlasmoCSConfig } from "plasmo"
+
+// Tell Plasmo which pages to inject this script on
+export const config: PlasmoCSConfig = {
+  matches: ["https://*/*"],
+  all_frames: false,
+}
+
+// A simple example: highlight all links on the page when the extension is active
+function highlightLinks() {
+  const links = document.querySelectorAll<HTMLAnchorElement>("a[href]")
+  links.forEach((link) => {
+    link.style.outline = "2px solid #6366f1"
+    link.style.outlineOffset = "2px"
+  })
+}
+
+// Check whether the extension is enabled before running
+chrome.runtime.sendMessage({ type: "GET_STATUS" }, (response) => {
+  if (response?.enabled) {
+    highlightLinks()
+  }
+})
+
+export {}
+```
+
+## Plasmo manifest configuration
+
+```typescript
+// package.json  (manifest overrides go under the "manifest" key)
+{
+  "name": "my-extension",
+  "displayName": "My Extension",
+  "version": "0.0.1",
+  "description": "A short description of what your extension does.",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "@plasmohq/messaging": "0.6.2",
+    "@plasmohq/storage": "1.13.0",
+    "plasmo": "0.88.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.0.268",
+    "@types/react": "18.2.0",
+    "@types/react-dom": "18.2.0",
+    "typescript": "5.3.3"
+  },
+  "manifest": {
+    "permissions": ["storage", "activeTab"],
+    "host_permissions": ["https://*/*"]
+  }
+}
+```
+
+## Tailwind CSS setup
+
+```css
+/* style.css  — imported by popup.tsx and options.tsx */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+```
+
+```javascript
+// tailwind.config.js
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  mode: "jit",
+  content: ["./**/*.tsx"],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+```
+
+## Sending messages between contexts
+
+```typescript
+// Example: popup sends a message, background responds
+// In popup.tsx
+const response = await chrome.runtime.sendMessage({ type: "GET_STATUS" })
+console.log(response.enabled)
+
+// Example: content script to background via @plasmohq/messaging
+// background/messages/getData.ts
+import type { PlasmoMessaging } from "@plasmohq/messaging"
+
+const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
+  const data = await fetchSomeData(req.body.url)
+  res.send({ data })
+}
+
+export default handler
+```
+
+## README
+
+### What this includes
+
+- **Plasmo** — Zero-config build tool for cross-browser extensions with hot reload
+- **Manifest V3** — Service worker background script, modern permissions model
+- **Popup** — React component rendered in the browser action popup
+- **Options page** — Full React page for user settings, linked from the popup
+- **Background service worker** — Handles events, alarms, and message passing
+- **Content script** — Injected into web pages, configurable URL match patterns
+- **`@plasmohq/storage`** — Typed wrapper around `chrome.storage` with React hooks
+- **`@plasmohq/messaging`** — Type-safe message passing between extension contexts
+- **Tailwind CSS** — Utility classes available in popup and options via `style.css`
+- **TypeScript** — Full type coverage including `@types/chrome`
+
+### Prerequisites
+
+- Node.js 18+
+- Chrome, Brave, or Edge for loading unpacked extensions during development
+- For Firefox: `web-ext` CLI (`npm install -g web-ext`)
+
+### Create this template
+
+```bash
+# 1. Scaffold a new Plasmo extension
+npm create plasmo@latest my-extension
+cd my-extension
+
+# 2. Install dependencies
+npm install
+
+# 3. Add Tailwind CSS
+npm install tailwindcss
+npx tailwindcss init
+
+# 4. Update tailwind.config.js with the config shown above
+# 5. Create style.css in the project root with the Tailwind directives
+# 6. Import style.css at the top of popup.tsx and options.tsx
+
+# 7. Install Plasmo messaging and storage helpers
+npm install @plasmohq/messaging @plasmohq/storage
+
+# 8. Start the dev server
+npm run dev
+
+# 9. Load the extension in Chrome:
+#    - Navigate to chrome://extensions
+#    - Enable "Developer mode"
+#    - Click "Load unpacked" and select build/chrome-mv3-dev
+
+# 10. Build for production and package for the Chrome Web Store
+npm run build
+npm run package
+```
+
+### Project structure
+
+```
+my-extension/
+├── assets/
+│   └── icon.png            # Extension icon (Plasmo auto-resizes)
+├── background/
+│   └── messages/           # @plasmohq/messaging handlers
+│       └── getData.ts
+├── contents/
+│   └── overlay.tsx         # Content script(s)
+├── background.ts            # Service worker entry point
+├── options.tsx              # Options page
+├── popup.tsx                # Browser action popup
+├── style.css                # Tailwind CSS entry point
+├── tailwind.config.js
+├── package.json             # Also holds "manifest" overrides
+└── tsconfig.json
+```
+
+### First things to customize
+
+- `package.json` — Update `name`, `displayName`, `description`, and `version`; adjust `permissions` and `host_permissions` to only what you need
+- `popup.tsx` — Replace the counter demo with your extension's primary UI
+- `contents/overlay.tsx` — Update the `matches` array to target specific sites instead of `https://*/*`
+- `assets/icon.png` — Replace with your own icon (512×512 PNG; Plasmo generates the smaller sizes)
+- `options.tsx` — Add or remove settings fields based on your extension's configuration needs
+- `background.ts` — Register any `chrome.alarms`, `contextMenus`, or `declarativeNetRequest` rules your extension requires
