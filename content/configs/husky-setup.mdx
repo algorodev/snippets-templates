@@ -1,0 +1,57 @@
+---
+title: Husky Git Hooks Setup
+description: A Husky setup that installs pre-commit and commit-msg hooks for automated linting and commit validation. Includes the recommended install script for package.json.
+category: configs
+language: javascript
+tags: [husky, git-hooks, linting, commit-validation]
+---
+
+Husky wires Git hooks directly into your `package.json` workflow. The setup below installs a `pre-commit` hook that runs lint-staged and a `commit-msg` hook that runs commitlint, so neither bad code nor a bad commit message can enter the repository.
+
+## Usage
+
+```javascript
+// package.json (relevant sections)
+{
+  "scripts": {
+    "prepare": "husky"
+  }
+}
+```
+
+```bash
+# Run once after adding the prepare script
+npm install -D husky
+npm run prepare
+```
+
+```bash
+# .husky/pre-commit
+# Runs lint-staged on every commit attempt
+npx lint-staged
+```
+
+```bash
+# .husky/commit-msg
+# Validates the commit message against commitlint rules
+npx --no -- commitlint --edit "$1"
+```
+
+**Install dependencies:**
+
+```bash
+npm install -D husky lint-staged @commitlint/cli @commitlint/config-conventional
+```
+
+## How it works
+
+1. `npm run prepare` (or `npm install`) runs `husky`, which writes the Git hooks to `.husky/`.
+2. On `git commit`, Git fires `.husky/pre-commit` before the commit is recorded. If `lint-staged` exits non-zero the commit is aborted.
+3. After staging passes, Git fires `.husky/commit-msg` and passes the path to the temporary commit message file as `$1`. `commitlint --edit "$1"` reads and validates that file.
+
+## Notes
+
+- Husky v9 dropped the legacy `husky install` command. The `prepare` lifecycle script now just calls `husky` with no arguments, which is idempotent and CI-safe (Husky skips setup when `CI=true`).
+- Hook files must be executable. If you create them manually run `chmod +x .husky/pre-commit .husky/commit-msg`.
+- To skip hooks in exceptional situations (e.g. a WIP checkpoint commit): `git commit --no-verify -m "wip"`. Avoid making this a habit.
+- Add `.husky/` to version control so every contributor gets the same hooks automatically on `npm install`.
