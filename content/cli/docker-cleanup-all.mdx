@@ -1,0 +1,128 @@
+---
+title: Docker Full Cleanup
+description: Nuclear option alias that stops all containers and removes containers, images, volumes, and networks in the correct order.
+category: cli
+language: bash
+tags: [docker, cleanup, reset, devops]
+---
+
+When you want Docker back to a completely empty state — after a demo, before benchmarking, or when `docker system df` looks alarming — this function stops everything and tears it all down in the right order without leaving orphaned resources behind.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# Full Docker reset: stop all containers, then remove containers, images, volumes, and networks.
+# Prompts for confirmation unless -f / --force is passed.
+dnuke() {
+  local force=false
+
+  for arg in "$@"; do
+    case "$arg" in
+      -f|--force) force=true ;;
+      *) echo "Unknown option: $arg"; return 1 ;;
+    esac
+  done
+
+  if ! $force; then
+    echo "This will:"
+    echo "  - Stop ALL running containers"
+    echo "  - Remove ALL containers (running, stopped, created)"
+    echo "  - Remove ALL images (including tagged ones)"
+    echo "  - Remove ALL volumes (including named volumes)"
+    echo "  - Remove ALL custom networks"
+    echo ""
+    read -rp "Are you sure? This cannot be undone. [y/N] " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+      echo "Aborted."
+      return 0
+    fi
+  fi
+
+  echo ""
+  echo "==> Stopping all running containers..."
+  local running
+  running=$(docker ps -q)
+  if [ -n "$running" ]; then
+    docker stop $running
+  else
+    echo "    No running containers."
+  fi
+
+  echo ""
+  echo "==> Removing all containers..."
+  local all_containers
+  all_containers=$(docker ps -aq)
+  if [ -n "$all_containers" ]; then
+    docker rm -f $all_containers
+  else
+    echo "    No containers."
+  fi
+
+  echo ""
+  echo "==> Removing all images..."
+  local all_images
+  all_images=$(docker images -aq)
+  if [ -n "$all_images" ]; then
+    docker rmi -f $all_images
+  else
+    echo "    No images."
+  fi
+
+  echo ""
+  echo "==> Removing all volumes..."
+  docker volume prune -f
+
+  echo ""
+  echo "==> Removing all custom networks..."
+  docker network prune -f
+
+  echo ""
+  echo "==> Final disk usage:"
+  docker system df
+
+  echo ""
+  echo "Done. Docker is clean."
+}
+```
+
+## Options
+
+| Flag | Meaning |
+|------|---------|
+| _(none)_ | Show a summary of what will be deleted and prompt for confirmation |
+| `-f` / `--force` | Skip the confirmation prompt and proceed immediately |
+
+## Examples
+
+```bash
+# Interactive — shows what will happen and asks before proceeding
+dnuke
+
+# Headless / CI — skip the confirmation prompt
+dnuke --force
+
+# Quick one-liner without the function (same effect, no prompt)
+docker stop $(docker ps -q) 2>/dev/null; \
+docker rm -f $(docker ps -aq) 2>/dev/null; \
+docker rmi -f $(docker images -aq) 2>/dev/null; \
+docker volume prune -f; \
+docker network prune -f
+```
+
+## How it works
+
+Order matters when tearing Docker down cleanly:
+
+1. **Stop containers** — `docker stop` sends SIGTERM and waits for a graceful exit before SIGKILL. Running containers must be stopped before they can be removed.
+2. **Remove containers** — `docker rm -f` force-removes all containers regardless of state. Images cannot be deleted while containers reference them.
+3. **Remove images** — `docker rmi -f` removes all images, including tagged ones. The `-f` flag handles images that have multiple tags.
+4. **Prune volumes** — `docker volume prune -f` removes all volumes not referenced by any container (all, since we just removed them).
+5. **Prune networks** — `docker network prune -f` removes custom networks; the built-in `bridge`, `host`, and `none` networks are preserved automatically.
+
+## Notes
+
+- The function intentionally does **not** use `docker system prune -a --volumes` because that command's output is less granular and the step-by-step approach makes it easier to see where a failure occurs.
+- The default bridge network, `host` network, and `none` network are never removed by `docker network prune` — they are managed by the daemon and will always be present afterward.
+- On shared or CI hosts, consider using `docker system prune --filter "until=24h"` instead, which only removes resources older than 24 hours and leaves recent builds intact.
