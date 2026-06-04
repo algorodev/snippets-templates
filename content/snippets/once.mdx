@@ -1,0 +1,60 @@
+---
+title: Call Function Once
+description: Wraps a function so it can only be called once; subsequent calls return the cached result of the first invocation. Preserves the original TypeScript types.
+category: snippets
+language: typescript
+tags: [async, utils, functional, memoize]
+---
+
+Guarantees a function executes exactly one time, caching and replaying its return value on every subsequent call — useful for lazy initialisation, singleton factories, and one-shot event handlers.
+
+## Usage
+
+```typescript
+function once<T extends (...args: unknown[]) => unknown>(fn: T): T {
+  let called = false
+  let result: ReturnType<T>
+
+  return function (this: unknown, ...args: Parameters<T>): ReturnType<T> {
+    if (!called) {
+      called = true
+      result = fn.apply(this, args) as ReturnType<T>
+    }
+    return result
+  } as T
+}
+
+export default once
+```
+
+## Examples
+
+```typescript
+const initDB = once(async () => {
+  const client = await createDatabaseClient()
+  await client.connect()
+  return client
+})
+
+// First call connects and caches the client
+const db = await initDB()
+
+// All subsequent calls return the same client immediately
+const sameDb = await initDB()
+console.log(db === sameDb) // true
+```
+
+```typescript
+const logWelcome = once((name: string) => {
+  console.log(`Welcome, ${name}!`)
+})
+
+logWelcome('Alice') // logs: "Welcome, Alice!"
+logWelcome('Bob')   // no-op — result from first call is returned
+```
+
+## Notes
+
+- The cached result is stored in the closure, so it persists for the lifetime of the returned wrapper.
+- If the wrapped function throws on the first call, `called` remains `true` and subsequent calls will silently return `undefined` — wrap in a try/catch if you need retry-on-failure behaviour.
+- For async functions the promise itself is cached, so concurrent first-callers all receive the same promise and only one execution is triggered.
