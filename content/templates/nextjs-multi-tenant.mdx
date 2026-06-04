@@ -1,0 +1,449 @@
+---
+title: Next.js Multi-Tenant App
+description: A multi-tenant SaaS starter with subdomain-based tenant routing, tenant-scoped databases, and per-tenant customization using Next.js middleware. Includes billing hooks and an onboarding flow.
+category: templates
+language: TypeScript
+tags: [next.js, multi-tenant, saas, middleware, prisma]
+repo: https://github.com/vercel/platforms
+---
+
+A production-grade multi-tenant architecture where each tenant gets their own subdomain (`acme.yourapp.com`), isolated data, and customizable branding — all routed through a single Next.js deployment.
+
+## Usage
+
+```typescript
+// middleware.ts — subdomain-based tenant routing
+import { NextRequest, NextResponse } from "next/server";
+
+const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN!; // e.g. "yourapp.com"
+
+export function middleware(req: NextRequest) {
+  const url = req.nextUrl;
+  const hostname = req.headers.get("host") ?? "";
+
+  // Strip port for local dev (localhost:3000 → localhost)
+  const currentHost =
+    process.env.NODE_ENV === "development"
+      ? hostname.replace(`.localhost:3000`, "")
+      : hostname.replace(`.${ROOT_DOMAIN}`, "");
+
+  // Pass-through for the root domain and API routes
+  if (
+    currentHost === ROOT_DOMAIN ||
+    currentHost === "www" ||
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/_next/")
+  ) {
+    return NextResponse.next();
+  }
+
+  // Rewrite to /[tenant]/... without changing the URL shown to the user
+  return NextResponse.rewrite(
+    new URL(`/${currentHost}${url.pathname}`, req.url)
+  );
+}
+
+export const config = {
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+};
+```
+
+```typescript
+// lib/tenant.ts — resolve tenant from current request
+import { headers } from "next/headers";
+import { cache } from "react";
+import { prisma } from "@/lib/prisma";
+
+export const getTenant = cache(async () => {
+  const headersList = await headers();
+  const host = headersList.get("host") ?? "";
+  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN!;
+
+  const subdomain =
+    process.env.NODE_ENV === "development"
+      ? host.replace(".localhost:3000", "")
+      : host.replace(`.${rootDomain}`, "");
+
+  if (!subdomain || subdomain === rootDomain) return null;
+
+  return prisma.tenant.findUnique({
+    where: { subdomain },
+    include: { settings: true },
+  });
+});
+```
+
+```typescript
+// prisma/schema.prisma (relevant models)
+// model Tenant {
+//   id          String   @id @default(cuid())
+//   name        String
+//   subdomain   String   @unique
+//   customDomain String? @unique
+//   plan        Plan     @default(FREE)
+//   createdAt   DateTime @default(now())
+//
+//   settings    TenantSettings?
+//   users       TenantMembership[]
+//   // Add your tenant-scoped resources here
+// }
+//
+// model TenantSettings {
+//   id          String  @id @default(cuid())
+//   tenantId    String  @unique
+//   tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+//   logoUrl     String?
+//   primaryColor String @default("#6366f1")
+//   font        String  @default("inter")
+// }
+//
+// model TenantMembership {
+//   id       String     @id @default(cuid())
+//   tenantId String
+//   userId   String
+//   role     MemberRole @default(MEMBER)
+//   tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+//   user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+//
+//   @@unique([tenantId, userId])
+// }
+//
+// enum MemberRole { OWNER ADMIN MEMBER }
+// enum Plan      { FREE PRO ENTERPRISE }
+```
+
+```typescript
+// app/[tenant]/layout.tsx — tenant shell with branding
+import { notFound } from "next/navigation";
+import { getTenant } from "@/lib/tenant";
+
+export default async function TenantLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: { tenant: string };
+}) {
+  const tenant = await getTenant();
+
+  if (!tenant) notFound();
+
+  const primaryColor = tenant.settings?.primaryColor ?? "#6366f1";
+
+  return (
+    <>
+      {/* Inject per-tenant CSS custom properties */}
+      <style>{`:root { --brand: ${primaryColor}; }`}</style>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+        <header className="border-b border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+          <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+            {tenant.settings?.logoUrl ? (
+              <img src={tenant.settings.logoUrl} alt={tenant.name} className="h-8" />
+            ) : (
+              <span className="text-lg font-bold" style={{ color: primaryColor }}>
+                {tenant.name}
+              </span>
+            )}
+          </div>
+        </header>
+        <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
+      </div>
+    </>
+  );
+}
+```
+
+```typescript
+// app/[tenant]/page.tsx — tenant dashboard home
+import { getTenant } from "@/lib/tenant";
+import { auth } from "@/auth";
+import { redirect } from "next/navigation";
+import { notFound } from "next/navigation";
+
+export default async function TenantDashboard() {
+  const [tenant, session] = await Promise.all([getTenant(), auth()]);
+
+  if (!tenant) notFound();
+  if (!session) redirect(`/login?callbackUrl=/${tenant.subdomain}`);
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+        {tenant.name} Dashboard
+      </h1>
+      <p className="mt-2 text-gray-500">
+        Signed in as {session.user?.email} &middot; Plan:{" "}
+        <span className="font-medium capitalize">{tenant.plan.toLowerCase()}</span>
+      </p>
+    </div>
+  );
+}
+```
+
+```typescript
+// app/onboarding/page.tsx — create a new tenant
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+
+export default function OnboardingPage() {
+  const router = useRouter();
+  const [subdomain, setSubdomain] = useState("");
+  const [name, setName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN!;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    const res = await fetch("/api/tenants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, subdomain }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      setError(data.error ?? "Failed to create workspace.");
+      setLoading(false);
+      return;
+    }
+
+    // Redirect user to their new subdomain
+    window.location.href =
+      process.env.NODE_ENV === "development"
+        ? `http://${subdomain}.localhost:3000`
+        : `https://${subdomain}.${rootDomain}`;
+  }
+
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md space-y-6 rounded-2xl border border-gray-200 bg-white p-8 dark:border-gray-700 dark:bg-gray-900">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Create your workspace
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            You can always change these settings later.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Workspace name
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Acme Inc."
+              required
+              className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Subdomain
+            </label>
+            <div className="mt-1 flex rounded-lg border border-gray-300 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 dark:border-gray-600">
+              <input
+                value={subdomain}
+                onChange={(e) =>
+                  setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
+                }
+                placeholder="acme"
+                required
+                className="w-full rounded-l-lg bg-white px-4 py-2.5 text-sm focus:outline-none dark:bg-gray-800 dark:text-white"
+              />
+              <span className="flex items-center rounded-r-lg border-l border-gray-300 bg-gray-50 px-3 text-sm text-gray-500 dark:border-gray-600 dark:bg-gray-700">
+                .{rootDomain}
+              </span>
+            </div>
+          </div>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+          >
+            {loading ? "Creating…" : "Create workspace"}
+          </button>
+        </form>
+      </div>
+    </main>
+  );
+}
+```
+
+```typescript
+// app/api/tenants/route.ts — create tenant API endpoint
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
+import { z } from "zod";
+
+const createTenantSchema = z.object({
+  name: z.string().min(2).max(64),
+  subdomain: z
+    .string()
+    .min(3)
+    .max(32)
+    .regex(/^[a-z0-9-]+$/, "Only lowercase letters, numbers, and hyphens"),
+});
+
+const RESERVED = new Set(["www", "api", "app", "admin", "mail", "dashboard"]);
+
+export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json();
+  const result = createTenantSchema.safeParse(body);
+  if (!result.success) {
+    return NextResponse.json(
+      { error: result.error.issues[0].message },
+      { status: 400 }
+    );
+  }
+
+  const { name, subdomain } = result.data;
+
+  if (RESERVED.has(subdomain)) {
+    return NextResponse.json(
+      { error: "That subdomain is reserved." },
+      { status: 400 }
+    );
+  }
+
+  const existing = await prisma.tenant.findUnique({ where: { subdomain } });
+  if (existing) {
+    return NextResponse.json(
+      { error: "That subdomain is already taken." },
+      { status: 409 }
+    );
+  }
+
+  const tenant = await prisma.tenant.create({
+    data: {
+      name,
+      subdomain,
+      settings: { create: {} },
+      users: {
+        create: {
+          userId: session.user.id,
+          role: "OWNER",
+        },
+      },
+    },
+  });
+
+  return NextResponse.json(tenant, { status: 201 });
+}
+```
+
+## How it works
+
+1. **Middleware intercepts every request.** It reads the subdomain from `Host`, strips the root domain, and rewrites the path from `/dashboard` to `/acme/dashboard` — invisibly. Next.js then resolves `app/[tenant]/dashboard/page.tsx`.
+2. **`getTenant()`** is a cached async function that reads the rewritten path segment (or `Host` header) and fetches the matching tenant from the database. Call it in any Server Component or Route Handler.
+3. **Tenant layout** injects per-tenant CSS variables (brand color, logo) so every subdomain can look distinct without separate deployments.
+4. **Onboarding flow** creates the tenant record, a `TenantSettings` row, and the first `TenantMembership` (role: `OWNER`) in a single Prisma transaction.
+
+## Notes
+
+- For custom domain support (`customer.com` → your app), point the customer's DNS CNAME to your deployment and handle the `Host` header in middleware the same way.
+- On Vercel, add a wildcard domain (`*.yourapp.com`) in the project settings — Vercel routes all subdomains to the same deployment automatically.
+- Use `getTenant()` with React `cache()` so repeated calls within a single request are deduplicated.
+- Row-level security: always filter Prisma queries by `tenantId` — never fetch cross-tenant data.
+
+## README
+
+### What this includes
+
+- Subdomain-based tenant routing via Next.js middleware (no separate apps)
+- `getTenant()` helper — resolves tenant from `Host` header in any Server Component
+- Per-tenant branding (logo, primary color) via CSS custom properties
+- Tenant creation API with Zod validation and reserved subdomain list
+- Onboarding page to create a workspace and redirect to the new subdomain
+- Prisma schema with `Tenant`, `TenantSettings`, `TenantMembership` models
+- Role system: `OWNER`, `ADMIN`, `MEMBER`
+- Plan enum: `FREE`, `PRO`, `ENTERPRISE` with billing hook placeholders
+
+### Prerequisites
+
+- Node.js 18+
+- A PostgreSQL database
+- A domain with wildcard DNS (`*.yourapp.com → your server`)
+- Auth.js v5 configured (see the Next.js Auth Starter template)
+
+### Create this template
+
+```bash
+npx create-next-app@latest my-platform --typescript --tailwind --eslint --app
+cd my-platform
+
+# ORM + validation
+npm install prisma @prisma/client zod
+npx prisma init --datasource-provider postgresql
+
+# Add Tenant, TenantSettings, TenantMembership models to prisma/schema.prisma
+npx prisma db push
+
+# Scaffold directory structure
+mkdir -p "app/[tenant]" app/onboarding "app/api/tenants" lib
+
+touch middleware.ts
+touch lib/tenant.ts
+touch "app/[tenant]/layout.tsx"
+touch "app/[tenant]/page.tsx"
+touch app/onboarding/page.tsx
+touch "app/api/tenants/route.ts"
+
+# Set env vars
+echo 'NEXT_PUBLIC_ROOT_DOMAIN=yourapp.com' >> .env.local
+echo 'DATABASE_URL=...' >> .env.local
+
+npm run dev
+```
+
+### Project structure
+
+```
+middleware.ts                    # Subdomain → path rewrite
+lib/
+  tenant.ts                      # getTenant() — cached resolver
+  prisma.ts                      # Prisma client singleton
+prisma/
+  schema.prisma                  # Tenant, TenantSettings, TenantMembership
+app/
+  [tenant]/
+    layout.tsx                   # Per-tenant shell + branding
+    page.tsx                     # Tenant dashboard home
+    settings/
+      page.tsx                   # Tenant settings (branding, members)
+  onboarding/
+    page.tsx                     # Create workspace form
+  api/
+    tenants/
+      route.ts                   # POST /api/tenants — create tenant
+    billing/
+      webhook/route.ts           # Stripe webhook (plan upgrades)
+```
+
+### First things to customize
+
+- **`.env.local`** — set `NEXT_PUBLIC_ROOT_DOMAIN` to your actual domain
+- **`prisma/schema.prisma`** — add tenant-scoped resource models (e.g., `Project`, `Post`) with a `tenantId` foreign key
+- **`lib/tenant.ts`** — extend the `getTenant()` query to include the relations your layouts and pages need
+- **`app/[tenant]/layout.tsx`** — update the navigation links and branding to match your product
+- **`middleware.ts`** — add custom domain support by checking `req.headers.get("host")` against a `customDomain` database lookup
+- **`app/api/billing/webhook/route.ts`** — wire your Stripe webhook to update `tenant.plan` on subscription events
