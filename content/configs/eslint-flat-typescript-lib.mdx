@@ -1,0 +1,110 @@
+---
+title: ESLint Flat Config for TypeScript Libraries
+description: Strict ESLint flat config designed for TypeScript library authors, enabling type-aware rules with typescript-eslint. Helps enforce public API quality and consistency.
+category: configs
+language: javascript
+tags: [eslint, typescript, library, linting, flat-config]
+---
+
+A strict flat config for TypeScript library authors that enables type-aware linting rules and bans patterns that leak implementation details or degrade the consumer experience.
+
+## Usage
+
+```javascript
+// eslint.config.js
+import eslint from "@eslint/js";
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(
+  // Ignore build output and test fixtures
+  {
+    ignores: ["dist/**", "coverage/**", "node_modules/**", "*.d.ts"],
+  },
+
+  // Base recommended rules
+  eslint.configs.recommended,
+
+  // Type-aware TypeScript rules
+  ...tseslint.configs.recommendedTypeChecked,
+  ...tseslint.configs.stylisticTypeChecked,
+
+  {
+    languageOptions: {
+      parserOptions: {
+        project: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      // --- Public API quality ---
+      "@typescript-eslint/explicit-function-return-type": [
+        "error",
+        { allowExpressions: true, allowHigherOrderFunctions: true },
+      ],
+      "@typescript-eslint/explicit-module-boundary-types": "error",
+
+      // --- Prevent accidental `any` ---
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unsafe-argument": "error",
+      "@typescript-eslint/no-unsafe-assignment": "error",
+      "@typescript-eslint/no-unsafe-call": "error",
+      "@typescript-eslint/no-unsafe-member-access": "error",
+      "@typescript-eslint/no-unsafe-return": "error",
+
+      // --- Consistency ---
+      "@typescript-eslint/consistent-type-exports": [
+        "error",
+        { fixMixedExportsWithInlineTypeSpecifier: true },
+      ],
+      "@typescript-eslint/consistent-type-imports": [
+        "error",
+        { prefer: "type-imports", fixStyle: "inline-type-imports" },
+      ],
+      "@typescript-eslint/no-import-type-side-effects": "error",
+
+      // --- Promise discipline ---
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": [
+        "error",
+        { checksVoidReturn: { attributes: false } },
+      ],
+      "@typescript-eslint/promise-function-async": "error",
+
+      // --- General hygiene ---
+      "@typescript-eslint/no-unnecessary-condition": "error",
+      "@typescript-eslint/no-unnecessary-type-assertion": "error",
+      "@typescript-eslint/prefer-nullish-coalescing": "error",
+      "@typescript-eslint/prefer-optional-chain": "error",
+      "no-console": "warn",
+    },
+  },
+);
+```
+
+## Options
+
+| Rule | Why it matters for libraries |
+|------|------------------------------|
+| `explicit-module-boundary-types` | Ensures every exported function has an explicit return type so consumers get accurate IntelliSense |
+| `consistent-type-imports` | Keeps type-only imports clear, which helps bundlers do proper tree-shaking |
+| `no-floating-promises` | Prevents silent failures that would be invisible to your library's callers |
+| `no-unnecessary-condition` | Catches dead branches that often signal stale logic or wrong types |
+
+## Notes
+
+Install the required packages before using this config:
+
+```bash
+npm install -D eslint @eslint/js typescript-eslint
+```
+
+This config requires a `tsconfig.json` at the project root with `"strict": true`. The `project: true` option in `parserOptions` tells typescript-eslint to find it automatically. If your `tsconfig.json` is in a non-standard location, replace `project: true` with an explicit path:
+
+```javascript
+parserOptions: {
+  project: "./tsconfig.build.json",
+  tsconfigRootDir: import.meta.dirname,
+},
+```
+
+For monorepos, set `tsconfigRootDir` to the package directory and use per-package tsconfigs.
