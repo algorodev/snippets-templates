@@ -1,0 +1,153 @@
+---
+title: useHistoryState Hook
+description: Tracks a state value with a full history of past values, exposing go-back, go-forward, and jump-to-index navigation. Configurable maximum history length.
+category: snippets
+language: typescript
+tags: [react, hooks, state, history]
+---
+
+A drop-in replacement for `useState` that keeps a bounded history of every value, enabling undo/redo and arbitrary timeline navigation without an external library.
+
+## Usage
+
+```typescript
+import { useState, useCallback } from 'react'
+
+interface HistoryState<T> {
+  value: T
+  history: T[]
+  pointer: number
+  canUndo: boolean
+  canRedo: boolean
+  set: (value: T) => void
+  undo: () => void
+  redo: () => void
+  go: (index: number) => void
+  clear: () => void
+}
+
+interface UseHistoryStateOptions {
+  maxHistory?: number
+}
+
+function useHistoryState<T>(
+  initialValue: T,
+  { maxHistory = 100 }: UseHistoryStateOptions = {}
+): HistoryState<T> {
+  const [history, setHistory] = useState<T[]>([initialValue])
+  const [pointer, setPointer] = useState(0)
+
+  const value = history[pointer]
+
+  const set = useCallback(
+    (newValue: T) => {
+      setHistory(prev => {
+        // Discard any "future" entries beyond the current pointer
+        const base = prev.slice(0, pointer + 1)
+        const next = [...base, newValue]
+        // Enforce maximum length, dropping oldest entries from the front
+        return next.length > maxHistory ? next.slice(next.length - maxHistory) : next
+      })
+      setPointer(prev => {
+        const candidate = prev + 1
+        return candidate >= maxHistory ? maxHistory - 1 : candidate
+      })
+    },
+    [pointer, maxHistory]
+  )
+
+  const undo = useCallback(() => {
+    setPointer(prev => Math.max(0, prev - 1))
+  }, [])
+
+  const redo = useCallback(() => {
+    setHistory(h => {
+      setPointer(prev => Math.min(h.length - 1, prev + 1))
+      return h
+    })
+  }, [])
+
+  const go = useCallback((index: number) => {
+    setHistory(h => {
+      const clamped = Math.max(0, Math.min(h.length - 1, index))
+      setPointer(clamped)
+      return h
+    })
+  }, [])
+
+  const clear = useCallback(() => {
+    setHistory(h => {
+      const current = h[pointer]
+      setPointer(0)
+      return [current]
+    })
+  }, [pointer])
+
+  return {
+    value,
+    history,
+    pointer,
+    canUndo: pointer > 0,
+    canRedo: pointer < history.length - 1,
+    set,
+    undo,
+    redo,
+    go,
+    clear,
+  }
+}
+
+export default useHistoryState
+```
+
+## Examples
+
+```typescript
+// Text editor with undo/redo
+const { value, set, undo, redo, canUndo, canRedo } =
+  useHistoryState<string>('', { maxHistory: 50 })
+
+return (
+  <>
+    <textarea value={value} onChange={e => set(e.target.value)} />
+    <button onClick={undo} disabled={!canUndo}>Undo</button>
+    <button onClick={redo} disabled={!canRedo}>Redo</button>
+  </>
+)
+```
+
+```typescript
+// Multi-step form with back/forward navigation
+const { value: step, set: goTo, undo: back, redo: forward, history } =
+  useHistoryState<number>(0)
+
+// Jump to any previous step
+history.map((s, i) => (
+  <button key={i} onClick={() => go(i)}>Step {s + 1}</button>
+))
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `maxHistory` | `number` | `100` | Maximum number of history entries to retain. Oldest entries are dropped when the limit is reached. |
+
+## API
+
+| Property / Method | Type | Description |
+|---|---|---|
+| `value` | `T` | Current value at the pointer position |
+| `history` | `T[]` | Full history array |
+| `pointer` | `number` | Index of the current value in `history` |
+| `canUndo` | `boolean` | `true` when there is a previous entry to go back to |
+| `canRedo` | `boolean` | `true` when there is a future entry to advance to |
+| `set(value)` | `(T) => void` | Record a new value, discarding any forward history |
+| `undo()` | `() => void` | Move the pointer one step back |
+| `redo()` | `() => void` | Move the pointer one step forward |
+| `go(index)` | `(number) => void` | Jump to any index in `history`, clamped to valid range |
+| `clear()` | `() => void` | Keep only the current value, wiping the rest of the history |
+
+## How it works
+
+The hook stores an array of every recorded value and a `pointer` integer that indicates which entry is "current". Calling `set` slices the array at `pointer + 1`, appending the new value and erasing any entries that had been re-done. `undo` and `redo` simply decrement or increment the pointer without touching the array. When the history exceeds `maxHistory`, entries are dropped from the front (oldest first) so the cap is always respected.
