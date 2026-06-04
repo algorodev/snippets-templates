@@ -1,0 +1,165 @@
+---
+title: Testing Library Setup
+description: A global setup file for React Testing Library with jest-dom matchers and custom render utilities. Configures cleanup after each test and common test helpers.
+category: configs
+language: javascript
+tags: [testing-library, react, jest, vitest, testing]
+---
+
+Bootstraps React Testing Library with extended jest-dom matchers, automatic cleanup, and a custom `render` wrapper that wraps components in any global providers your app needs.
+
+## Usage
+
+```javascript
+// src/test/setup.ts
+import '@testing-library/jest-dom/vitest';
+import { cleanup } from '@testing-library/react';
+import { afterEach, vi } from 'vitest';
+
+// Automatically unmount and clean up after each test
+afterEach(() => {
+  cleanup();
+});
+
+// Silence noisy console errors in tests — remove if you want to see them
+const originalError = console.error.bind(console);
+beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation((...args) => {
+    const msg = typeof args[0] === 'string' ? args[0] : '';
+    if (msg.includes('Warning:') || msg.includes('Error: Not implemented')) return;
+    originalError(...args);
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+```
+
+**Custom render utility (`src/test/render.tsx`):**
+
+```typescript
+// src/test/render.tsx
+import { render, type RenderOptions } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { type ReactElement, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+
+interface CustomRenderOptions extends Omit<RenderOptions, 'wrapper'> {
+  initialPath?: string;
+}
+
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Infinity },
+      mutations: { retry: false },
+    },
+  });
+}
+
+function AllProviders({
+  children,
+  initialPath = '/',
+}: {
+  children: ReactNode;
+  initialPath?: string;
+}) {
+  const queryClient = createTestQueryClient();
+  return (
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        {children}
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+
+function customRender(
+  ui: ReactElement,
+  { initialPath, ...options }: CustomRenderOptions = {},
+) {
+  const user = userEvent.setup();
+  return {
+    user,
+    ...render(ui, {
+      wrapper: ({ children }) => (
+        <AllProviders initialPath={initialPath}>{children}</AllProviders>
+      ),
+      ...options,
+    }),
+  };
+}
+
+// Re-export everything from RTL so tests only import from this file
+export * from '@testing-library/react';
+export { customRender as render };
+```
+
+**Wire it into Vitest (`vitest.config.ts`):**
+
+```typescript
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+  },
+});
+```
+
+**Example test using the custom render:**
+
+```typescript
+// src/components/Button/Button.test.tsx
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@/test/render';
+import { Button } from './Button';
+
+describe('Button', () => {
+  it('renders with label', () => {
+    render(<Button>Click me</Button>);
+    expect(screen.getByRole('button', { name: /click me/i })).toBeInTheDocument();
+  });
+
+  it('calls onClick when clicked', async ({ user }) => {
+    const handleClick = vi.fn();
+    const { user } = render(<Button onClick={handleClick}>Click me</Button>);
+    await user.click(screen.getByRole('button'));
+    expect(handleClick).toHaveBeenCalledOnce();
+  });
+
+  it('is disabled when disabled prop is set', () => {
+    render(<Button disabled>Click me</Button>);
+    expect(screen.getByRole('button')).toBeDisabled();
+  });
+});
+```
+
+**Install:**
+
+```bash
+npm install -D @testing-library/react @testing-library/user-event @testing-library/jest-dom jsdom vitest @vitejs/plugin-react
+```
+
+## Options
+
+| Import | Purpose |
+|--------|---------|
+| `@testing-library/jest-dom/vitest` | Extends `expect` with DOM matchers like `toBeInTheDocument()` |
+| `@testing-library/user-event` | Simulates real user interactions (type, click, tab) |
+| `cleanup` | Unmounts components after each test to prevent state leaks |
+| `globals: true` | Allows `describe`/`it`/`expect` without explicit imports |
+
+## Notes
+
+- Always import from `@/test/render` rather than `@testing-library/react` directly — this ensures every test gets the providers automatically.
+- `userEvent.setup()` must be called before rendering for pointer events and keyboard interactions to work correctly in Vitest.
+- Adjust `AllProviders` to match your app's actual provider tree (theme, i18n, auth context, etc.).
+- For Jest instead of Vitest, replace `@testing-library/jest-dom/vitest` with `@testing-library/jest-dom` and remove the `vi` imports in favor of `jest`.
