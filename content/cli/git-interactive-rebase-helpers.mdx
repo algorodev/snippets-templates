@@ -1,0 +1,121 @@
+---
+title: Git Interactive Rebase Helpers
+description: Aliases and shell functions that simplify common interactive rebase tasks like squashing the last N commits or fixing up a specific commit.
+category: cli
+language: bash
+tags: [git, rebase, history, productivity]
+---
+
+Interactive rebase is powerful but typing `git rebase -i HEAD~N` every time and hunting for a commit SHA gets old fast. These helpers wrap the most-used patterns into short, memorable commands.
+
+## Usage
+
+Add the aliases to `~/.gitconfig` under `[alias]`:
+
+```bash
+[alias]
+  # Squash the last N commits interactively
+  # Usage: git squash 3
+  squash = "!f() { git rebase -i HEAD~${1:-2}; }; f"
+
+  # Fixup (auto-squash) the last N commits without opening an editor
+  # Usage: git fixup 3
+  fixup = "!f() { GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash HEAD~${1:-2}; }; f"
+
+  # Edit a specific commit by SHA (opens rebase sheet with that commit marked 'edit')
+  # Usage: git edit-commit abc1234
+  edit-commit = "!f() { git rebase -i \"${1}^\"; }; f"
+
+  # Reword only the last N commit messages
+  # Usage: git reword 2
+  reword = "!f() { git rebase -i HEAD~${1:-1}; }; f"
+
+  # Abort an in-progress rebase
+  ra = rebase --abort
+
+  # Continue after resolving conflicts
+  rc = rebase --continue
+
+  # Skip the current conflicting commit
+  rs = rebase --skip
+```
+
+## Shell functions
+
+Add to `~/.zshrc` or `~/.bashrc` for richer versions:
+
+```bash
+# Squash all commits on the current branch back to where it branched from main/master
+git-squash-branch() {
+  local base_branch="${1:-main}"
+  local merge_base
+  merge_base=$(git merge-base HEAD "origin/${base_branch}" 2>/dev/null \
+    || git merge-base HEAD "${base_branch}")
+
+  if [ -z "$merge_base" ]; then
+    echo "Could not find merge base with ${base_branch}." >&2
+    return 1
+  fi
+
+  local count
+  count=$(git rev-list --count "${merge_base}..HEAD")
+  echo "Squashing ${count} commit(s) onto ${base_branch} base ($(git rev-parse --short "$merge_base"))..."
+  git rebase -i "$merge_base"
+}
+
+# Create a fixup commit targeting the most recent commit whose message matches a pattern
+git-fixup() {
+  local pattern="$1"
+  if [ -z "$pattern" ]; then
+    echo "Usage: git-fixup <message-pattern>" >&2
+    return 1
+  fi
+
+  local sha
+  sha=$(git log --oneline | grep -m1 "$pattern" | awk '{print $1}')
+
+  if [ -z "$sha" ]; then
+    echo "No commit found matching: $pattern" >&2
+    return 1
+  fi
+
+  echo "Creating fixup for $(git log --oneline -1 "$sha")"
+  git commit --fixup="$sha"
+}
+
+# Auto-squash fixup! commits back to their targets
+git-autosquash() {
+  local base_branch="${1:-main}"
+  local merge_base
+  merge_base=$(git merge-base HEAD "origin/${base_branch}" 2>/dev/null \
+    || git merge-base HEAD "${base_branch}")
+  GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash "$merge_base"
+}
+```
+
+## Examples
+
+```bash
+# Squash the last 4 commits interactively
+git squash 4
+
+# Squash every commit on the current branch down to a single commit
+git-squash-branch main
+
+# Stage your changes, then fixup the most recent commit mentioning "login"
+git add -p
+git-fixup "login"
+git-autosquash main
+
+# Jump into an edit session for a specific commit
+git edit-commit a3f92bc
+# ... make changes ...
+git add -p
+git rebase --continue
+```
+
+## Notes
+
+- `GIT_SEQUENCE_EDITOR=true` skips opening the editor for `--autosquash` runs — it accepts the generated sequence as-is.
+- Never rebase commits that have been pushed to a shared branch unless you coordinate with your team or use `push --force-with-lease` on a personal branch.
+- Use `git rebase --abort` at any time to restore the branch to its pre-rebase state.
