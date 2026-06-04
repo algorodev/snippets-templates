@@ -1,0 +1,198 @@
+---
+title: Redis Flush Helpers
+description: Aliases to flush a single Redis database, remove keys matching a pattern, and inspect memory usage per key prefix.
+category: cli
+language: bash
+tags: [database, redis, cache, devops]
+---
+
+Add these functions and aliases to your `~/.bashrc` or `~/.zshrc` to manage Redis keys safely from the command line.
+
+## Usage
+
+```bash
+# ── Redis flush & inspection helpers ────────────────────────────────────────
+
+# Configuration — override via environment variables
+: "${REDIS_HOST:=127.0.0.1}"
+: "${REDIS_PORT:=6379}"
+: "${REDIS_DB:=0}"
+# REDIS_PASSWORD — set if your Redis instance requires AUTH
+
+# Internal: build the redis-cli connection flags
+_redis_cli() {
+  local flags="-h $REDIS_HOST -p $REDIS_PORT -n $REDIS_DB"
+  [[ -n "${REDIS_PASSWORD:-}" ]] && flags+=" -a $REDIS_PASSWORD --no-auth-warning"
+  redis-cli $flags "$@"
+}
+
+# redis-flush-db: flush only the currently selected database (default: DB 0)
+# Usage: redis-flush-db [db_number]
+redis-flush-db() {
+  local db="${1:-$REDIS_DB}"
+  echo -n "Flushing Redis DB $db on $REDIS_HOST:$REDIS_PORT ... "
+  redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -n "$db" \
+    ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD" --no-auth-warning} \
+    FLUSHDB ASYNC
+  echo "Done."
+}
+
+# redis-del-pattern: delete all keys matching a glob pattern using SCAN (safe, non-blocking)
+# Usage: redis-del-pattern <pattern>
+# Example: redis-del-pattern "session:*"
+redis-del-pattern() {
+  local pattern="$1"
+
+  if [[ -z "$pattern" ]]; then
+    echo "Usage: redis-del-pattern <pattern>"
+    echo "Example: redis-del-pattern \"cache:user:*\""
+    return 1
+  fi
+
+  echo "Scanning DB $REDIS_DB for keys matching: $pattern"
+
+  local cursor=0
+  local total=0
+
+  while true; do
+    # SCAN returns "cursor\nkey1\nkey2\n..."
+    local result
+    result=$(_redis_cli SCAN "$cursor" MATCH "$pattern" COUNT 200)
+    cursor=$(echo "$result" | head -1)
+    local keys
+    mapfile -t keys < <(echo "$result" | tail -n +2 | grep -v '^$')
+
+    if [[ ${#keys[@]} -gt 0 ]]; then
+      _redis_cli DEL "${keys[@]}" > /dev/null
+      total=$((total + ${#keys[@]}))
+    fi
+
+    [[ "$cursor" == "0" ]] && break
+  done
+
+  echo "Deleted $total key(s) matching '$pattern'."
+}
+
+# redis-memory-by-prefix: show estimated memory usage grouped by key prefix
+# Usage: redis-memory-by-prefix [separator] [sample_size]
+#   separator   — character that separates the prefix from the rest of the key (default: ":")
+#   sample_size — number of keys to sample per prefix (default: 50)
+redis-memory-by-prefix() {
+  local sep="${1:-:}"
+  local sample="${2:-50}"
+
+  echo "Analysing key prefixes in DB $REDIS_DB on $REDIS_HOST:$REDIS_PORT ..."
+  echo "(separator='$sep', sample=$sample keys per prefix)"
+  echo ""
+
+  # Collect all keys via SCAN to avoid blocking
+  local all_keys=()
+  local cursor=0
+  while true; do
+    local result
+    result=$(_redis_cli SCAN "$cursor" COUNT 500)
+    cursor=$(echo "$result" | head -1)
+    mapfile -t batch < <(echo "$result" | tail -n +2 | grep -v '^$')
+    all_keys+=("${batch[@]}")
+    [[ "$cursor" == "0" ]] && break
+  done
+
+  local total_keys=${#all_keys[@]}
+  echo "Total keys scanned: $total_keys"
+  echo ""
+
+  # Group by prefix
+  declare -A prefix_count
+  declare -A prefix_bytes
+
+  for key in "${all_keys[@]}"; do
+    local prefix
+    prefix=$(echo "$key" | cut -d"$sep" -f1)
+    prefix_count["$prefix"]=$(( ${prefix_count["$prefix"]:-0} + 1 ))
+  done
+
+  # Sample memory per prefix
+  for prefix in "${!prefix_count[@]}"; do
+    local sampled=0
+    local total_mem=0
+
+    for key in "${all_keys[@]}"; do
+      [[ "$key" != "$prefix$sep"* && "$key" != "$prefix" ]] && continue
+      local mem
+      mem=$(_redis_cli MEMORY USAGE "$key" SAMPLES 0 2>/dev/null)
+      [[ "$mem" =~ ^[0-9]+$ ]] && total_mem=$((total_mem + mem))
+      ((sampled++))
+      [[ $sampled -ge $sample ]] && break
+    done
+
+    # Extrapolate from sample
+    local count=${prefix_count["$prefix"]}
+    local estimated_bytes=0
+    if [[ $sampled -gt 0 ]]; then
+      estimated_bytes=$(( total_mem / sampled * count ))
+    fi
+    prefix_bytes["$prefix"]=$estimated_bytes
+  done
+
+  # Sort and print by estimated size descending
+  for prefix in "${!prefix_bytes[@]}"; do
+    printf "%d\t%s (%d keys)\n" "${prefix_bytes[$prefix]}" "$prefix" "${prefix_count[$prefix]}"
+  done | sort -rn | awk '
+    function human(b) {
+      if (b >= 1073741824) return sprintf("%.1f GB", b/1073741824)
+      if (b >= 1048576)    return sprintf("%.1f MB", b/1048576)
+      if (b >= 1024)       return sprintf("%.1f KB", b/1024)
+      return b " B"
+    }
+    { printf "  %-40s %s\n", $2" "$3" "$4, human($1) }
+  '
+}
+
+# Convenience aliases
+alias redis-ping='_redis_cli PING'
+alias redis-info='_redis_cli INFO server | grep -E "redis_version|used_memory_human|connected_clients|uptime"'
+alias redis-dbsize='_redis_cli DBSIZE'
+alias redis-keyspace='_redis_cli INFO keyspace'
+```
+
+## Options
+
+| Function / Alias | Description |
+|---|---|
+| `redis-flush-db [db]` | Flush a single DB (default: `$REDIS_DB`). Uses `FLUSHDB ASYNC` to avoid blocking. |
+| `redis-del-pattern <glob>` | Delete keys matching a pattern via non-blocking `SCAN` + `DEL`. |
+| `redis-memory-by-prefix [sep] [n]` | Sample memory usage and group results by key prefix. |
+| `redis-ping` | Quick connectivity check. |
+| `redis-info` | Show version, memory, clients, and uptime. |
+| `redis-dbsize` | Count keys in the current DB. |
+| `redis-keyspace` | Show per-DB key counts and TTL stats. |
+
+## Examples
+
+```bash
+# Connect to a remote Redis with auth
+export REDIS_HOST=redis.example.com REDIS_PASSWORD=s3cr3t REDIS_DB=1
+
+# Flush DB 1 on the remote host
+redis-flush-db 1
+
+# Remove all rate-limit keys
+redis-del-pattern "rate:*"
+
+# Remove all session keys for a specific user
+redis-del-pattern "session:user:42:*"
+
+# See which prefixes are consuming the most memory
+redis-memory-by-prefix ":" 100
+
+# Quick health check
+redis-ping    # → PONG
+redis-info
+redis-dbsize
+```
+
+## How it works
+
+- `redis-flush-db` runs `FLUSHDB ASYNC`, which unlinks the database in a background thread rather than blocking the event loop.
+- `redis-del-pattern` uses `SCAN` with a cursor instead of `KEYS`, so it never blocks Redis even on large keyspaces. Keys are deleted in batches via a single `DEL` call per scan page.
+- `redis-memory-by-prefix` first collects all keys with `SCAN`, groups them by the string before the first separator, then samples up to `n` keys per prefix with `MEMORY USAGE` and extrapolates a total estimate. Results are sorted by estimated size.
