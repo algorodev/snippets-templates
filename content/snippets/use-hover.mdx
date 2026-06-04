@@ -1,0 +1,110 @@
+---
+title: useHover Hook
+description: Returns a ref to attach to an element and a boolean indicating whether that element is currently hovered. Uses mouseenter/mouseleave for reliable cross-browser behaviour.
+category: snippets
+language: typescript
+tags: [react, hooks, mouse, dom]
+---
+
+Attaches `mouseenter` and `mouseleave` listeners directly to a DOM node via a ref, avoiding the event-bubbling quirks of `mouseover`/`mouseout` and keeping the implementation compatible with any element type.
+
+## Usage
+
+```typescript
+import { useEffect, useRef, useState } from 'react'
+
+interface UseHoverReturn<T extends HTMLElement> {
+  ref: React.RefObject<T>
+  isHovered: boolean
+}
+
+function useHover<T extends HTMLElement = HTMLElement>(): UseHoverReturn<T> {
+  const ref = useRef<T>(null)
+  const [isHovered, setIsHovered] = useState(false)
+
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+
+    function handleMouseEnter() {
+      setIsHovered(true)
+    }
+
+    function handleMouseLeave() {
+      setIsHovered(false)
+    }
+
+    node.addEventListener('mouseenter', handleMouseEnter)
+    node.addEventListener('mouseleave', handleMouseLeave)
+
+    return () => {
+      node.removeEventListener('mouseenter', handleMouseEnter)
+      node.removeEventListener('mouseleave', handleMouseLeave)
+    }
+  }, [])
+
+  return { ref, isHovered }
+}
+
+export { useHover }
+export type { UseHoverReturn }
+```
+
+## Examples
+
+```typescript
+import { useHover } from './use-hover'
+
+function HoverCard() {
+  const { ref, isHovered } = useHover<HTMLDivElement>()
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        padding: '1rem',
+        background: isHovered ? '#e0f2fe' : '#f8fafc',
+        border: '1px solid',
+        borderColor: isHovered ? '#38bdf8' : '#e2e8f0',
+        borderRadius: '0.5rem',
+        transition: 'background 150ms, border-color 150ms',
+      }}
+    >
+      {isHovered ? 'Hovering!' : 'Hover over me'}
+    </div>
+  )
+}
+
+function TooltipButton({ label, tooltip }: { label: string; tooltip: string }) {
+  const { ref, isHovered } = useHover<HTMLButtonElement>()
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <button ref={ref}>{label}</button>
+      {isHovered && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#1e293b',
+            color: '#f8fafc',
+            padding: '0.25rem 0.5rem',
+            borderRadius: '0.25rem',
+            fontSize: '0.75rem',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {tooltip}
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
+## How it works
+
+The effect captures a stable reference to the DOM node immediately after mount, then registers `mouseenter` and `mouseleave` on it directly. `mouseenter` does not bubble, so only the target element triggers the state change — child elements being hovered do not fire a spurious `mouseleave` as they would with the bubbling `mouseover`/`mouseout` pair. The effect cleanup removes both listeners when the component unmounts, preventing memory leaks.
