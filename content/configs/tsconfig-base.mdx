@@ -1,0 +1,76 @@
+---
+title: TSConfig Base
+description: A sensible base TypeScript configuration suitable for most modern projects. Targets ES2022 with strict mode and useful additional checks enabled.
+category: configs
+language: json
+tags: [typescript, tsconfig, config]
+---
+
+A batteries-included base `tsconfig.json` that turns on strict mode plus several additional checks that catch real bugs without requiring you to fight the compiler.
+
+## Usage
+
+```json
+{
+  "compilerOptions": {
+    /* Language target */
+    "target": "ES2022",
+    "lib": ["ES2022"],
+
+    /* Module */
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "noPropertyAccessFromIndexSignature": true,
+
+    /* Output */
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+
+    /* Misc */
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+## Key flags explained
+
+| Flag | What it catches |
+|------|----------------|
+| `noUncheckedIndexedAccess` | `arr[i]` and `obj[key]` return `T \| undefined` instead of `T`, forcing you to handle missing values |
+| `exactOptionalPropertyTypes` | Distinguishes between a property being absent and a property being `undefined` |
+| `noImplicitReturns` | Every code path in a non-void function must return a value |
+| `noPropertyAccessFromIndexSignature` | Forces bracket notation for index-signature access, making dynamic lookups visible |
+| `declarationMap` | Enables go-to-definition to jump to source `.ts` files instead of `.d.ts` in editors |
+
+## Extending this config
+
+Save as `tsconfig.base.json` and extend it in sub-packages or specialized configs:
+
+```json
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist"
+  }
+}
+```
+
+## Notes
+
+`"moduleResolution": "bundler"` requires TypeScript 5.0+. If you are targeting an older TypeScript version, use `"moduleResolution": "node16"` instead and set `"module": "Node16"` to match.
+
+The `"lib"` array intentionally omits DOM types. Add `"dom"` and `"dom.iterable"` if your code runs in the browser.
