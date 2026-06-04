@@ -1,0 +1,64 @@
+---
+title: Git PR Checkout
+description: Check out any open pull request by number directly from the terminal without copying branch names from the browser.
+category: cli
+language: bash
+tags: [git, pull-requests, github, workflow]
+---
+
+Fetch and check out any pull request by its number. Works for your own forks and upstream repos. Add the function to your shell rc to use it everywhere.
+
+## Usage
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+pr() {
+  # Usage: pr <number> [remote]
+  # Defaults to the 'origin' remote if none is specified.
+  local number="${1:?Provide a PR number}"
+  local remote="${2:-origin}"
+
+  # Fetch the PR head into a local ref named pr/<number>
+  git fetch "$remote" "refs/pull/$number/head:pr/$number"
+  git checkout "pr/$number"
+  echo "Checked out PR #$number from $remote"
+}
+
+# GitLab variant (merge requests use a different ref path)
+mr() {
+  local number="${1:?Provide an MR number}"
+  local remote="${2:-origin}"
+
+  git fetch "$remote" "refs/merge-requests/$number/head:mr/$number"
+  git checkout "mr/$number"
+  echo "Checked out MR #$number from $remote"
+}
+```
+
+## Examples
+
+```bash
+# Check out PR #42 from the default remote
+pr 42
+
+# Check out PR #7 from the upstream remote
+pr 7 upstream
+
+# Run tests, then return to your branch
+pr 42
+npm test
+git checkout -
+
+# List all locally fetched PRs
+git branch | grep '^  pr/'
+
+# Delete a fetched PR branch after review
+git branch -D pr/42
+```
+
+## Notes
+
+- The checked-out branch is read-only by default since it points to the PR ref, not the contributor's branch. To push changes back, create a new branch from it: `git checkout -b fix/pr-42-review`.
+- If you have the [GitHub CLI](https://cli.github.com/) installed, `gh pr checkout 42` is equivalent and also sets up a proper tracking branch.
+- The `git checkout -` shorthand returns to your previously active branch.
+- For repos where you don't have push access, add the upstream remote first: `git remote add upstream <url>`.
