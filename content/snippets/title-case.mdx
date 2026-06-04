@@ -1,0 +1,84 @@
+---
+title: Title Case String
+description: Converts a string to Title Case while respecting common lowercase words such as articles and prepositions. Supports a custom word list for domain-specific exceptions.
+category: snippets
+language: typescript
+tags: [string, utils, formatting, case]
+---
+
+Capitalises the first letter of each significant word while keeping articles, conjunctions, and short prepositions lowercase — and always capitalises the very first and last word regardless of type.
+
+## Usage
+
+```typescript
+const DEFAULT_LOWERCASE_WORDS = new Set([
+  'a', 'an', 'the',
+  'and', 'but', 'or', 'nor', 'for', 'so', 'yet',
+  'at', 'by', 'in', 'of', 'on', 'to', 'up', 'as',
+  'is', 'it',
+])
+
+interface TitleCaseOptions {
+  /** Words that should remain lowercase (merged with the built-in list). */
+  lowercaseWords?: string[]
+}
+
+function titleCase(input: string, options: TitleCaseOptions = {}): string {
+  const extraLower = new Set(
+    (options.lowercaseWords ?? []).map((w) => w.toLowerCase())
+  )
+  const shouldLower = (word: string) =>
+    DEFAULT_LOWERCASE_WORDS.has(word) || extraLower.has(word)
+
+  const words = input.trim().split(/\s+/)
+
+  return words
+    .map((word, index) => {
+      const lower = word.toLowerCase()
+      const isFirst = index === 0
+      const isLast = index === words.length - 1
+
+      if (!isFirst && !isLast && shouldLower(lower)) return lower
+
+      return lower.charAt(0).toUpperCase() + lower.slice(1)
+    })
+    .join(' ')
+}
+
+export default titleCase
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `lowercaseWords` | `string[]` | `[]` | Extra words to keep lowercase in addition to the built-in list |
+
+## Examples
+
+```typescript
+titleCase('the quick brown fox')
+// 'The Quick Brown Fox'
+
+titleCase('a tale of two cities')
+// 'A Tale of Two Cities'
+
+titleCase('to be or not to be')
+// 'To Be or Not to Be'
+
+titleCase('war and peace')
+// 'War and Peace'
+
+// Custom lowercase list
+titleCase('getting started with css and html', {
+  lowercaseWords: ['css', 'html'],
+})
+// 'Getting Started with css and html'
+```
+
+## Notes
+
+- The first and last words are always capitalised, matching the Chicago Manual of Style convention.
+- Words are split on whitespace only; punctuation attached to a word (e.g. commas, colons) travels with that word and does not affect casing logic.
+- All input words are lowercased before re-capitalisation, so `SHOUTING INPUT` becomes `Shouting Input` rather than `SHOUTING INPUT`.
+- Pass `lowercaseWords` for domain terms you never want capitalised (e.g. `['via', 'vs']`).
