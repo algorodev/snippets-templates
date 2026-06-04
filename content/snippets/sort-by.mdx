@@ -1,0 +1,76 @@
+---
+title: Sort Array By Key
+description: Sorts an array of objects by one or more key selectors, with support for ascending and descending order per key. Returns a new array without mutating the original.
+category: snippets
+language: typescript
+tags: [array, utils, sort]
+---
+
+Sorts an array of objects by one or more key selectors without mutating the original. Each sort criterion can specify its own direction, so multi-level sorts like "by last name ascending, then by age descending" are straightforward.
+
+## Usage
+
+```typescript
+type SortOrder = 'asc' | 'desc'
+
+interface SortCriterion<T> {
+  key: (item: T) => unknown
+  order?: SortOrder
+}
+
+function sortBy<T>(array: T[], ...criteria: SortCriterion<T>[]): T[] {
+  return [...array].sort((a, b) => {
+    for (const { key, order = 'asc' } of criteria) {
+      const aVal = key(a)
+      const bVal = key(b)
+
+      if (aVal === bVal) continue
+
+      let comparison: number
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        comparison = aVal.localeCompare(bVal)
+      } else {
+        comparison = aVal < bVal ? -1 : 1
+      }
+
+      return order === 'asc' ? comparison : -comparison
+    }
+    return 0
+  })
+}
+
+export default sortBy
+```
+
+## Examples
+
+```typescript
+const users = [
+  { name: 'Charlie', age: 28, role: 'admin' },
+  { name: 'Alice', age: 32, role: 'user' },
+  { name: 'Bob', age: 28, role: 'user' },
+]
+
+// Sort by a single key (ascending by default)
+sortBy(users, { key: (u) => u.name })
+// [{ name: 'Alice', ... }, { name: 'Bob', ... }, { name: 'Charlie', ... }]
+
+// Sort by age descending
+sortBy(users, { key: (u) => u.age, order: 'desc' })
+// [{ name: 'Alice', age: 32 }, { name: 'Charlie', age: 28 }, { name: 'Bob', age: 28 }]
+
+// Multi-key: age ascending, then name ascending
+sortBy(
+  users,
+  { key: (u) => u.age },
+  { key: (u) => u.name }
+)
+// [{ name: 'Bob', age: 28 }, { name: 'Charlie', age: 28 }, { name: 'Alice', age: 32 }]
+```
+
+## Notes
+
+- The original array is never mutated — a shallow copy is made via spread before sorting.
+- String values are compared with `localeCompare` for correct locale-aware ordering (e.g. accented characters).
+- Criteria are evaluated left-to-right; subsequent criteria only apply when earlier ones result in a tie.
+- The `key` selector can return any comparable primitive: `string`, `number`, `boolean`, or `Date`.
