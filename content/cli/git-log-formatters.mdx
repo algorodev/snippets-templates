@@ -1,0 +1,101 @@
+---
+title: Git Log Formatters
+description: Custom git log aliases that output pretty one-line graphs, author stats, or file-change summaries with color and relative dates.
+category: cli
+language: bash
+tags: [git, log, formatting, productivity]
+---
+
+The default `git log` output is verbose and hard to scan. These aliases give you a compact graph view, per-author commit counts, and file-change summaries — all with color and relative timestamps.
+
+## Usage
+
+Add to `~/.gitconfig` under `[alias]`:
+
+```bash
+[alias]
+  # Compact one-line graph with colors and relative dates
+  lg    = log --oneline --graph --decorate --all --color=always
+
+  # Same as lg but only for the current branch
+  lb    = log --oneline --graph --decorate --color=always
+
+  # Verbose graph: shows author, relative date, and subject on separate lines
+  lv    = log --graph --format=format:'%C(bold blue)%h%C(reset) - %C(bold green)(%ar)%C(reset) %C(white)%s%C(reset) %C(dim white)— %an%C(reset)%C(bold yellow)%d%C(reset)' --all --color=always
+
+  # Show stat summary (files changed, insertions, deletions) for each commit
+  lstat = log --stat --oneline --color=always
+
+  # Show which files were changed in each commit (names only, no diff)
+  lfiles = log --name-only --oneline --color=always
+
+  # Show commits by a specific author (case-insensitive partial match)
+  # Usage: git lauthor "alice"
+  lauthor = "!f() { git log --oneline --author=\"$1\" --color=always; }; f"
+
+  # Count commits per author across the entire history
+  lcontrib = shortlog -sne --all
+
+  # Show commits that touched a specific file, following renames
+  # Usage: git lfile src/auth.ts
+  lfile = "!f() { git log --follow --oneline --stat -- \"$1\"; }; f"
+
+  # Show commits since a date
+  # Usage: git lsince "1 week ago"
+  lsince = "!f() { git log --oneline --since=\"$1\" --color=always; }; f"
+
+  # Show the diff each commit introduced, one commit at a time (patch log)
+  lp    = log -p --color=always
+```
+
+## Examples
+
+```bash
+# Full branch graph across all refs
+git lg
+
+# Detailed graph with author and date
+git lv
+
+# What files changed in the last 10 commits?
+git lfiles -10
+
+# How many commits has each author made?
+git lcontrib
+
+# All commits touching a specific file
+git lfile src/components/Button.tsx
+
+# Commits merged in the last 3 days
+git lsince "3 days ago"
+
+# Commits by anyone matching "sarah"
+git lauthor sarah
+```
+
+## How it works
+
+The `lv` format string uses git's `--format=format:` (tformat) placeholders:
+
+| Placeholder | Output |
+|-------------|--------|
+| `%h` | Abbreviated commit SHA |
+| `%ar` | Author date, relative (e.g. "2 hours ago") |
+| `%s` | Commit subject line |
+| `%an` | Author name |
+| `%d` | Ref names (branches, tags) |
+| `%C(...)` | Color codes — bold blue, green, white, etc. |
+| `%C(reset)` | Reset color to default |
+
+## Piping tips
+
+```bash
+# Page through a long graph
+git lg | less -R
+
+# Search the log for a keyword
+git lg | grep "feat:"
+
+# Export contributor stats to a file
+git lcontrib > contributors.txt
+```
