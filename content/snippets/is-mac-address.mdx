@@ -1,0 +1,129 @@
+---
+title: Validate MAC Address
+description: Validates a MAC address in colon, hyphen, or dot-separated formats, returning the normalised colon-separated form on success. Supports both 48-bit and 64-bit EUI addresses.
+category: snippets
+language: typescript
+tags: [validation, utils, network]
+---
+
+Accepts a MAC address in any of the three common delimiter styles — colons (`:`), hyphens (`-`), or Cisco dot-notation (`.`) — for both 48-bit EUI-48 and 64-bit EUI-64 addresses, and returns the address normalised to lowercase colon-separated form.
+
+## Usage
+
+```typescript
+export type MacAddressType = 'EUI-48' | 'EUI-64'
+
+export interface MacAddressValidationResult {
+  valid: boolean
+  /** Normalised lowercase colon-separated address, e.g. "00:1a:2b:3c:4d:5e". */
+  normalised: string | null
+  type: MacAddressType | null
+  error?: string
+}
+
+// EUI-48: six groups of two hex digits
+const EUI48_COLON  = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i
+const EUI48_HYPHEN = /^([0-9a-f]{2}-){5}[0-9a-f]{2}$/i
+const EUI48_DOT    = /^([0-9a-f]{4}\.){2}[0-9a-f]{4}$/i
+
+// EUI-64: eight groups of two hex digits
+const EUI64_COLON  = /^([0-9a-f]{2}:){7}[0-9a-f]{2}$/i
+const EUI64_HYPHEN = /^([0-9a-f]{2}-){7}[0-9a-f]{2}$/i
+const EUI64_DOT    = /^([0-9a-f]{4}\.){3}[0-9a-f]{4}$/i
+
+/**
+ * Normalises any accepted MAC format to a lowercase colon-separated string.
+ * Dot-notation groups of four are split into pairs before joining.
+ */
+function normalise(raw: string): string {
+  // Dot notation: split each 4-hex group into two 2-hex pairs
+  if (raw.includes('.')) {
+    const pairs = raw
+      .split('.')
+      .flatMap((group) => [group.slice(0, 2), group.slice(2)])
+    return pairs.join(':').toLowerCase()
+  }
+
+  return raw.replace(/-/g, ':').toLowerCase()
+}
+
+/**
+ * Validates a MAC address and returns the normalised colon-separated form.
+ *
+ * Supported formats (EUI-48 examples):
+ *   00:1A:2B:3C:4D:5E   — colon-separated
+ *   00-1A-2B-3C-4D-5E   — hyphen-separated
+ *   001A.2B3C.4D5E      — Cisco dot-notation
+ *
+ * @param input - Raw MAC address string.
+ * @returns Validation result with type and normalised address.
+ */
+function isMacAddress(input: string): MacAddressValidationResult {
+  if (!input || typeof input !== 'string') {
+    return { valid: false, normalised: null, type: null, error: 'Input must be a non-empty string.' }
+  }
+
+  const trimmed = input.trim()
+
+  // EUI-64 checks
+  if (
+    EUI64_COLON.test(trimmed) ||
+    EUI64_HYPHEN.test(trimmed) ||
+    EUI64_DOT.test(trimmed)
+  ) {
+    return { valid: true, normalised: normalise(trimmed), type: 'EUI-64' }
+  }
+
+  // EUI-48 checks
+  if (
+    EUI48_COLON.test(trimmed) ||
+    EUI48_HYPHEN.test(trimmed) ||
+    EUI48_DOT.test(trimmed)
+  ) {
+    return { valid: true, normalised: normalise(trimmed), type: 'EUI-48' }
+  }
+
+  return {
+    valid: false,
+    normalised: null,
+    type: null,
+    error: 'Invalid MAC address. Expected colon, hyphen, or dot-separated hex groups (EUI-48 or EUI-64).',
+  }
+}
+
+export default isMacAddress
+```
+
+## Examples
+
+```typescript
+isMacAddress('00:1A:2B:3C:4D:5E')
+// { valid: true, normalised: '00:1a:2b:3c:4d:5e', type: 'EUI-48' }
+
+isMacAddress('00-1A-2B-3C-4D-5E')
+// { valid: true, normalised: '00:1a:2b:3c:4d:5e', type: 'EUI-48' }
+
+isMacAddress('001A.2B3C.4D5E')
+// { valid: true, normalised: '00:1a:2b:3c:4d:5e', type: 'EUI-48' }
+
+isMacAddress('00:1A:2B:3C:4D:5E:6F:7A')
+// { valid: true, normalised: '00:1a:2b:3c:4d:5e:6f:7a', type: 'EUI-64' }
+
+isMacAddress('GG:HH:II:JJ:KK:LL')
+// { valid: false, normalised: null, type: null, error: 'Invalid MAC address...' }
+
+isMacAddress('00:1A:2B:3C')
+// { valid: false, normalised: null, type: null, error: 'Invalid MAC address...' }
+```
+
+## How it works
+
+1. Six separate regexes (colon, hyphen, dot for each of EUI-48 and EUI-64) are tested in order. EUI-64 is checked first so the longer pattern wins when a string could otherwise partially match the shorter one.
+2. Dot-notation groups consist of four hex characters each. The `normalise` helper splits every group in half before joining with colons, keeping the logic uniform across delimiter styles.
+3. The result is always lowercased so callers can do strict equality checks without worrying about letter case.
+
+## Notes
+
+- Broadcast (`ff:ff:ff:ff:ff:ff`) and multicast addresses pass validation — this function only checks format, not address semantics.
+- The locally administered bit (bit 1 of the first octet) is not inspected; random/generated MACs such as those produced by `crypto.randomBytes` will validate correctly.
+- If you need to extract the OUI (Organisationally Unique Identifier), it is the first three octets of the normalised string: `normalised.split(':').slice(0, 3).join(':')`.
