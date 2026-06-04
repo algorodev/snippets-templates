@@ -1,0 +1,81 @@
+---
+title: Object Diff
+description: Computes the shallow difference between two objects, returning only keys whose values have changed along with their old and new values. Useful for change tracking and audit logs.
+category: snippets
+language: typescript
+tags: [object, utils, diff, comparison]
+---
+
+Compares two objects of the same shape and returns a record of every key whose value changed, paired with the previous and next value. Perfect for audit logs, undo stacks, and optimistic update diffing.
+
+## Usage
+
+```typescript
+type DiffResult<T> = {
+  [K in keyof T]?: { oldValue: T[K]; newValue: T[K] }
+}
+
+function objectDiff<T extends Record<string, unknown>>(
+  oldObj: T,
+  newObj: T
+): DiffResult<T> {
+  const allKeys = new Set([...Object.keys(oldObj), ...Object.keys(newObj)]) as Set<keyof T>
+  const diff: DiffResult<T> = {}
+
+  for (const key of allKeys) {
+    const oldValue = oldObj[key]
+    const newValue = newObj[key]
+    if (!Object.is(oldValue, newValue)) {
+      diff[key] = { oldValue, newValue }
+    }
+  }
+
+  return diff
+}
+
+export default objectDiff
+```
+
+## Examples
+
+```typescript
+const before = {
+  name: 'Alice',
+  age: 29,
+  email: 'alice@example.com',
+  role: 'member',
+}
+
+const after = {
+  name: 'Alice',
+  age: 30,
+  email: 'alice@new-domain.com',
+  role: 'member',
+}
+
+const diff = objectDiff(before, after)
+// {
+//   age:   { oldValue: 29,                  newValue: 30 },
+//   email: { oldValue: 'alice@example.com', newValue: 'alice@new-domain.com' },
+// }
+
+// Check if anything changed
+const hasChanges = Object.keys(diff).length > 0  // true
+
+// Build a human-readable changelog
+for (const [key, change] of Object.entries(diff)) {
+  console.log(`${key}: ${change.oldValue} → ${change.newValue}`)
+}
+// age: 29 → 30
+// email: alice@example.com → alice@new-domain.com
+```
+
+## How it works
+
+`Object.is` is used instead of `===` so that edge cases like `NaN !== NaN` and `-0 !== +0` are handled correctly. The union of both objects' keys is iterated so that added or removed keys are also captured — a key present in `newObj` but absent in `oldObj` will appear with `oldValue: undefined`.
+
+## Notes
+
+- This is a **shallow** diff — nested objects are compared by reference, not by value. Two different object references with identical contents will be reported as changed.
+- Keys with `undefined` values in both objects are treated as equal.
+- For deep diffing, apply `objectDiff` recursively when `typeof oldValue === 'object'`.
