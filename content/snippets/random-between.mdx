@@ -1,0 +1,55 @@
+---
+title: Random Number Between
+description: Returns a random floating-point or integer number within an inclusive range. Uses crypto.getRandomValues when available for higher-quality randomness.
+category: snippets
+language: typescript
+tags: [math, utils, random, number]
+---
+
+Generates a random number within an inclusive `[min, max]` range, using `crypto.getRandomValues` for higher-quality randomness when available and falling back to `Math.random()` in environments that lack the Web Crypto API.
+
+## Usage
+
+```typescript
+function randomBetween(min: number, max: number, integer?: boolean): number {
+  if (min > max) throw new RangeError('min must be less than or equal to max')
+
+  let rand: number
+
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const [value] = crypto.getRandomValues(new Uint32Array(1))
+    rand = value / (0xffffffff + 1)
+  } else {
+    rand = Math.random()
+  }
+
+  const result = rand * (max - min) + min
+  return integer ? Math.round(result) : result
+}
+
+export default randomBetween
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `min` | `number` | — | Inclusive lower bound |
+| `max` | `number` | — | Inclusive upper bound |
+| `integer` | `boolean` | `false` | Round result to nearest integer |
+
+## Examples
+
+```typescript
+randomBetween(1, 10)           // e.g. 4.728391...  (float)
+randomBetween(1, 10, true)     // e.g. 7             (integer)
+randomBetween(0, 1)            // e.g. 0.319472...   (float in [0, 1])
+randomBetween(-50, 50, true)   // e.g. -23           (negative range)
+randomBetween(5, 5, true)      // 5                  (min === max)
+```
+
+## Notes
+
+- Both `min` and `max` are inclusive. For integers this means `randomBetween(1, 6, true)` simulates a fair six-sided die.
+- `crypto.getRandomValues` fills a `Uint32Array`, giving 32 bits of entropy per call. This is significantly better than the ~51 bits total of `Math.random()` spread across many calls, especially relevant for simulations or games.
+- The `Math.round` rounding for integers introduces a slight bias at the exact boundaries (`min` and `max` each have half the probability of interior values). Use `Math.floor(rand * (max - min + 1)) + min` if strict uniformity across integers is required.
