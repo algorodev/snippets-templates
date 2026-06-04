@@ -1,0 +1,182 @@
+---
+title: Git Worktree Manager
+description: Create, list, and remove git worktrees with short aliases, making it easy to maintain multiple branches side-by-side on disk.
+category: cli
+language: bash
+tags: [git, worktree, workflow, productivity]
+---
+
+Git worktrees let you check out multiple branches at the same time in separate directories — no stashing, no context switching. These helpers wrap the `git worktree` commands with shorter names and safety checks so the common operations take seconds instead of minutes.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`.
+
+```bash
+# ──────────────────────────────────────────────────────────────
+# Git Worktree Manager
+#
+# wt-add  <branch> [path]   — create a worktree for <branch>
+# wt-list                   — list all active worktrees
+# wt-cd   <branch-or-path>  — print the path (use with cd)
+# wt-rm   <branch-or-path>  — remove a worktree (with confirmation)
+# wt-clean                  — prune stale worktree metadata
+# ──────────────────────────────────────────────────────────────
+
+# Resolve the root worktree directory (sibling folder convention)
+_wt_root() {
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "Error: not inside a git repository." >&2
+    return 1
+  }
+  # Place worktrees next to the main repo: ../repo-worktrees/
+  echo "$(dirname "$repo_root")/$(basename "$repo_root")-worktrees"
+}
+
+# Create a new worktree for <branch>
+# If the branch does not exist it is created from the current HEAD.
+wt-add() {
+  if [ -z "$1" ]; then
+    echo "Usage: wt-add <branch> [path]"
+    return 1
+  fi
+
+  local branch="$1"
+  local wt_root
+  wt_root=$(_wt_root) || return 1
+
+  local wt_path="${2:-${wt_root}/${branch//\//-}}"
+
+  if [ -d "$wt_path" ]; then
+    echo "Path already exists: $wt_path"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$wt_path")"
+
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    # Branch already exists — check it out in the new worktree
+    git worktree add "$wt_path" "$branch"
+  else
+    # Branch does not exist — create it from current HEAD
+    echo "Branch '$branch' not found. Creating from HEAD…"
+    git worktree add -b "$branch" "$wt_path"
+  fi
+
+  echo ""
+  echo "Worktree ready: $wt_path"
+  echo "  cd $wt_path"
+}
+
+# List all worktrees with their branch and HEAD commit
+wt-list() {
+  git worktree list --porcelain \
+    | awk '
+        /^worktree / { path = substr($0, 10) }
+        /^HEAD /     { sha  = substr($0, 6, 7) }
+        /^branch /   { branch = substr($0, 8); gsub("refs/heads/", "", branch) }
+        /^bare/      { branch = "(bare)" }
+        /^$/         {
+          if (path != "") {
+            printf "%-50s  %s  %s\n", path, sha, branch
+            path = ""; sha = ""; branch = ""
+          }
+        }
+      '
+}
+
+# Echo the filesystem path for a given branch name or partial path
+# Designed for use with cd: cd "$(wt-cd feature/login)"
+wt-cd() {
+  if [ -z "$1" ]; then
+    echo "Usage: wt-cd <branch-or-partial-path>"
+    return 1
+  fi
+
+  local query="$1"
+  local match
+  match=$(git worktree list --porcelain \
+    | awk '/^worktree / { print substr($0,10) }' \
+    | grep -F "$query" \
+    | head -1)
+
+  if [ -z "$match" ]; then
+    echo "No worktree found matching '$query'." >&2
+    return 1
+  fi
+
+  echo "$match"
+}
+
+# Remove a worktree by branch name or path (with confirmation)
+wt-rm() {
+  if [ -z "$1" ]; then
+    echo "Usage: wt-rm <branch-or-partial-path>"
+    return 1
+  fi
+
+  local query="$1"
+  local wt_path
+  wt_path=$(git worktree list --porcelain \
+    | awk '/^worktree / { print substr($0,10) }' \
+    | grep -F "$query" \
+    | grep -v "$(git rev-parse --show-toplevel)" \
+    | head -1)
+
+  if [ -z "$wt_path" ]; then
+    echo "No removable worktree found matching '$query'." >&2
+    return 1
+  fi
+
+  echo "About to remove worktree: $wt_path"
+  read -r "reply?Continue? [y/N] "
+  if [[ "$reply" =~ ^[Yy]$ ]]; then
+    git worktree remove "$wt_path"
+    echo "Removed."
+  else
+    echo "Aborted."
+  fi
+}
+
+# Prune metadata for worktrees whose directories no longer exist
+wt-clean() {
+  echo "Pruning stale worktree metadata…"
+  git worktree prune -v
+  echo "Done."
+}
+```
+
+## Examples
+
+```bash
+# Create a worktree for an existing branch
+wt-add feature/dark-mode
+# Worktree ready: ../myapp-worktrees/feature-dark-mode
+
+# Create a worktree and a new branch in one step
+wt-add hotfix/crash-on-login
+
+# See all active worktrees
+wt-list
+# /Users/alex/myapp                                   a1b2c3d  main
+# /Users/alex/myapp-worktrees/feature-dark-mode       d4e5f6a  feature/dark-mode
+# /Users/alex/myapp-worktrees/hotfix-crash-on-login   9b8c7d6  hotfix/crash-on-login
+
+# Jump to a worktree
+cd "$(wt-cd dark-mode)"
+
+# Remove a worktree when the branch is merged
+wt-rm dark-mode
+
+# Clean up after manually deleted directories
+wt-clean
+```
+
+## Notes
+
+- The sibling-directory convention (`../repo-worktrees/<branch>`) keeps worktrees outside the main repo so tools that scan `./` (e.g. TypeScript, ESLint) do not pick up files from other branches.
+- Slashes in branch names are replaced with hyphens in the directory name to avoid nested directories.
+- `wt-rm` refuses to remove the main (primary) worktree. Removing the primary checkout is not supported by git.
+- Each worktree shares the same `.git` object store, so disk usage grows only by the size of the working tree files, not the full history.
+- Run `wt-clean` after you delete worktree directories by hand; git keeps metadata entries until pruned.
