@@ -1,0 +1,119 @@
+---
+title: Playwright Config
+description: A Playwright configuration for end-to-end testing across Chromium, Firefox, and WebKit. Includes parallel test execution, retries, and trace recording on failure.
+category: configs
+language: javascript
+tags: [playwright, testing, e2e, browser-testing]
+---
+
+Runs your full browser test suite across three engines in parallel, capturing traces on every failure so you can replay exactly what went wrong.
+
+## Usage
+
+```javascript
+// playwright.config.js
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: [
+    ['html', { open: 'never' }],
+    ['list'],
+    ...(process.env.CI ? [['github']] : []),
+  ],
+  use: {
+    baseURL: process.env.BASE_URL ?? 'http://localhost:3000',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+    },
+    {
+      name: 'mobile-chrome',
+      use: { ...devices['Pixel 7'] },
+    },
+    {
+      name: 'mobile-safari',
+      use: { ...devices['iPhone 14'] },
+    },
+  ],
+  webServer: {
+    command: 'npm run build && npm run start',
+    url: 'http://localhost:3000',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+  },
+});
+```
+
+**Install:**
+
+```bash
+npm install -D @playwright/test
+npx playwright install --with-deps
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug",
+    "test:e2e:report": "playwright show-report"
+  }
+}
+```
+
+**Example test:**
+
+```javascript
+// tests/e2e/home.spec.js
+import { test, expect } from '@playwright/test';
+
+test('homepage has correct title', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveTitle(/My App/);
+});
+
+test('navigation works', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: 'About' }).click();
+  await expect(page).toHaveURL('/about');
+});
+```
+
+## Options
+
+| Field | Value | Effect |
+|-------|-------|--------|
+| `fullyParallel` | `true` | Runs all tests in all files in parallel |
+| `retries` | number | Automatic retries on failure — set higher on CI |
+| `workers` | number \| `undefined` | `undefined` auto-detects based on CPU cores |
+| `trace` | `'on-first-retry'` \| `'on'` \| `'off'` | When to record a trace zip for debugging |
+| `screenshot` | `'only-on-failure'` \| `'on'` \| `'off'` | When to capture screenshots |
+| `webServer.reuseExistingServer` | `true` | Skips rebuild when a dev server is already running locally |
+
+## Notes
+
+- The `forbidOnly` flag prevents accidentally committing `test.only()` calls — it fails the CI run if any focused tests are found.
+- Traces are viewable at `https://trace.playwright.dev` or locally with `npx playwright show-trace trace.zip`.
+- On CI, set `workers: 1` to avoid port conflicts when spinning up the web server; locally, parallel workers speed things up significantly.
+- Use `BASE_URL` env var to point the suite at a staging deployment without changing the config file.
