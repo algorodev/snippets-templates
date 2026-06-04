@@ -1,0 +1,383 @@
+---
+title: FastAPI REST API
+description: A modern Python REST API using FastAPI with automatic OpenAPI docs, Pydantic v2 models, SQLAlchemy 2.0 async ORM, and Alembic migrations. Includes JWT authentication and Docker setup.
+category: templates
+language: Python
+tags: [python, fastapi, rest-api, pydantic, sqlalchemy]
+repo: https://github.com/tiangolo/fastapi
+---
+
+A fully async FastAPI project wired up with SQLAlchemy 2.0 (async engine), Pydantic v2 schemas, Alembic for database migrations, and JWT-based authentication — ready to deploy behind Docker Compose with a PostgreSQL database.
+
+## Usage
+
+```bash
+# Development (auto-reload)
+uvicorn app.main:app --reload
+
+# Or with Docker Compose
+docker compose up --build
+
+# Apply database migrations
+alembic upgrade head
+
+# Open interactive API docs
+open http://localhost:8000/docs
+```
+
+## How it works
+
+```python
+# app/core/config.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    database_url: str = "postgresql+asyncpg://user:password@localhost:5432/appdb"
+    secret_key: str = "change-me-in-production"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+
+
+settings = Settings()
+```
+
+```python
+# app/db/base.py
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+from app.core.config import settings
+
+engine = create_async_engine(settings.database_url, echo=False)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+async def get_db() -> AsyncSession:  # FastAPI dependency
+    async with AsyncSessionLocal() as session:
+        yield session
+```
+
+```python
+# app/models/user.py
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+```
+
+```python
+# app/schemas/user.py
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserRead(BaseModel):
+    id: int
+    email: EmailStr
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+```
+
+```python
+# app/core/security.py
+from datetime import datetime, timedelta, timezone
+
+from jose import jwt
+from passlib.context import CryptContext
+
+from app.core.config import settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+
+def create_access_token(subject: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
+    return jwt.encode(
+        {"sub": subject, "exp": expire},
+        settings.secret_key,
+        algorithm=settings.algorithm,
+    )
+```
+
+```python
+# app/dependencies/auth.py
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.db.base import get_db
+from app.models.user import User
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    credentials_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        email: str | None = payload.get("sub")
+        if email is None:
+            raise credentials_error
+    except JWTError:
+        raise credentials_error
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise credentials_error
+    return user
+```
+
+```python
+# app/routers/auth.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import create_access_token, hash_password, verify_password
+from app.db.base import get_db
+from app.models.user import User
+from app.schemas.user import Token, UserCreate, UserRead
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/register", response_model=UserRead, status_code=201)
+async def register(data: UserCreate, db: AsyncSession = Depends(get_db)) -> User:
+    existing = await db.execute(select(User).where(User.email == data.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = User(email=data.email, hashed_password=hash_password(data.password))
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/token", response_model=Token)
+async def login(
+    form: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+) -> Token:
+    result = await db.execute(select(User).where(User.email == form.username))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(form.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    return Token(access_token=create_access_token(user.email))
+```
+
+```python
+# app/routers/users.py
+from fastapi import APIRouter, Depends
+
+from app.dependencies.auth import get_current_user
+from app.models.user import User
+from app.schemas.user import UserRead
+
+router = APIRouter(prefix="/users", tags=["users"])
+
+
+@router.get("/me", response_model=UserRead)
+async def me(current_user: User = Depends(get_current_user)) -> User:
+    return current_user
+```
+
+```python
+# app/main.py
+from fastapi import FastAPI
+
+from app.routers import auth, users
+
+app = FastAPI(title="FastAPI REST API", version="1.0.0")
+
+app.include_router(auth.router)
+app.include_router(users.router)
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+```
+
+## Docker setup
+
+```dockerfile
+# Dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```yaml
+# docker-compose.yml
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: appdb
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://user:password@db:5432/appdb
+    depends_on:
+      - db
+
+volumes:
+  pg_data:
+```
+
+## README
+
+### What this includes
+
+- **FastAPI** — async web framework with automatic OpenAPI and JSON Schema generation
+- **Pydantic v2** — fast data validation and serialisation for request/response models
+- **SQLAlchemy 2.0 async** — async ORM with the new `Mapped` / `mapped_column` syntax
+- **asyncpg** — high-performance async PostgreSQL driver
+- **Alembic** — database migration tool wired to the SQLAlchemy models
+- **JWT authentication** — `python-jose` for token signing, `passlib[bcrypt]` for password hashing
+- **pydantic-settings** — `.env` file loading into a typed `Settings` object
+- **Docker Compose** — multi-container setup with PostgreSQL
+
+### Prerequisites
+
+- Python 3.12+
+- Docker and Docker Compose (for the containerised setup)
+- PostgreSQL (if running without Docker)
+
+### Create this template
+
+```bash
+# 1. Create and enter the project directory
+mkdir fastapi-rest-api && cd fastapi-rest-api
+
+# 2. Create a virtual environment
+python -m venv .venv && source .venv/bin/activate
+
+# 3. Install dependencies
+pip install fastapi uvicorn[standard] sqlalchemy[asyncio] asyncpg alembic \
+    pydantic[email] pydantic-settings python-jose[cryptography] passlib[bcrypt]
+
+# 4. Save requirements
+pip freeze > requirements.txt
+
+# 5. Create the project structure
+mkdir -p app/core app/db app/models app/schemas app/routers app/dependencies
+
+# 6. Initialise Alembic
+alembic init alembic
+
+# 7. Edit alembic/env.py to import Base and use async engine (see docs)
+
+# 8. Generate and apply the initial migration
+alembic revision --autogenerate -m "create users table"
+alembic upgrade head
+
+# 9. Start the development server
+uvicorn app.main:app --reload
+```
+
+### Project structure
+
+```
+fastapi-rest-api/
+├── alembic/                  # Migration scripts
+│   ├── versions/
+│   └── env.py
+├── app/
+│   ├── core/
+│   │   ├── config.py         # Settings loaded from .env
+│   │   └── security.py       # Password hashing and JWT helpers
+│   ├── db/
+│   │   └── base.py           # Async engine, session factory, Base
+│   ├── dependencies/
+│   │   └── auth.py           # get_current_user FastAPI dependency
+│   ├── models/
+│   │   └── user.py           # SQLAlchemy ORM model
+│   ├── routers/
+│   │   ├── auth.py           # /auth/register and /auth/token
+│   │   └── users.py          # /users/me
+│   ├── schemas/
+│   │   └── user.py           # Pydantic request/response schemas
+│   └── main.py               # FastAPI app, router registration
+├── .env
+├── alembic.ini
+├── docker-compose.yml
+├── Dockerfile
+└── requirements.txt
+```
+
+### First things to customize
+
+- `.env` — Set `DATABASE_URL` and generate a strong `SECRET_KEY` (`openssl rand -hex 32`)
+- `app/models/` — Add new SQLAlchemy models and create Alembic migrations for them
+- `app/routers/` — Add resource routers (e.g. `items.py`) and register them in `app/main.py`
+- `app/core/config.py` — Add any additional settings your app needs (S3 keys, email config, etc.)
+- `alembic/env.py` — Import all models so Alembic can detect them during `--autogenerate`
