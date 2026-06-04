@@ -1,0 +1,111 @@
+---
+title: Flatten Nested Dict (Python)
+description: Recursively flattens a nested dictionary into a single-level dict with dot-separated keys. Configurable separator and maximum depth.
+category: snippets
+language: python
+tags: [object, utils, dict, flatten]
+---
+
+Recursively walks a nested dictionary and collapses every nested key into a single-level dict, joining key segments with a configurable separator. An optional `max_depth` limit lets you partially flatten structures while leaving deeper nesting intact.
+
+## Usage
+
+```python
+from typing import Any
+
+
+def flatten_dict(
+    d: dict[str, Any],
+    separator: str = ".",
+    max_depth: int | None = None,
+    _prefix: str = "",
+    _depth: int = 0,
+) -> dict[str, Any]:
+    """Recursively flatten a nested dict into a single-level dict.
+
+    Args:
+        d: The dictionary to flatten.
+        separator: String used to join parent and child keys. Defaults to ".".
+        max_depth: Maximum nesting depth to flatten. None means unlimited.
+        _prefix: Internal — accumulated key prefix (do not pass manually).
+        _depth: Internal — current recursion depth (do not pass manually).
+
+    Returns:
+        A new flat dictionary with compound keys.
+    """
+    items: dict[str, Any] = {}
+    for key, value in d.items():
+        new_key = f"{_prefix}{separator}{key}" if _prefix else key
+        at_limit = max_depth is not None and _depth >= max_depth
+        if isinstance(value, dict) and value and not at_limit:
+            items.update(
+                flatten_dict(
+                    value,
+                    separator=separator,
+                    max_depth=max_depth,
+                    _prefix=new_key,
+                    _depth=_depth + 1,
+                )
+            )
+        else:
+            items[new_key] = value
+    return items
+```
+
+## Examples
+
+```python
+data = {
+    "user": {
+        "name": "Alice",
+        "address": {
+            "city": "Berlin",
+            "zip": "10115",
+        },
+    },
+    "active": True,
+}
+
+flatten_dict(data)
+# {
+#   "user.name": "Alice",
+#   "user.address.city": "Berlin",
+#   "user.address.zip": "10115",
+#   "active": True,
+# }
+
+# Custom separator
+flatten_dict(data, separator="__")
+# {
+#   "user__name": "Alice",
+#   "user__address__city": "Berlin",
+#   "user__address__zip": "10115",
+#   "active": True,
+# }
+
+# Limit depth — stops after 1 level
+flatten_dict(data, max_depth=1)
+# {
+#   "user.name": "Alice",
+#   "user.address": {"city": "Berlin", "zip": "10115"},
+#   "active": True,
+# }
+
+# Empty nested dict is kept as-is
+flatten_dict({"a": {}, "b": 1})
+# {"a": {}, "b": 1}
+```
+
+## Options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `separator` | `str` | `"."` | Delimiter inserted between parent and child key segments. |
+| `max_depth` | `int \| None` | `None` | Stop recursing after this many levels. `None` means fully recursive. |
+
+## Notes
+
+- The original dictionary is never mutated; a new dict is returned at every level.
+- Empty dicts (`{}`) are treated as leaf values and are never recursed into, matching the most common expectation.
+- Lists and other non-dict values are always treated as leaves, even if they contain dicts.
+- To reverse the operation, pair this with a small `unflatten_dict` utility that splits keys on the separator and rebuilds the nested structure.
