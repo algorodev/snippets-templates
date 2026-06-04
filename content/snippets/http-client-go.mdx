@@ -1,0 +1,229 @@
+---
+title: HTTP Client With Retry (Go)
+description: A preconfigured net/http client with timeout, retry, exponential backoff, and optional bearer-token injection. Exposes a simple Get/Post/Do interface for common use cases.
+category: snippets
+language: go
+tags: [utils, http, client, retry]
+---
+
+A thin wrapper around `net/http` that adds configurable retry logic with exponential backoff, jitter, a hard request timeout, and optional bearer-token injection. No external dependencies.
+
+## Usage
+
+```go
+package httpclient
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"time"
+)
+
+// Client is a preconfigured HTTP client with retry and backoff.
+type Client struct {
+	http       *http.Client
+	maxRetries int
+	baseDelay  time.Duration
+	maxDelay   time.Duration
+	token      string // optional bearer token
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithTimeout sets the per-request timeout (default: 10s).
+func WithTimeout(d time.Duration) Option {
+	return func(c *Client) { c.http.Timeout = d }
+}
+
+// WithRetries sets the maximum number of retry attempts (default: 3).
+// A value of 0 means no retries.
+func WithRetries(n int) Option {
+	return func(c *Client) { c.maxRetries = n }
+}
+
+// WithBaseDelay sets the initial backoff delay (default: 200ms).
+func WithBaseDelay(d time.Duration) Option {
+	return func(c *Client) { c.baseDelay = d }
+}
+
+// WithMaxDelay caps the per-attempt sleep (default: 5s).
+func WithMaxDelay(d time.Duration) Option {
+	return func(c *Client) { c.maxDelay = d }
+}
+
+// WithBearerToken injects an Authorization: Bearer header on every request.
+func WithBearerToken(token string) Option {
+	return func(c *Client) { c.token = token }
+}
+
+// New creates a Client with sensible defaults. Pass Option functions to override them.
+func New(opts ...Option) *Client {
+	c := &Client{
+		http:       &http.Client{Timeout: 10 * time.Second},
+		maxRetries: 3,
+		baseDelay:  200 * time.Millisecond,
+		maxDelay:   5 * time.Second,
+	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
+}
+
+// Get performs a GET request and returns the response body.
+// The caller must close the body.
+func (c *Client) Get(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("httpclient.Get: build request: %w", err)
+	}
+	return c.Do(req)
+}
+
+// Post performs a POST request with the given content-type and body.
+// The caller must close the response body.
+func (c *Client) Post(ctx context.Context, url, contentType string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("httpclient.Post: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	return c.Do(req)
+}
+
+// Do executes req with retry/backoff logic. Retries happen on network errors
+// and on 429 / 5xx responses. 4xx responses (except 429) are returned as-is
+// without retrying.
+func (c *Client) Do(req *http.Request) (*http.Response, error) {
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	// Snapshot the body so we can replay it on retries.
+	var bodySnapshot []byte
+	if req.Body != nil && req.Body != http.NoBody {
+		var err error
+		bodySnapshot, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("httpclient.Do: read request body: %w", err)
+		}
+		req.Body.Close()
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if bodySnapshot != nil {
+			req.Body = io.NopCloser(bytes.NewReader(bodySnapshot))
+			req.ContentLength = int64(len(bodySnapshot))
+		}
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("attempt %d: %w", attempt+1, err)
+			c.sleep(attempt)
+			continue
+		}
+
+		// Don't retry client errors (except 429 Too Many Requests).
+		if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			return resp, nil
+		}
+
+		// Retry on 429 or 5xx.
+		resp.Body.Close()
+		lastErr = fmt.Errorf("attempt %d: server returned %d", attempt+1, resp.StatusCode)
+
+		if attempt < c.maxRetries {
+			c.sleep(attempt)
+		}
+	}
+
+	return nil, fmt.Errorf("httpclient.Do %s %s: all %d attempts failed: %w",
+		req.Method, req.URL, c.maxRetries+1, lastErr)
+}
+
+// sleep waits for baseDelay * 2^attempt + jitter, capped at maxDelay.
+func (c *Client) sleep(attempt int) {
+	delay := c.baseDelay * (1 << attempt) // 200ms, 400ms, 800ms, …
+	if delay > c.maxDelay {
+		delay = c.maxDelay
+	}
+	// Add ±10 % jitter to avoid thundering herd.
+	jitter := time.Duration(rand.Int63n(int64(delay) / 5))
+	time.Sleep(delay + jitter)
+}
+```
+
+## Options
+
+| Option | Default | Description |
+|---|---|---|
+| `WithTimeout(d)` | `10s` | Hard deadline per request (includes retries) |
+| `WithRetries(n)` | `3` | Max retry attempts after the first failure |
+| `WithBaseDelay(d)` | `200ms` | Initial backoff delay; doubles each attempt |
+| `WithMaxDelay(d)` | `5s` | Backoff cap |
+| `WithBearerToken(t)` | — | Adds `Authorization: Bearer <t>` to every request |
+
+## Examples
+
+```go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"time"
+)
+
+func main() {
+	client := New(
+		WithTimeout(15*time.Second),
+		WithRetries(4),
+		WithBearerToken("my-api-token"),
+	)
+
+	ctx := context.Background()
+
+	// GET request
+	resp, err := client.Get(ctx, "https://api.example.com/users/1")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var user struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &user); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("User: %+v\n", user)
+
+	// POST request
+	payload := []byte(`{"name":"Alice"}`)
+	resp2, err := client.Post(ctx, "https://api.example.com/users", "application/json", payload)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	fmt.Println("Created:", resp2.StatusCode)
+}
+```
+
+## How it works
+
+1. **Body snapshotting** — before the first attempt the request body is read into memory so it can be replayed on retries. For streaming bodies (large uploads) you should handle retry logic at a higher level instead.
+2. **Retry conditions** — only network errors, `429 Too Many Requests`, and `5xx` responses trigger a retry. `4xx` responses other than 429 indicate a client mistake and are returned immediately.
+3. **Backoff with jitter** — each sleep is `baseDelay * 2^attempt`, capped at `maxDelay`, plus up to 10 % random jitter to prevent synchronized retries in multi-goroutine workloads.
+4. **Context propagation** — pass a `context.WithTimeout` or `context.WithCancel` via `Get`/`Post`/`Do` to abort early across all attempts.
