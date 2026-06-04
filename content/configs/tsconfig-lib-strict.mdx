@@ -1,0 +1,74 @@
+---
+title: TSConfig for Strict Library Authors
+description: A maximally strict TypeScript configuration for library authors who want to ship the highest-quality types. Enables declaration output, source maps, and all strict flags.
+category: configs
+language: json
+tags: [typescript, tsconfig, library, strict]
+---
+
+A maximally strict `tsconfig.json` for libraries distributed on npm. It emits clean `.d.ts` declarations, inline source maps, and turns on every strictness flag TypeScript offers so consumers inherit the best possible type experience.
+
+## Usage
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+
+    /* Module */
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    /* Output */
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "stripInternal": true,
+
+    /* Strictness — all flags explicit for documentation purposes */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitOverride": true,
+    "useUnknownInCatchVariables": true,
+
+    /* Safety */
+    "skipLibCheck": false,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
+}
+```
+
+## Options
+
+| Flag | Why it matters for library authors |
+|------|-----------------------------------|
+| `declaration: true` | Emits `.d.ts` files so consumers get types without installing `@types/*` |
+| `declarationMap: true` | Maps `.d.ts` positions back to source — "Go to definition" in editors jumps to your `.ts` source |
+| `composite: true` | Required for project references; also ensures `rootDir` and `declaration` are set |
+| `stripInternal: true` | Strips types annotated with `@internal` from emitted `.d.ts` — keeps your public API surface clean |
+| `verbatimModuleSyntax: true` | Type-only imports must use `import type` — prevents accidental runtime imports that bloat consumers' bundles |
+| `skipLibCheck: false` | You ship types, so you should validate them; leave this `false` |
+| `noPropertyAccessFromIndexSignature` | Forces bracket notation for index-signature types, making access intent explicit |
+| `noImplicitOverride` | Subclass methods that shadow a base class method must use the `override` keyword |
+| `exactOptionalPropertyTypes` | `{ a?: string }` is not assignable from `{ a: string \| undefined }` — catches subtle API mismatches |
+
+## Notes
+
+- Pair this config with `"exports"` in `package.json` to expose both CJS and ESM entry points. Set `"types"` to `"./dist/index.d.ts"`.
+- Add a `prepublishOnly` script (`"tsc -b"`) so types are always rebuilt before publishing.
+- Test-related files are excluded from the output `include` glob so test utilities are never accidentally exported.
+- Use `@internal` JSDoc on types and functions you need internally but don't want to appear in the shipped `.d.ts`.
