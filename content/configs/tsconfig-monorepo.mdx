@@ -1,0 +1,106 @@
+---
+title: TSConfig for Monorepos
+description: TypeScript project references setup for monorepos with a root config and per-package configs. Enables incremental builds and proper cross-package type checking.
+category: configs
+language: json
+tags: [typescript, tsconfig, monorepo, project-references]
+---
+
+Project references let TypeScript build each package independently and cache the results, dramatically speeding up type checking in large monorepos. This setup shows the root config and two representative per-package configs — one for a shared utilities library and one for an application.
+
+## Usage
+
+### Root `tsconfig.json`
+
+```json
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/utils" },
+    { "path": "./packages/ui" },
+    { "path": "./apps/web" }
+  ]
+}
+```
+
+### Shared base `tsconfig.base.json` (repo root)
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* Required for project references */
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}
+```
+
+### Library package — `packages/utils/tsconfig.json`
+
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### Application package — `apps/web/tsconfig.json`
+
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "noEmit": true,
+    /* Reference sibling packages so imports are type-checked */
+    "paths": {
+      "@repo/utils": ["../../packages/utils/src/index.ts"],
+      "@repo/ui": ["../../packages/ui/src/index.ts"]
+    }
+  },
+  "references": [
+    { "path": "../../packages/utils" },
+    { "path": "../../packages/ui" }
+  ],
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+## How it works
+
+TypeScript project references work in two modes:
+
+1. **Build mode (`tsc -b`)** — compiles each referenced project in dependency order and writes `.d.ts` + `.js` output to `dist/`. Subsequent runs only recompile changed packages.
+2. **Editor / type-check mode** — the editor resolves cross-package imports through `paths` aliases that point at source files, giving you instant feedback without a build step.
+
+The `composite: true` flag is required on every referenced project. It enforces that `declaration` is enabled and that `rootDir` is set, so TypeScript can produce the `.tsbuildinfo` cache files.
+
+## Notes
+
+- Run `tsc -b` from the repo root to build all packages in the correct order.
+- Add `tsc -b --watch` to your dev script for incremental re-compilation on save.
+- Each package's `package.json` should point `"types"` at `"./dist/index.d.ts"` and `"main"` / `"exports"` at the compiled output so consumers outside the monorepo also work.
+- If you use a bundler (Vite, Turbopack, esbuild) inside individual packages, set `noEmit: true` on those packages and keep `composite: true` only where you need `.d.ts` output.
