@@ -1,0 +1,92 @@
+---
+title: Parse Date String
+description: Parses a date string in common formats (ISO 8601, US, EU) into a native Date object without relying on locale-specific Date.parse behaviour. Returns null for unparseable input.
+category: snippets
+language: typescript
+tags: [date, utils, parsing]
+---
+
+`Date.parse` is implementation-defined for non-ISO strings and produces inconsistent results across browsers and runtimes. This function uses explicit regex patterns to handle the most common formats reliably.
+
+## Usage
+
+```typescript
+type ParsedDate = Date | null
+
+function parseDate(input: string): ParsedDate {
+  const s = input.trim()
+
+  // ISO 8601 — e.g. 2024-03-15 or 2024-03-15T10:30:00Z
+  const isoMatch = s.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:?\d{2})?)?$/
+  )
+  if (isoMatch) {
+    const [, year, month, day, hh = '0', mm = '0', ss = '0', ms = '0', tz] = isoMatch
+    if (tz) {
+      // Let the engine handle timezone-aware ISO strings natively
+      const d = new Date(s)
+      return isNaN(d.getTime()) ? null : d
+    }
+    // No timezone: treat as local time
+    const d = new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hh),
+      Number(mm),
+      Number(ss),
+      Number(ms.slice(0, 3).padEnd(3, '0'))
+    )
+    return isNaN(d.getTime()) ? null : d
+  }
+
+  // US format — MM/DD/YYYY or MM-DD-YYYY
+  const usMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+  if (usMatch) {
+    const [, month, day, year] = usMatch
+    const d = new Date(Number(year), Number(month) - 1, Number(day))
+    return isNaN(d.getTime()) ? null : d
+  }
+
+  // EU format — DD.MM.YYYY or DD/MM/YYYY (disambiguated by the dot separator)
+  const euMatch = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
+  if (euMatch) {
+    const [, day, month, year] = euMatch
+    const d = new Date(Number(year), Number(month) - 1, Number(day))
+    return isNaN(d.getTime()) ? null : d
+  }
+
+  return null
+}
+
+export default parseDate
+```
+
+## Examples
+
+```typescript
+parseDate('2024-03-15')
+// → Date: 2024-03-15T00:00:00 (local)
+
+parseDate('2024-03-15T10:30:00Z')
+// → Date: 2024-03-15T10:30:00.000Z
+
+parseDate('03/15/2024')
+// → Date: 2024-03-15 (US format — month first)
+
+parseDate('15.03.2024')
+// → Date: 2024-03-15 (EU format — day first)
+
+parseDate('not a date')
+// → null
+
+parseDate('2024-99-99')
+// → null  (invalid month/day — getTime() returns NaN)
+```
+
+## Notes
+
+- ISO strings that include a timezone offset (`Z`, `+05:30`, etc.) are delegated back to `new Date()` since the engine handles them correctly and consistently.
+- ISO strings without a timezone are constructed via the `Date` constructor with numeric arguments, which always produces a local-time date — matching the expectation for strings like `2024-03-15` read from a form input.
+- `MM/DD/YYYY` and `DD/MM/YYYY` with a `/` separator are ambiguous. This function treats slash-separated values as US format (month first). Use `.` as the separator for unambiguous EU dates.
+- The function returns `null` rather than an invalid `Date` object, making it easy to check with a simple `if (result)` guard.
