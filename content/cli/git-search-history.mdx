@@ -1,0 +1,111 @@
+---
+title: Git Search History
+description: Functions to search commit messages, changed file content, and diffs across all branches for a given string or regex.
+category: cli
+language: bash
+tags: [git, search, history, debugging]
+---
+
+Three shell functions that cover the main ways you need to find something in a repo's past: by commit message, by the content a commit added or removed, and by which commit first touched a given string inside a file.
+
+## Usage
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+
+# Search commit messages across all branches
+# Usage: git-log-search <pattern> [extra git-log flags]
+git-log-search() {
+  local pattern="${1:?Provide a search pattern}"
+  shift
+  git log --all --oneline --grep="$pattern" "$@"
+}
+
+# Search for commits that added or removed a string (pickaxe search)
+# Finds the exact commits where <string> entered or left the codebase.
+# Usage: git-pickaxe <string> [path]
+git-pickaxe() {
+  local string="${1:?Provide a string to search for}"
+  local path="${2:-.}"
+  git log --all --oneline -S "$string" -- "$path"
+}
+
+# Search diffs across all commits for a regex (slower but more flexible)
+# Usage: git-diff-search <regex> [path]
+git-diff-search() {
+  local pattern="${1:?Provide a regex pattern}"
+  local path="${2:-.}"
+  git log --all --oneline -G "$pattern" -- "$path"
+}
+
+# Show full diff context for a matching commit
+# Usage: git-show-match <commit> [grep-pattern]
+git-show-match() {
+  local commit="${1:?Provide a commit hash}"
+  local pattern="${2:-}"
+  if [[ -n "$pattern" ]]; then
+    git show "$commit" | grep --color=always -C 3 "$pattern"
+  else
+    git show "$commit"
+  fi
+}
+
+# Search file content at every commit (blame-style, expensive on large history)
+# Finds the first commit where <pattern> appears inside <file>
+# Usage: git-file-history-search <pattern> <file>
+git-file-history-search() {
+  local pattern="${1:?Provide a search pattern}"
+  local file="${2:?Provide a file path}"
+  git log --all --follow --diff-filter=M --format="%H %as %s" -- "$file" \
+    | while read -r hash date subject; do
+        if git show "$hash:$file" 2>/dev/null | grep -q "$pattern"; then
+          echo "$hash  $date  $subject"
+        fi
+      done
+}
+```
+
+## Examples
+
+```bash
+# Find commits mentioning "payment" in the message
+git-log-search "payment"
+
+# Case-insensitive search with -i (passed through to git log)
+git-log-search "fix" -i
+
+# Find every commit that added or removed the string "API_KEY"
+git-pickaxe "API_KEY"
+
+# Narrow pickaxe search to a specific directory
+git-pickaxe "deprecated" src/legacy/
+
+# Search diffs for a regex (e.g. any console.log statement)
+git-diff-search "console\.log"
+
+# Search diffs for a function name change
+git-diff-search "processPayment" src/billing/
+
+# Show what changed in a specific commit with highlighted context
+git-show-match a3f92bc "API_KEY"
+
+# Find the commit that first introduced error handling in a file
+git-file-history-search "try {" src/api/client.ts
+```
+
+## How it works
+
+**`--grep`** filters by commit message text. Supports POSIX extended regexes and can be combined with `--all-match` (all `--grep` terms must match) or `--invert-grep`.
+
+**`-S <string>` (pickaxe)** finds commits where the number of occurrences of `<string>` changed — meaning it was added or deleted in that commit. It is exact string matching, not a regex.
+
+**`-G <regex>`** finds commits where the patch text (the diff) matches the regex. Unlike `-S`, it matches even if the count stays the same, making it useful for finding when a line was _modified_ rather than added or removed.
+
+**`git-file-history-search`** checks out the file at every commit in its history and greps the full content. It is accurate but slow on files with long histories — pipe through `head` to stop early.
+
+## Notes
+
+- All functions pass `--all` so they search every branch and tag, not just the current branch.
+- For very large repos, scope searches with a path argument to keep them fast.
+- Combine `git-pickaxe` results with `git-show-match` to inspect the exact diff: `git-show-match $(git-pickaxe "MY_SECRET" | head -1 | awk '{print $1}')`.
+- To search across stashes as well, add `$(git stash list | awk -F: '{print $1}')` to the revision list.
