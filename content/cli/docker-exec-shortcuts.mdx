@@ -1,0 +1,118 @@
+---
+title: Docker Exec Shortcuts
+description: Fuzzy-find a running container by name and drop into a shell or run a one-off command without typing the full container ID.
+category: cli
+language: bash
+tags: [docker, exec, shell, productivity]
+---
+
+Typing `docker exec -it <full-container-id> bash` gets old fast. These functions let you fuzzy-match a container by name, then either drop into an interactive shell or fire off a one-off command.
+
+## Usage
+
+```bash
+# Interactive shell in the first container matching "api"
+dsh api
+
+# Run a one-off command in the first container matching "postgres"
+drun postgres psql -U postgres
+
+# List running containers with a readable format
+docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+```
+
+## Shell function version
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# Fuzzy-find a running container by name fragment and open an interactive shell.
+# Falls back from bash -> sh if bash is not available.
+dsh() {
+  local query="${1:-}"
+  local container
+
+  if [ -z "$query" ]; then
+    # No argument: show a numbered menu of all running containers
+    echo "Running containers:"
+    docker ps --format "  {{.Names}}\t{{.Image}}" | nl -w2 -s'. '
+    printf "\nContainer name (or partial): "
+    read -r query
+  fi
+
+  container=$(docker ps --format "{{.Names}}" | grep -i "$query" | head -1)
+
+  if [ -z "$container" ]; then
+    echo "No running container matching '${query}'"
+    return 1
+  fi
+
+  echo "Entering: $container"
+  docker exec -it "$container" bash 2>/dev/null \
+    || docker exec -it "$container" sh
+}
+
+# Run a one-off command inside the first container matching the name fragment.
+# Usage: drun <name-fragment> <command> [args...]
+drun() {
+  if [ "$#" -lt 2 ]; then
+    echo "Usage: drun <name-fragment> <command> [args...]"
+    return 1
+  fi
+
+  local query="$1"
+  shift
+  local container
+
+  container=$(docker ps --format "{{.Names}}" | grep -i "$query" | head -1)
+
+  if [ -z "$container" ]; then
+    echo "No running container matching '${query}'"
+    return 1
+  fi
+
+  echo "Running in $container: $*"
+  docker exec -it "$container" "$@"
+}
+```
+
+## Options
+
+### `dsh [name-fragment]`
+
+| Argument | Meaning |
+|----------|---------|
+| `name-fragment` | Case-insensitive substring to match against running container names. Omit for an interactive menu. |
+
+### `drun <name-fragment> <command> [args...]`
+
+| Argument | Meaning |
+|----------|---------|
+| `name-fragment` | Case-insensitive substring to match against running container names |
+| `command` | Command to run inside the container |
+| `args...` | Optional arguments forwarded to the command |
+
+## Examples
+
+```bash
+# Shell into a container whose name contains "web"
+dsh web
+
+# Shell into a container — interactive picker when name is ambiguous
+dsh
+
+# Run a Rails console in the first container matching "app"
+drun app bin/rails console
+
+# Inspect environment variables in the "worker" container
+drun worker env | grep DATABASE
+
+# Tail logs from inside the container
+drun nginx tail -f /var/log/nginx/error.log
+```
+
+## Notes
+
+- `grep -i "$query" | head -1` picks the first alphabetical match when multiple containers share the fragment. Make your query more specific if you need a different one (e.g. `dsh api-worker` instead of `dsh api`).
+- The `bash` fallback to `sh` in `dsh` handles minimal images (Alpine, distroless variants) that ship only `/bin/sh`.
+- If you have `fzf` installed, replace `grep -i "$query" | head -1` with a fuzzy picker: `docker ps --format "{{.Names}}" | fzf --query "$query" --select-1 --exit-0`.
