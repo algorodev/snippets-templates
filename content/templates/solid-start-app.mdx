@@ -1,0 +1,346 @@
+---
+title: SolidStart App
+description: A full-stack SolidJS application built with SolidStart, featuring server-side rendering, file-based routing, and server functions for data fetching and mutations.
+category: templates
+language: TypeScript
+tags: [solid, solidstart, typescript, ssr, full-stack]
+repo: https://github.com/solidjs/solid-start
+---
+
+A full-stack SolidJS application using SolidStart — SolidJS's official meta-framework. Fine-grained reactivity without a virtual DOM keeps the client bundle lean, file-based routing maps the `src/routes/` directory directly to URL paths, and `"use server"` functions run on the server while staying co-located with the components that call them.
+
+## Usage
+
+```bash
+# Scaffold with the SolidStart CLI
+npm create solid@latest my-solid-app
+cd my-solid-app
+npm install
+npm run dev
+```
+
+## Configuration
+
+```typescript
+// app.config.ts
+import { defineConfig } from "@solidjs/start/config";
+
+export default defineConfig({
+  ssr: true,           // server-side rendering (set false for SPA mode)
+  server: {
+    preset: "node-server",  // or "vercel", "netlify", "cloudflare-pages"
+  },
+});
+```
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "types": ["vinxi/types/client"],
+    "isolatedModules": true,
+    "paths": {
+      "~/*": ["./src/*"]
+    }
+  }
+}
+```
+
+## Server functions
+
+```typescript
+// src/lib/posts.ts — data access layer (runs only on the server)
+"use server";
+
+export interface Post {
+  id: number;
+  title: string;
+  body: string;
+  userId: number;
+}
+
+export async function getPosts(limit = 10): Promise<Post[]> {
+  const res = await fetch(
+    `https://jsonplaceholder.typicode.com/posts?_limit=${limit}`
+  );
+  if (!res.ok) throw new Error(`Failed to fetch posts: ${res.status}`);
+  return res.json() as Promise<Post[]>;
+}
+
+export async function getPost(id: number): Promise<Post> {
+  const res = await fetch(
+    `https://jsonplaceholder.typicode.com/posts/${id}`
+  );
+  if (!res.ok) throw new Error(`Post ${id} not found`);
+  return res.json() as Promise<Post>;
+}
+
+export async function createPost(
+  data: Pick<Post, "title" | "body" | "userId">
+): Promise<Post> {
+  const res = await fetch("https://jsonplaceholder.typicode.com/posts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to create post");
+  return res.json() as Promise<Post>;
+}
+```
+
+## Routes
+
+```tsx
+// src/routes/index.tsx — home page (SSR)
+import { For, Show, Suspense } from "solid-js";
+import { createAsync, A } from "@solidjs/router";
+import { getPosts } from "~/lib/posts";
+
+// createAsync calls the server function and caches the result
+const fetchPosts = () => getPosts(12);
+
+export default function HomePage() {
+  const posts = createAsync(fetchPosts);
+
+  return (
+    <main class="container">
+      <h1>Posts</h1>
+      <Suspense fallback={<p>Loading posts…</p>}>
+        <Show when={posts()} keyed>
+          {(list) => (
+            <ul class="post-list">
+              <For each={list}>
+                {(post) => (
+                  <li class="post-card">
+                    <A href={`/posts/${post.id}`}>
+                      <h2>{post.title}</h2>
+                    </A>
+                    <p>{post.body}</p>
+                  </li>
+                )}
+              </For>
+            </ul>
+          )}
+        </Show>
+      </Suspense>
+    </main>
+  );
+}
+```
+
+```tsx
+// src/routes/posts/[id].tsx — dynamic post detail route
+import { Show, Suspense } from "solid-js";
+import { createAsync, useParams, A } from "@solidjs/router";
+import { getPost } from "~/lib/posts";
+
+export default function PostPage() {
+  const params = useParams<{ id: string }>();
+  const post = createAsync(() => getPost(Number(params.id)));
+
+  return (
+    <main class="container">
+      <A href="/">&larr; Back</A>
+      <Suspense fallback={<p>Loading…</p>}>
+        <Show when={post()} keyed>
+          {(p) => (
+            <article>
+              <h1>{p.title}</h1>
+              <p>{p.body}</p>
+            </article>
+          )}
+        </Show>
+      </Suspense>
+    </main>
+  );
+}
+```
+
+```tsx
+// src/routes/posts/new.tsx — form with server action mutation
+import { createSignal } from "solid-js";
+import { useNavigate } from "@solidjs/router";
+import { action, useAction } from "@solidjs/router";
+import { createPost } from "~/lib/posts";
+
+const submitPost = action(async (form: FormData) => {
+  "use server";
+  const title = form.get("title") as string;
+  const body = form.get("body") as string;
+  if (!title || !body) throw new Error("Title and body are required");
+  return createPost({ title, body, userId: 1 });
+});
+
+export default function NewPostPage() {
+  const submit = useAction(submitPost);
+  const navigate = useNavigate();
+  const [error, setError] = createSignal<string | null>(null);
+  const [pending, setPending] = createSignal(false);
+
+  async function handleSubmit(e: SubmitEvent) {
+    e.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      const form = new FormData(e.currentTarget as HTMLFormElement);
+      await submit(form);
+      navigate("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <main class="container">
+      <h1>New Post</h1>
+      {error() && <p class="error">{error()}</p>}
+      <form onSubmit={handleSubmit}>
+        <label>
+          Title
+          <input name="title" type="text" required />
+        </label>
+        <label>
+          Body
+          <textarea name="body" rows={6} required />
+        </label>
+        <button type="submit" disabled={pending()}>
+          {pending() ? "Saving…" : "Publish"}
+        </button>
+      </form>
+    </main>
+  );
+}
+```
+
+## Root layout
+
+```tsx
+// src/app.tsx
+import { Suspense } from "solid-js";
+import { Router } from "@solidjs/router";
+import { FileRoutes } from "@solidjs/start/router";
+import "./app.css";
+
+export default function App() {
+  return (
+    <Router
+      root={(props) => (
+        <>
+          <nav>
+            <a href="/">Home</a>
+            <a href="/posts/new">New Post</a>
+          </nav>
+          <Suspense>{props.children}</Suspense>
+        </>
+      )}
+    >
+      <FileRoutes />
+    </Router>
+  );
+}
+```
+
+## Reactive store
+
+```typescript
+// src/stores/theme.ts
+import { createSignal, createEffect } from "solid-js";
+
+type Theme = "light" | "dark";
+
+function createThemeStore() {
+  const stored = (localStorage.getItem("theme") as Theme) ?? "light";
+  const [theme, setTheme] = createSignal<Theme>(stored);
+
+  createEffect(() => {
+    const t = theme();
+    localStorage.setItem("theme", t);
+    document.documentElement.dataset.theme = t;
+  });
+
+  const toggle = () => setTheme((t) => (t === "light" ? "dark" : "light"));
+
+  return { theme, toggle };
+}
+
+export const themeStore = createThemeStore();
+```
+
+## README
+
+### What this includes
+
+- **SolidJS** — Fine-grained reactive primitives (`createSignal`, `createEffect`, `createMemo`) without a virtual DOM
+- **SolidStart** — Full-stack meta-framework with SSR, file-based routing, and server functions
+- **`"use server"` functions** — Co-located server-only logic callable from components without a separate API layer
+- **`createAsync`** — Suspense-aware data fetching that integrates with server functions
+- **Server actions** — Mutation functions (`action`) that work with native HTML `<form>` elements
+- **File-based routing** — `src/routes/` maps to URL paths; `[param]` segments for dynamic routes
+- **TypeScript** — Strict mode with path aliases (`~/`) configured through `tsconfig.json`
+
+### Prerequisites
+
+- Node.js 18+
+- npm / pnpm / yarn
+
+### Create this template
+
+```bash
+# 1. Scaffold a new SolidStart project
+#    Select "SolidStart" → "basic" when prompted
+npm create solid@latest my-solid-app
+cd my-solid-app
+
+# 2. Install dependencies
+npm install
+
+# 3. Create the lib/ directory for server-only data access
+mkdir -p src/lib
+
+# 4. Create the stores/ directory for client state
+mkdir -p src/stores
+
+# 5. Add dynamic and nested routes
+mkdir -p src/routes/posts
+
+# 6. Start the dev server (Vite + Nitro)
+npm run dev
+```
+
+### Project structure
+
+```
+my-solid-app/
+├── src/
+│   ├── lib/
+│   │   └── posts.ts             # "use server" data functions
+│   ├── routes/
+│   │   ├── index.tsx            # → /
+│   │   └── posts/
+│   │       ├── [id].tsx         # → /posts/:id
+│   │       └── new.tsx          # → /posts/new
+│   ├── stores/
+│   │   └── theme.ts             # Client-side reactive store
+│   ├── app.tsx                  # Root layout + Router
+│   ├── app.css                  # Global styles
+│   └── entry-client.tsx         # Client hydration entry
+├── app.config.ts                # SolidStart / Vinxi config
+├── tsconfig.json
+└── package.json
+```
+
+### First things to customize
+
+- `app.config.ts` — Switch `server.preset` to `"vercel"`, `"netlify"`, or `"cloudflare-pages"` for deployment
+- `src/lib/posts.ts` — Replace JSONPlaceholder calls with your real database queries (Drizzle ORM, Prisma, etc.)
+- `src/routes/index.tsx` — Replace the posts list with your application's home page content
+- `src/app.tsx` — Update the `<nav>` links and add a shared header/footer layout
+- `src/app.css` — Add your global styles, CSS custom properties, and font imports
