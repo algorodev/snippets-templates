@@ -1,0 +1,100 @@
+---
+title: Bundle Analyzer Shortcut
+description: One-liner alias to build with bundle analysis enabled and open the visualiser in the browser for webpack, rollup, or esbuild projects.
+category: cli
+language: bash
+tags: [node, webpack, bundling, performance]
+---
+
+Add these shell aliases to your `~/.zshrc` or `~/.bashrc` to trigger bundle analysis with a single command. Each alias sets the appropriate environment variable and opens the resulting report automatically.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+# webpack (webpack-bundle-analyzer)
+alias analyze-webpack='ANALYZE=true npx next build 2>&1 | tee /tmp/build.log && open .next/analyze/client.html'
+
+# webpack (standalone — not inside Next.js)
+alias analyze-wp='WEBPACK_ANALYZER=true npx webpack --config webpack.config.js && open dist/report.html'
+
+# rollup (rollup-plugin-visualizer)
+alias analyze-rollup='npx rollup -c && open stats.html'
+
+# esbuild (esbuild-bundle-analyzer)
+alias analyze-esbuild='npx esbuild src/index.ts --bundle --outfile=dist/out.js --metafile=dist/meta.json && npx esbuild-bundle-analyzer dist/meta.json'
+
+# Vite (vite-bundle-visualizer)
+alias analyze-vite='npx vite-bundle-visualizer && open stats.html'
+```
+
+## Setup per bundler
+
+### webpack / Next.js
+
+Install the analyzer plugin:
+
+```bash
+npm install --save-dev @next/bundle-analyzer
+# or for plain webpack:
+npm install --save-dev webpack-bundle-analyzer
+```
+
+Enable it in `next.config.js`:
+
+```js
+const withBundleAnalyzer = require('@next/bundle-analyzer')({
+  enabled: process.env.ANALYZE === 'true',
+  openAnalyzer: true,
+})
+
+module.exports = withBundleAnalyzer({
+  // your existing Next.js config
+})
+```
+
+### Rollup
+
+```bash
+npm install --save-dev rollup-plugin-visualizer
+```
+
+Add to `rollup.config.js`:
+
+```js
+import { visualizer } from 'rollup-plugin-visualizer'
+
+export default {
+  plugins: [
+    visualizer({ open: true, filename: 'stats.html', gzipSize: true }),
+  ],
+}
+```
+
+### Vite
+
+```bash
+npm install --save-dev vite-bundle-visualizer
+```
+
+Run ad-hoc without config changes:
+
+```bash
+npx vite-bundle-visualizer
+```
+
+## Options
+
+| Flag / env var | Bundler | Effect |
+|---|---|---|
+| `ANALYZE=true` | Next.js | Enables `@next/bundle-analyzer` |
+| `--metafile` | esbuild | Writes `meta.json` required for analysis |
+| `gzipSize: true` | rollup-plugin-visualizer | Shows gzip sizes in the treemap |
+| `open: true` | rollup-plugin-visualizer | Auto-opens report in browser |
+
+## Notes
+
+- For CI pipelines, drop the `open` / `&& open …` step and archive the HTML artifact instead.
+- Next.js generates separate reports for `client.html` and `server.html` under `.next/analyze/`.
+- Use `npx bundlesize` alongside analysis to enforce size budgets in CI.
