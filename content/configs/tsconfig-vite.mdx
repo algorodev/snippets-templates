@@ -1,0 +1,102 @@
+---
+title: TSConfig for Vite
+description: TypeScript configuration tuned for Vite-based projects with bundler module resolution. Includes settings for path aliases and Vite's environment type references.
+category: configs
+language: json
+tags: [typescript, tsconfig, vite, bundler]
+---
+
+A TypeScript configuration optimized for Vite projects. Uses `bundler` module resolution so TypeScript and Vite agree on how imports are resolved, and wires up path aliases to match `vite.config.ts`.
+
+## Usage
+
+```json
+{
+  "compilerOptions": {
+    /* Language target */
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+
+    /* Module — "bundler" matches how Vite resolves imports */
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+
+    /* Output — Vite handles transpilation, TS only type-checks */
+    "noEmit": true,
+
+    /* Path aliases — keep in sync with vite.config.ts resolve.alias */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
+    /* Misc */
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src", "vite.config.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+## Matching alias in vite.config.ts
+
+Path aliases declared in `paths` must be mirrored in `vite.config.ts` so Vite's dev server and build also resolve them:
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import { resolve } from "path";
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      "@": resolve(__dirname, "./src"),
+    },
+  },
+});
+```
+
+For projects using `@vitejs/plugin-react` or another framework plugin, install the `vite-tsconfig-paths` package to sync aliases automatically instead of duplicating them:
+
+```bash
+npm install -D vite-tsconfig-paths
+```
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import tsconfigPaths from "vite-tsconfig-paths";
+
+export default defineConfig({
+  plugins: [tsconfigPaths()],
+});
+```
+
+## Vite client types
+
+If your source code references Vite-specific globals such as `import.meta.env` or `import.meta.hot`, add a triple-slash reference at the top of your entry file or a `vite-env.d.ts` shim:
+
+```typescript
+// src/vite-env.d.ts
+/// <reference types="vite/client" />
+```
+
+This gives you typed access to `ImportMeta` fields injected by Vite.
+
+## Notes
+
+`"allowImportingTsExtensions": true` lets you write `import foo from "./foo.ts"` in source files. This only works when `"noEmit": true` because TypeScript itself never emits those files — Vite's bundler handles the output. Remove this flag if you ever need TypeScript to emit files directly.
+
+`"verbatimModuleSyntax": true` replaces the older `"importsNotUsedAsValues"` and `"preserveValueImports"` flags and ensures type-only imports are stripped correctly before the bundler sees the code.
