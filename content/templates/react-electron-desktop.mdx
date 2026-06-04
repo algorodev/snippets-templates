@@ -1,0 +1,219 @@
+---
+title: React Electron Desktop App
+description: A cross-platform desktop application template using Electron and React with Vite, featuring IPC communication patterns and a packaging setup for Windows, macOS, and Linux.
+category: templates
+language: TypeScript
+tags: [react, electron, desktop, vite, cross-platform]
+---
+
+A cross-platform desktop app template that wires together Electron's main/renderer split with a React + Vite frontend. Includes typed IPC channels, a preload bridge, and electron-builder packaging for Windows, macOS, and Linux.
+
+## Usage
+
+```typescript
+// electron/main.ts
+import { app, BrowserWindow, ipcMain } from 'electron'
+import path from 'node:path'
+
+const isDev = process.env.NODE_ENV === 'development'
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173')
+    win.webContents.openDevTools()
+  } else {
+    win.loadFile(path.join(__dirname, '../dist/index.html'))
+  }
+}
+
+app.whenReady().then(() => {
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
+
+// IPC handler — main process side
+ipcMain.handle('app:get-version', () => app.getVersion())
+
+ipcMain.handle('fs:read-file', async (_event, filePath: string) => {
+  const { readFile } = await import('node:fs/promises')
+  return readFile(filePath, 'utf-8')
+})
+```
+
+```typescript
+// electron/preload.ts
+import { contextBridge, ipcRenderer } from 'electron'
+
+export type ElectronAPI = typeof electronAPI
+
+const electronAPI = {
+  getVersion: (): Promise<string> =>
+    ipcRenderer.invoke('app:get-version'),
+
+  readFile: (filePath: string): Promise<string> =>
+    ipcRenderer.invoke('fs:read-file', filePath),
+
+  onMenuAction: (callback: (action: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, action: string) =>
+      callback(action)
+    ipcRenderer.on('menu:action', listener)
+    return () => ipcRenderer.removeListener('menu:action', listener)
+  },
+}
+
+contextBridge.exposeInMainWorld('electron', electronAPI)
+```
+
+```typescript
+// src/types/electron.d.ts
+import type { ElectronAPI } from '../../electron/preload'
+
+declare global {
+  interface Window {
+    electron: ElectronAPI
+  }
+}
+```
+
+```typescript
+// src/hooks/useElectron.ts
+export function useElectron() {
+  if (typeof window === 'undefined' || !window.electron) {
+    throw new Error('useElectron must be used inside the Electron renderer')
+  }
+  return window.electron
+}
+```
+
+```typescript
+// src/App.tsx
+import { useState, useEffect } from 'react'
+import { useElectron } from './hooks/useElectron'
+
+export default function App() {
+  const electron = useElectron()
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    electron.getVersion().then(setVersion)
+
+    const unsubscribe = electron.onMenuAction((action) => {
+      console.log('Menu action received:', action)
+    })
+    return unsubscribe
+  }, [electron])
+
+  return (
+    <div>
+      <h1>My Desktop App</h1>
+      <p>Electron v{version}</p>
+    </div>
+  )
+}
+```
+
+```json
+// electron-builder config (add to package.json under "build")
+{
+  "build": {
+    "appId": "com.example.myapp",
+    "productName": "My App",
+    "directories": {
+      "output": "release"
+    },
+    "files": ["dist/**/*", "dist-electron/**/*"],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"]
+    }
+  }
+}
+```
+
+## README
+
+### What this includes
+- Electron main process with typed IPC handlers
+- Vite + React renderer with hot-module replacement in development
+- Context-isolated preload script exposing a typed `window.electron` API
+- TypeScript declarations for the renderer to consume the preload bridge
+- `useElectron` React hook for safe access to the IPC bridge
+- electron-builder configuration for packaging on Windows, macOS, and Linux
+
+### Prerequisites
+- Node.js 20+
+- For macOS builds: Xcode command-line tools
+- For Windows builds on macOS/Linux: Wine (for code signing only)
+
+### Create this template
+
+```bash
+npm create vite@latest my-desktop-app -- --template react-ts
+cd my-desktop-app
+npm install electron
+npm install --save-dev electron-builder concurrently wait-on
+npm install --save-dev @electron/typescript-definitions
+mkdir electron
+touch electron/main.ts electron/preload.ts
+mkdir -p src/types src/hooks
+touch src/types/electron.d.ts src/hooks/useElectron.ts
+```
+
+```bash
+# Add to package.json scripts:
+# "electron:dev":   "concurrently \"vite\" \"wait-on http://localhost:5173 && tsc -p tsconfig.electron.json && electron dist-electron/main.js\""
+# "electron:build": "vite build && tsc -p tsconfig.electron.json && electron-builder"
+
+# tsconfig.electron.json — separate tsconfig targeting CommonJS for the main process:
+# { "extends": "./tsconfig.json", "compilerOptions": { "module": "CommonJS", "outDir": "dist-electron" }, "include": ["electron"] }
+```
+
+### Project structure
+
+```
+electron/
+  main.ts            # app lifecycle, window creation, IPC handlers
+  preload.ts         # contextBridge — the only safe renderer<->main bridge
+src/
+  hooks/
+    useElectron.ts   # typed hook to access window.electron
+  types/
+    electron.d.ts    # global Window augmentation
+  App.tsx
+  main.tsx
+dist/                # Vite renderer output
+dist-electron/       # tsc main/preload output
+release/             # electron-builder packages
+tsconfig.json        # renderer tsconfig
+tsconfig.electron.json  # main process tsconfig
+```
+
+### First things to customize
+- Update `appId` and `productName` in the `build` config inside `package.json`
+- Add your IPC channels in `electron/main.ts` (`ipcMain.handle`) and expose them in `electron/preload.ts`
+- Replace the placeholder menu action listener with your actual application menu in `main.ts`
+- Set window dimensions, title, and icon in `createWindow()`
+- Configure auto-updater using `electron-updater` if you need over-the-air updates
