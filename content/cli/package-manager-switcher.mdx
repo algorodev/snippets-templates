@@ -1,0 +1,100 @@
+---
+title: Package Manager Switcher
+description: Detect whether a project uses npm, yarn, pnpm, or bun from lockfile presence and run the correct install or script command automatically.
+category: cli
+language: bash
+tags: [node, npm, pnpm, yarn, bun, productivity]
+---
+
+Drop this function into your `~/.bashrc` or `~/.zshrc` to run any package manager command without thinking about which tool the project uses — it reads the lockfile and dispatches accordingly.
+
+## Usage
+
+```bash
+# Detect the package manager for the current project
+pm() {
+  if [ -f "bun.lockb" ] || [ -f "bun.lock" ]; then
+    echo "bun"
+  elif [ -f "pnpm-lock.yaml" ]; then
+    echo "pnpm"
+  elif [ -f "yarn.lock" ]; then
+    echo "yarn"
+  elif [ -f "package-lock.json" ]; then
+    echo "npm"
+  else
+    echo "npm"  # default fallback
+  fi
+}
+
+# Install dependencies using the detected package manager
+pmi() {
+  local mgr
+  mgr=$(pm)
+  echo "→ $mgr install"
+  "$mgr" install "$@"
+}
+
+# Run a package.json script using the detected package manager
+pmr() {
+  local mgr script
+  mgr=$(pm)
+  script="${1:?Usage: pmr <script> [args...]}"
+  shift
+  echo "→ $mgr run $script"
+  "$mgr" run "$script" "$@"
+}
+
+# Run a binary from node_modules/.bin (equivalent to npx/bunx/pnpm dlx)
+pmx() {
+  local mgr bin
+  mgr=$(pm)
+  bin="${1:?Usage: pmx <bin> [args...]}"
+  shift
+  case "$mgr" in
+    bun)   bunx "$bin" "$@" ;;
+    pnpm)  pnpm dlx "$bin" "$@" ;;
+    yarn)  yarn dlx "$bin" "$@" ;;
+    npm)   npx "$bin" "$@" ;;
+  esac
+}
+
+# Add a dependency using the detected package manager
+pma() {
+  local mgr flag
+  mgr=$(pm)
+  # Pass -D or --dev flags through transparently
+  echo "→ $mgr add $*"
+  case "$mgr" in
+    npm)  npm install "$@" ;;
+    *)    "$mgr" add "$@" ;;
+  esac
+}
+```
+
+## Examples
+
+```bash
+# In a pnpm project
+pmi              # pnpm install
+pmr build        # pnpm run build
+pmr test -- --watch  # pnpm run test -- --watch
+pma lodash       # pnpm add lodash
+pma -D typescript  # pnpm add -D typescript
+pmx eslint .     # pnpm dlx eslint .
+
+# Works identically in a bun, yarn, or npm project — no changes needed
+```
+
+## Options
+
+| Function | Description |
+|----------|-------------|
+| `pm`     | Print the detected package manager name |
+| `pmi`    | Install all dependencies |
+| `pmr`    | Run a script from `package.json` |
+| `pmx`    | Execute a binary with the project's runner |
+| `pma`    | Add a new dependency (pass `-D` for devDependencies) |
+
+## Notes
+
+Detection priority order: **bun → pnpm → yarn → npm**. If no lockfile is found the script falls back to `npm`. To override for a specific project, set `export PKG_MANAGER=pnpm` in a `.envrc` (direnv) file and update `pm()` to check that variable first.
