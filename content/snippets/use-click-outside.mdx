@@ -1,0 +1,104 @@
+---
+title: useClickOutside Hook
+description: Fires a callback when a click or touch event occurs outside a referenced element. Commonly used to close dropdowns and modals.
+category: snippets
+language: typescript
+tags: [react, hooks, dom, events]
+---
+
+Attaches `mousedown` and `touchstart` listeners to the document and calls the provided handler whenever the event target falls outside the referenced element. Attach the returned ref to any container and pass a close callback to get reliable outside-click detection with automatic cleanup.
+
+## Usage
+
+```typescript
+import { useEffect, useRef, RefObject } from 'react'
+
+function useClickOutside<T extends HTMLElement>(
+  handler: (event: MouseEvent | TouchEvent) => void
+): RefObject<T> {
+  const ref = useRef<T>(null)
+
+  useEffect(() => {
+    function listener(event: MouseEvent | TouchEvent) {
+      const el = ref.current
+      if (!el || el.contains(event.target as Node)) return
+      handler(event)
+    }
+
+    document.addEventListener('mousedown', listener)
+    document.addEventListener('touchstart', listener)
+
+    return () => {
+      document.removeEventListener('mousedown', listener)
+      document.removeEventListener('touchstart', listener)
+    }
+  }, [handler])
+
+  return ref
+}
+
+export default useClickOutside
+```
+
+## Examples
+
+```typescript
+import { useState, useCallback } from 'react'
+import useClickOutside from './useClickOutside'
+
+function Dropdown() {
+  const [open, setOpen] = useState(false)
+
+  const close = useCallback(() => setOpen(false), [])
+  const ref = useClickOutside<HTMLDivElement>(close)
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button onClick={() => setOpen((v) => !v)}>Toggle menu</button>
+      {open && (
+        <ul style={{ position: 'absolute', top: '100%', left: 0 }}>
+          <li>Option A</li>
+          <li>Option B</li>
+          <li>Option C</li>
+        </ul>
+      )}
+    </div>
+  )
+}
+```
+
+```typescript
+// Close a modal when clicking the backdrop (outside the dialog panel)
+function Modal({ onClose }: { onClose: () => void }) {
+  const panelRef = useClickOutside<HTMLDivElement>(onClose)
+
+  return (
+    <div className="modal-backdrop">
+      <div ref={panelRef} className="modal-panel" role="dialog" aria-modal>
+        <h2>Dialog title</h2>
+        <p>Dialog content goes here.</p>
+        <button onClick={onClose}>Close</button>
+      </div>
+    </div>
+  )
+}
+```
+
+## Options
+
+| Parameter | Type                                         | Description                                                  |
+|-----------|----------------------------------------------|--------------------------------------------------------------|
+| `handler` | `(event: MouseEvent \| TouchEvent) => void`  | Callback invoked when a click/touch outside the element occurs. |
+
+Returns a `RefObject<T>` that must be attached to the container element via its `ref` prop.
+
+## How it works
+
+The effect adds `mousedown` and `touchstart` listeners to `document` (capturing phase is not required because both events bubble). On each event it checks whether `ref.current` exists and whether the event's `target` is contained within it via `Node.contains`. If the target is outside, `handler` is called. The cleanup function removes both listeners when the component unmounts or when `handler` changes.
+
+## Notes
+
+- Wrap the handler in `useCallback` (as shown) so the effect does not re-subscribe on every render.
+- The hook listens on `mousedown`/`touchstart` rather than `click` to fire before focus changes, which prevents flicker when the outside element gains focus.
+- For portals (e.g. a dropdown rendered into `document.body`), the `contains` check still works correctly because portals remain in the React tree even though they are outside the DOM subtree of the ref element.
+- If you need to exclude additional elements (e.g. a trigger button rendered outside the ref), check `event.target` against those elements inside the handler before calling your close logic.
