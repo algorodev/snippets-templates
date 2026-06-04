@@ -1,0 +1,111 @@
+---
+title: JSON Prettify & Lint
+description: Pretty-print, validate, or compact JSON from a file or stdin using jq, with colorized output and an exit code for use in scripts.
+category: cli
+language: bash
+tags: [misc, json, formatting, utilities]
+---
+
+Shell functions and aliases built on `jq` that pretty-print, validate, and compact JSON — from a file or piped from stdin. All commands return a non-zero exit code on invalid JSON, making them safe to use inside scripts and CI pipelines.
+
+## Usage
+
+```bash
+# ── Paste into ~/.bashrc or ~/.zshrc ─────────────────────────────────────────
+
+# Pretty-print JSON (file or stdin)
+# Usage: jpp [file]
+function jpp() {
+  if [[ -n "$1" ]]; then
+    jq '.' "$1"
+  else
+    jq '.'
+  fi
+}
+
+# Validate JSON — prints "valid" or the parse error, exits non-zero on failure
+# Usage: jval [file]
+function jval() {
+  local input
+  if [[ -n "$1" ]]; then
+    input=$(cat "$1")
+  else
+    input=$(cat)
+  fi
+
+  if echo "$input" | jq '.' &>/dev/null; then
+    echo "valid"
+  else
+    echo "$input" | jq '.' 2>&1
+    return 1
+  fi
+}
+
+# Compact (minify) JSON — strips all whitespace
+# Usage: jmin [file]
+function jmin() {
+  if [[ -n "$1" ]]; then
+    jq -c '.' "$1"
+  else
+    jq -c '.'
+  fi
+}
+
+# Sort object keys and pretty-print — useful for diffing JSON files
+# Usage: jsort [file]
+function jsort() {
+  if [[ -n "$1" ]]; then
+    jq -S '.' "$1"
+  else
+    jq -S '.'
+  fi
+}
+
+# Pretty-print and copy to clipboard (macOS/Linux)
+# Usage: jppc [file]
+function jppc() {
+  if [[ "$(uname)" == "Darwin" ]]; then
+    jpp "$@" | tee /dev/tty | pbcopy
+  else
+    jpp "$@" | tee /dev/tty | xclip -selection clipboard
+  fi
+}
+```
+
+## Examples
+
+```bash
+# Pretty-print a file
+jpp data.json
+
+# Validate a file in a script (exits 1 on bad JSON)
+jval response.json && echo "Proceeding..." || exit 1
+
+# Pipe from curl
+curl -s https://api.example.com/status | jpp
+
+# Minify for embedding in a shell variable
+PAYLOAD=$(jmin payload.json)
+
+# Sort keys before diffing two JSON files
+diff <(jsort a.json) <(jsort b.json)
+
+# Pretty-print and put on clipboard
+curl -s https://api.example.com/users | jppc
+```
+
+## Options
+
+| Function | Flag | Effect |
+|----------|------|--------|
+| `jpp`    | _(none)_ | Colorized, indented output |
+| `jmin`   | `-c` | Compact single-line output |
+| `jsort`  | `-S` | Sort object keys alphabetically |
+| `jval`   | _(none)_ | Silent on success; prints error on failure |
+
+## Notes
+
+- `jq` must be installed: `brew install jq` (macOS) or `apt install jq` / `dnf install jq` (Linux).
+- All functions accept a filename **or** read from stdin — you can always pipe into them.
+- `jval` exits `0` on valid JSON and `1` on invalid JSON, which integrates cleanly with `&&` / `||` and `set -e` scripts.
+- For large files (tens of MB) consider [`gron`](https://github.com/tomnomnom/gron) or [`jaq`](https://github.com/01mf02/jaq) as faster alternatives.
