@@ -1,0 +1,94 @@
+---
+title: TSConfig for Node.js
+description: TypeScript configuration optimized for Node.js applications, targeting the latest Node.js LTS module system. Enables NodeNext module resolution for proper ESM and CJS interop.
+category: configs
+language: json
+tags: [typescript, tsconfig, nodejs]
+---
+
+A TypeScript configuration built for Node.js applications that need correct ESM/CJS interop. Uses `NodeNext` module resolution so TypeScript enforces the same import rules Node.js itself applies at runtime.
+
+## Usage
+
+```json
+{
+  "compilerOptions": {
+    /* Language target — matches Node.js 20 LTS built-ins */
+    "target": "ES2022",
+    "lib": ["ES2022"],
+
+    /* Module — NodeNext enforces file extensions and package.json "exports" */
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+
+    /* Output */
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    /* Misc */
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+## How it works
+
+`"module": "NodeNext"` makes TypeScript mirror Node.js's own module loader:
+
+- **ESM files** (`"type": "module"` in `package.json`) must use explicit `.js` extensions in imports, even when the source file is `.ts`.
+- **CJS files** resolve without extensions as usual.
+- `package.json` `"exports"` field is respected, so subpath imports work correctly.
+
+This means TypeScript will catch import errors that would only appear at runtime in looser configurations.
+
+## Package.json setup
+
+For a pure ESM package add `"type": "module"` to your `package.json`:
+
+```json
+{
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  }
+}
+```
+
+For a dual CJS/ESM package, use two tsconfigs (`tsconfig.esm.json` / `tsconfig.cjs.json`) that each set `"module"` to the appropriate value and output to separate directories.
+
+## Notes
+
+Always import with the `.js` extension when using `NodeNext`, even though the source file is `.ts`:
+
+```typescript
+// correct — TypeScript resolves utils.ts but emits the .js extension
+import { helper } from "./utils.js";
+
+// wrong — will fail at runtime in ESM mode
+import { helper } from "./utils";
+```
+
+Install `@types/node` to get type definitions for Node.js built-in modules:
+
+```bash
+npm install -D @types/node
+```
