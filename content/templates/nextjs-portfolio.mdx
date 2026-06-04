@@ -1,0 +1,322 @@
+---
+title: Next.js Developer Portfolio
+description: A minimal, responsive portfolio site built with Next.js and Tailwind CSS, featuring a project showcase, blog, and contact form. Fully static and deployable to Vercel in one click.
+category: templates
+language: TypeScript
+tags: [next.js, portfolio, tailwind, static, app-router]
+---
+
+A lightning-fast, fully static developer portfolio built on Next.js App Router with Tailwind CSS — no database, no auth, just MDX-powered blog posts, a filterable project grid, and a contact form wired to a serverless email endpoint.
+
+## Usage
+
+```typescript
+// app/page.tsx  (homepage)
+import Link from 'next/link'
+import { ArrowRight } from 'lucide-react'
+import { allPosts } from 'contentlayer/generated'
+import { ProjectCard } from '@/components/project-card'
+import { projects } from '@/data/projects'
+
+export default function Home() {
+  const recentPosts = allPosts
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 3)
+
+  return (
+    <main className="mx-auto max-w-3xl px-4 py-20 space-y-24">
+      {/* Hero */}
+      <section>
+        <h1 className="text-4xl font-bold tracking-tight">
+          Hi, I'm <span className="text-blue-600">Alex</span>.
+        </h1>
+        <p className="mt-4 text-lg text-slate-600 dark:text-slate-400">
+          Full-stack engineer building fast, accessible web products.
+        </p>
+        <div className="mt-6 flex gap-4">
+          <Link
+            href="/projects"
+            className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            View projects <ArrowRight className="h-4 w-4" />
+          </Link>
+          <Link
+            href="/contact"
+            className="inline-flex items-center rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            Get in touch
+          </Link>
+        </div>
+      </section>
+
+      {/* Featured projects */}
+      <section>
+        <h2 className="text-xl font-semibold">Featured projects</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          {projects.filter((p) => p.featured).map((project) => (
+            <ProjectCard key={project.slug} project={project} />
+          ))}
+        </div>
+      </section>
+
+      {/* Recent posts */}
+      <section>
+        <h2 className="text-xl font-semibold">Recent writing</h2>
+        <ul className="mt-4 space-y-3">
+          {recentPosts.map((post) => (
+            <li key={post.slug}>
+              <Link href={`/blog/${post.slug}`} className="group flex justify-between items-baseline">
+                <span className="font-medium group-hover:text-blue-600">{post.title}</span>
+                <time className="text-sm text-slate-500" dateTime={post.date}>
+                  {new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(
+                    new Date(post.date),
+                  )}
+                </time>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <Link href="/blog" className="mt-4 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline">
+          All posts <ArrowRight className="h-3 w-3" />
+        </Link>
+      </section>
+    </main>
+  )
+}
+```
+
+```typescript
+// data/projects.ts
+export interface Project {
+  slug: string
+  title: string
+  description: string
+  url?: string
+  repo?: string
+  tags: string[]
+  featured: boolean
+}
+
+export const projects: Project[] = [
+  {
+    slug: 'my-saas',
+    title: 'My SaaS Product',
+    description: 'A subscription-based tool that solves X. Built with Next.js, Stripe, and Postgres.',
+    url: 'https://myapp.example.com',
+    repo: 'https://github.com/you/my-saas',
+    tags: ['Next.js', 'TypeScript', 'Stripe'],
+    featured: true,
+  },
+  {
+    slug: 'open-source-lib',
+    title: 'Open Source Library',
+    description: 'A zero-dependency utility library with 500+ GitHub stars.',
+    repo: 'https://github.com/you/open-source-lib',
+    tags: ['TypeScript', 'npm'],
+    featured: true,
+  },
+]
+```
+
+```typescript
+// app/blog/[slug]/page.tsx
+import { notFound } from 'next/navigation'
+import { allPosts } from 'contentlayer/generated'
+import { useMDXComponent } from 'next-contentlayer2/hooks'
+
+interface PageProps {
+  params: Promise<{ slug: string }>
+}
+
+export async function generateStaticParams() {
+  return allPosts.map((post) => ({ slug: post.slug }))
+}
+
+export async function generateMetadata({ params }: PageProps) {
+  const { slug } = await params
+  const post = allPosts.find((p) => p.slug === slug)
+  if (!post) return {}
+  return { title: post.title, description: post.description }
+}
+
+export default async function BlogPost({ params }: PageProps) {
+  const { slug } = await params
+  const post = allPosts.find((p) => p.slug === slug)
+  if (!post) notFound()
+
+  const MDXContent = useMDXComponent(post.body.code)
+
+  return (
+    <article className="mx-auto max-w-2xl px-4 py-16 prose prose-slate dark:prose-invert">
+      <p className="text-sm text-slate-500 not-prose mb-2">
+        <time dateTime={post.date}>
+          {new Intl.DateTimeFormat('en-US', { dateStyle: 'long' }).format(new Date(post.date))}
+        </time>
+      </p>
+      <h1>{post.title}</h1>
+      <MDXContent />
+    </article>
+  )
+}
+```
+
+```typescript
+// app/contact/route.ts  (serverless email handler)
+import { NextRequest, NextResponse } from 'next/server'
+import { Resend } from 'resend'
+
+const resend = new Resend(process.env.RESEND_API_KEY)
+
+export async function POST(req: NextRequest) {
+  const { name, email, message } = await req.json()
+
+  if (!name || !email || !message) {
+    return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
+  }
+
+  await resend.emails.send({
+    from: 'Portfolio Contact <contact@yourdomain.com>',
+    to: 'you@yourdomain.com',
+    replyTo: email,
+    subject: `New message from ${name}`,
+    text: `From: ${name} <${email}>\n\n${message}`,
+  })
+
+  return NextResponse.json({ ok: true })
+}
+```
+
+```typescript
+// app/contact/page.tsx
+'use client'
+
+import { useState } from 'react'
+
+export default function ContactPage() {
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setStatus('sending')
+    const data = Object.fromEntries(new FormData(e.currentTarget))
+
+    const res = await fetch('/contact', { method: 'POST', body: JSON.stringify(data),
+      headers: { 'Content-Type': 'application/json' } })
+
+    setStatus(res.ok ? 'sent' : 'error')
+  }
+
+  return (
+    <main className="mx-auto max-w-lg px-4 py-20">
+      <h1 className="text-2xl font-bold mb-6">Get in touch</h1>
+      {status === 'sent' ? (
+        <p className="text-green-600">Message sent! I'll reply soon.</p>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input required name="name" placeholder="Your name"
+            className="w-full rounded-lg border px-4 py-2 text-sm" />
+          <input required name="email" type="email" placeholder="your@email.com"
+            className="w-full rounded-lg border px-4 py-2 text-sm" />
+          <textarea required name="message" rows={5} placeholder="Your message"
+            className="w-full rounded-lg border px-4 py-2 text-sm resize-none" />
+          <button type="submit" disabled={status === 'sending'}
+            className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+            {status === 'sending' ? 'Sending…' : 'Send message'}
+          </button>
+          {status === 'error' && (
+            <p className="text-red-600 text-sm">Something went wrong. Please try again.</p>
+          )}
+        </form>
+      )}
+    </main>
+  )
+}
+```
+
+## Options
+
+| Variable | Description |
+|----------|-------------|
+| `RESEND_API_KEY` | Resend API key for the contact form email |
+
+## Notes
+
+All pages except `/contact` (POST handler) are fully static. Run `next build` and `next export` (or deploy to Vercel) and every page renders at build time — zero cold starts. The contact form's POST route remains a serverless function on Vercel. Swap Resend for any transactional email provider (Postmark, SendGrid, Nodemailer) by changing only `app/contact/route.ts`.
+
+## README
+
+### What this includes
+- Next.js App Router with `output: 'export'` for fully static HTML output
+- MDX blog powered by Contentlayer 2 (`contentlayer2`) with type-safe frontmatter
+- `generateStaticParams` for all blog post pages
+- Filterable project grid sourced from a typed `data/projects.ts` file
+- Contact form with client-side validation wired to a Resend serverless email endpoint
+- Tailwind CSS with `@tailwindcss/typography` for blog post prose
+- Dark mode via `next-themes`
+- Lucide React for icons
+
+### Prerequisites
+- Node.js 20.9+
+- A [Resend account](https://resend.com) (free tier: 3,000 emails/month) for the contact form
+
+### Create this template
+
+```bash
+npx create-next-app@latest my-portfolio --typescript --tailwind --eslint --app --yes
+cd my-portfolio
+npm install contentlayer2 next-contentlayer2 @mdx-js/loader @mdx-js/react @types/mdx
+npm install remark-gfm rehype-highlight
+npm install @tailwindcss/typography next-themes lucide-react resend
+```
+
+Configure Contentlayer and add the blog post document type:
+
+```bash
+# Add contentlayer.config.ts defining a Post document type
+# Add withContentlayer wrapper to next.config.mjs
+# Enable @tailwindcss/typography plugin in tailwind.config.ts
+```
+
+```bash
+mkdir -p content/blog
+# Add your first post: content/blog/hello-world.mdx
+npm run dev
+```
+
+### Project structure
+
+```
+my-portfolio/
+├── app/
+│   ├── layout.tsx                    # Root layout (nav, theme toggle, footer)
+│   ├── page.tsx                      # Homepage (hero, featured projects, recent posts)
+│   ├── projects/
+│   │   └── page.tsx                  # Full project grid with tag filter
+│   ├── blog/
+│   │   ├── page.tsx                  # Blog post list
+│   │   └── [slug]/
+│   │       └── page.tsx              # Individual post
+│   └── contact/
+│       ├── page.tsx                  # Contact form UI (Client Component)
+│       └── route.ts                  # POST handler → Resend
+├── components/
+│   ├── project-card.tsx              # Project card with links and tags
+│   ├── nav.tsx                       # Top navigation with theme toggle
+│   └── footer.tsx                    # Footer with social links
+├── content/
+│   └── blog/
+│       └── hello-world.mdx           # Your first post
+├── data/
+│   └── projects.ts                   # Typed project list
+├── contentlayer.config.ts            # Blog post document type
+├── next.config.mjs                   # withContentlayer wrapper
+└── tailwind.config.ts                # typography plugin enabled
+```
+
+### First things to customize
+- `app/page.tsx` — update your name, headline, and bio text
+- `data/projects.ts` — replace the sample projects with your actual work
+- `content/blog/` — delete the sample post and add your own MDX writing
+- `app/contact/route.ts` — replace `to:` and `from:` with your own email addresses
+- `app/layout.tsx` — update the `<title>`, `description`, and social links in the footer
+- `app/globals.css` — adjust your Tailwind color theme and font choices
