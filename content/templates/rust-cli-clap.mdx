@@ -1,0 +1,289 @@
+---
+title: Rust CLI with Clap
+description: A Rust command-line tool template using Clap v4 with derive macros for argument parsing, env variable support, and colored output via the console crate.
+category: templates
+language: Rust
+tags: [rust, cli, clap, terminal, cargo]
+---
+
+A minimal but complete Rust CLI template using Clap v4's derive API — structs and enums become your argument parser, environment variable fallbacks come for free, and the `console` crate handles cross-platform colored output without unsafe terminal gymnastics.
+
+## Usage
+
+```bash
+# Build and run
+cargo build --release
+./target/release/mycli --help
+
+# Run directly with cargo
+cargo run -- greet --name Alice
+cargo run -- greet --name Bob --shout
+cargo run -- fetch --url https://jsonplaceholder.typicode.com/todos/1
+cargo run -- --verbose greet --name Charlie
+```
+
+## How it works
+
+```toml
+# Cargo.toml
+[package]
+name = "mycli"
+version = "0.1.0"
+edition = "2021"
+description = "A CLI tool built with Clap v4"
+license = "MIT"
+
+[[bin]]
+name = "mycli"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env", "color", "wrap_help"] }
+console = "0.15"
+anyhow = "1"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+```
+
+```rust
+// src/main.rs
+mod commands;
+
+use clap::{Parser, Subcommand};
+use commands::{fetch, greet};
+
+/// A CLI tool template built with Clap v4.
+#[derive(Parser)]
+#[command(
+    name = "mycli",
+    version,
+    about,
+    long_about = None,
+    propagate_version = true,
+)]
+struct Cli {
+    /// Enable verbose output
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Greet someone
+    Greet(greet::Args),
+    /// Fetch JSON from a URL
+    Fetch(fetch::Args),
+}
+
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Greet(args) => greet::run(args, cli.verbose),
+        Commands::Fetch(args) => fetch::run(args, cli.verbose),
+    }
+}
+```
+
+```rust
+// src/commands/mod.rs
+pub mod fetch;
+pub mod greet;
+```
+
+```rust
+// src/commands/greet.rs
+use clap::Args;
+use console::{style, Term};
+
+#[derive(Args)]
+pub struct Args {
+    /// Name to greet
+    #[arg(short, long, env = "GREET_NAME")]
+    pub name: String,
+
+    /// Shout the greeting in uppercase
+    #[arg(short, long, default_value_t = false)]
+    pub shout: bool,
+
+    /// Number of times to repeat the greeting
+    #[arg(short, long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=10))]
+    pub count: u8,
+}
+
+pub fn run(args: Args, verbose: bool) -> anyhow::Result<()> {
+    let term = Term::stdout();
+
+    if verbose {
+        term.write_line(&format!(
+            "{} Running greet command (name={}, shout={}, count={})",
+            style("[debug]").dim(),
+            args.name,
+            args.shout,
+            args.count,
+        ))?;
+    }
+
+    let msg = format!("Hello, {}!", args.name);
+    let output = if args.shout { msg.to_uppercase() } else { msg };
+
+    for _ in 0..args.count {
+        term.write_line(&format!("{}", style(&output).green().bold()))?;
+    }
+
+    Ok(())
+}
+```
+
+```rust
+// src/commands/fetch.rs
+use clap::Args;
+use console::{style, Term};
+use std::io::Write;
+
+#[derive(Args)]
+pub struct Args {
+    /// URL to fetch JSON from
+    #[arg(short, long, env = "FETCH_URL")]
+    pub url: String,
+
+    /// Pretty-print the JSON output
+    #[arg(short, long, default_value_t = true)]
+    pub pretty: bool,
+}
+
+pub fn run(args: Args, verbose: bool) -> anyhow::Result<()> {
+    let term = Term::stdout();
+    let mut stderr = std::io::stderr();
+
+    if verbose {
+        writeln!(stderr, "{} GET {}", style("[debug]").dim(), args.url)?;
+    }
+
+    // Note: for real projects, add `reqwest` with the `blocking` feature.
+    // This example uses std to keep dependencies minimal.
+    let response = ureq::get(&args.url)
+        .call()
+        .map_err(|e| anyhow::anyhow!("Request failed: {e}"))?;
+
+    let body: serde_json::Value = response
+        .into_json()
+        .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {e}"))?;
+
+    let output = if args.pretty {
+        serde_json::to_string_pretty(&body)?
+    } else {
+        serde_json::to_string(&body)?
+    };
+
+    term.write_line(&output)?;
+    Ok(())
+}
+```
+
+> Note: the `fetch` command uses `ureq` and `serde_json`. To enable it, add these to `Cargo.toml`:
+> ```toml
+> ureq = "2"
+> serde_json = "1"
+> ```
+> Or replace with `reqwest` (blocking) for async support.
+
+## Options
+
+| Flag | Command | Description |
+|------|---------|-------------|
+| `--verbose / -v` | global | Enable debug output (inherits via `global = true`) |
+| `--name / -n` | `greet` | Name to greet; falls back to `$GREET_NAME` env var |
+| `--shout / -s` | `greet` | Uppercase the output |
+| `--count / -c` | `greet` | Repeat count, 1–10 |
+| `--url / -u` | `fetch` | URL to fetch; falls back to `$FETCH_URL` env var |
+| `--pretty / -p` | `fetch` | Pretty-print JSON (default: true) |
+
+## Examples
+
+```bash
+# Use an env var instead of a flag
+GREET_NAME=Eve cargo run -- greet
+
+# Repeat greeting 3 times, shouting
+cargo run -- greet --name Dave --shout --count 3
+
+# Global verbose flag before the subcommand
+cargo run -- --verbose fetch --url https://httpbin.org/json
+
+# Build a release binary and install it
+cargo install --path .
+mycli --version
+```
+
+## README
+
+### What this includes
+
+- **Clap v4 derive API** — structs and enums annotated with `#[derive(Parser)]` generate the full CLI interface
+- **Env variable fallback** — `#[arg(env = "VAR")]` makes every option settable via environment variables, useful for CI and containers
+- **Value range validation** — `clap::value_parser!(u8).range(1..=10)` rejects bad input before your code runs
+- **console crate** — cross-platform ANSI colors, bold/dim text, and terminal utilities without unsafe code
+- **anyhow** — ergonomic error propagation with `?` and context-rich messages
+- **Release profile tuning** — `strip`, `lto`, and `codegen-units = 1` produce small, fast binaries
+- **Global flags** — `propagate_version = true` and `global = true` make `--verbose` and `--version` work from any subcommand position
+
+### Prerequisites
+
+- [Rust](https://rustup.rs) (stable, 1.70+) — install via `rustup`
+
+### Create this template
+
+```bash
+# 1. Create a new binary crate
+cargo new mycli && cd mycli
+
+# 2. Create the commands module directory
+mkdir src/commands
+
+# 3. Create command source files
+touch src/commands/mod.rs src/commands/greet.rs src/commands/fetch.rs
+
+# 4. Replace Cargo.toml with the content above (add clap, console, anyhow)
+
+# 5. Replace src/main.rs with the content above
+
+# 6. Build and verify
+cargo build
+
+# 7. Run the help output to confirm everything is wired up
+cargo run -- --help
+cargo run -- greet --help
+
+# 8. Build an optimised release binary
+cargo build --release
+```
+
+### Project structure
+
+```
+mycli/
+├── src/
+│   ├── main.rs                   # Cli struct, Commands enum, main()
+│   └── commands/
+│       ├── mod.rs                # Re-exports greet and fetch modules
+│       ├── greet.rs              # Greet subcommand + Args struct
+│       └── fetch.rs              # Fetch subcommand + Args struct
+├── Cargo.toml                    # Dependencies and release profile
+└── Cargo.lock
+```
+
+### First things to customize
+
+- `Cargo.toml` `[package]` — update `name`, `description`, and `license`
+- `src/main.rs` `#[command(name = ...)]` — change to your binary name
+- `src/main.rs` `Commands` enum — add or remove variants to match your subcommands
+- `src/commands/` — add a new `.rs` file per subcommand; declare it in `mod.rs` and add a variant to `Commands`
+- `[profile.release]` — remove `opt-level = "z"` if binary size is not a priority and you prefer faster compile times
