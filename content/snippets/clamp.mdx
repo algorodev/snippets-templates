@@ -1,0 +1,50 @@
+---
+title: Clamp Number
+description: Constrains a number to lie within a minimum and maximum range, returning the nearest boundary value if out of range. Handles NaN and Infinity safely.
+category: snippets
+language: typescript
+tags: [math, utils, number]
+---
+
+Returns `value` if it falls within `[min, max]`, otherwise returns the closest boundary. Propagates `NaN` so callers can detect bad input.
+
+## Usage
+
+```typescript
+function clamp(value: number, min: number, max: number): number {
+  if (Number.isNaN(value)) return NaN
+  return Math.min(Math.max(value, min), max)
+}
+
+export default clamp
+```
+
+## Examples
+
+```typescript
+clamp(5, 0, 10)    // 5  — within range, returned as-is
+clamp(-3, 0, 10)   // 0  — below min, clamped to min
+clamp(15, 0, 10)   // 10 — above max, clamped to max
+clamp(0, 0, 0)     // 0  — min === max is valid
+clamp(NaN, 0, 10)  // NaN — propagated for caller to handle
+clamp(Infinity, 0, 100)   // 100
+clamp(-Infinity, 0, 100)  // 0
+```
+
+```typescript
+// Clamp a scroll offset to the scrollable range
+const scrollY = clamp(targetY, 0, document.body.scrollHeight - window.innerHeight)
+window.scrollTo(0, scrollY)
+```
+
+```typescript
+// Keep a volume slider between 0 and 1
+function setVolume(raw: number) {
+  audio.volume = clamp(raw, 0, 1)
+}
+```
+
+## Notes
+
+- `min` should be less than or equal to `max`. If `min > max`, `Math.max` wins and the result will equal `min`, which may be surprising — validate inputs in performance-critical paths if needed.
+- For integer clamping, combine with `Math.round` or bitwise truncation before calling `clamp`.
