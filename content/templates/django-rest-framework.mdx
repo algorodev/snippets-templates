@@ -1,0 +1,392 @@
+---
+title: Django REST Framework API
+description: A full-featured Django API using Django REST Framework with token authentication, serializers, viewsets, and filterable endpoints. Includes Django Channels for WebSocket support.
+category: templates
+language: Python
+tags: [python, django, rest-api, drf, postgresql]
+---
+
+A production-grade Django API project combining Django REST Framework for REST endpoints, token-based authentication, `django-filter` for query-param filtering, and Django Channels for real-time WebSocket connections — all backed by PostgreSQL.
+
+## Usage
+
+```bash
+# Development server
+python manage.py runserver
+
+# Apply migrations
+python manage.py migrate
+
+# Create a superuser
+python manage.py createsuperuser
+
+# Open the browsable API
+open http://localhost:8000/api/
+```
+
+## How it works
+
+```python
+# config/settings.py  (key additions — not a full settings file)
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    # Third-party
+    "rest_framework",
+    "rest_framework.authtoken",
+    "django_filters",
+    "channels",
+    # Local
+    "apps.users",
+    "apps.items",
+]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+    ],
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
+}
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [("127.0.0.1", 6379)]},
+    }
+}
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "appdb",
+        "USER": "user",
+        "PASSWORD": "password",
+        "HOST": "localhost",
+        "PORT": "5432",
+    }
+}
+```
+
+```python
+# apps/items/models.py
+from django.contrib.auth import get_user_model
+from django.db import models
+
+User = get_user_model()
+
+
+class Item(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        PUBLISHED = "published", "Published"
+        ARCHIVED = "archived", "Archived"
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="items")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return self.title
+```
+
+```python
+# apps/items/serializers.py
+from rest_framework import serializers
+
+from .models import Item
+
+
+class ItemSerializer(serializers.ModelSerializer):
+    owner = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = Item
+        fields = ["id", "title", "description", "status", "owner", "created_at", "updated_at"]
+        read_only_fields = ["id", "owner", "created_at", "updated_at"]
+
+    def create(self, validated_data: dict) -> Item:
+        validated_data["owner"] = self.context["request"].user
+        return super().create(validated_data)
+```
+
+```python
+# apps/items/filters.py
+import django_filters
+
+from .models import Item
+
+
+class ItemFilter(django_filters.FilterSet):
+    status = django_filters.ChoiceFilter(choices=Item.Status.choices)
+    created_after = django_filters.DateTimeFilter(field_name="created_at", lookup_expr="gte")
+    created_before = django_filters.DateTimeFilter(field_name="created_at", lookup_expr="lte")
+
+    class Meta:
+        model = Item
+        fields = ["status", "owner"]
+```
+
+```python
+# apps/items/views.py
+from rest_framework import permissions, viewsets
+from rest_framework.decorators import action
+from rest_framework.request import Request
+from rest_framework.response import Response
+
+from .filters import ItemFilter
+from .models import Item
+from .serializers import ItemSerializer
+
+
+class IsOwnerOrReadOnly(permissions.BasePermission):
+    def has_object_permission(self, request: Request, view, obj: Item) -> bool:
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return obj.owner == request.user
+
+
+class ItemViewSet(viewsets.ModelViewSet):
+    queryset = Item.objects.select_related("owner").all()
+    serializer_class = ItemSerializer
+    filterset_class = ItemFilter
+    search_fields = ["title", "description"]
+    ordering_fields = ["created_at", "title"]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly]
+
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    def mine(self, request: Request) -> Response:
+        qs = self.get_queryset().filter(owner=request.user)
+        qs = self.filter_queryset(qs)
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(self.get_serializer(page, many=True).data)
+        return Response(self.get_serializer(qs, many=True).data)
+```
+
+```python
+# apps/users/views.py
+from django.contrib.auth import authenticate, get_user_model
+from rest_framework import status
+from rest_framework.authtoken.models import Token
+from rest_framework.permissions import AllowAny
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+User = get_user_model()
+
+
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request: Request) -> Response:
+        username = request.data.get("username")
+        password = request.data.get("password")
+        if not username or not password:
+            return Response({"error": "username and password required"}, status=400)
+        if User.objects.filter(username=username).exists():
+            return Response({"error": "Username taken"}, status=400)
+        user = User.objects.create_user(username=username, password=password)
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({"token": token.key}, status=status.HTTP_201_CREATED)
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request: Request) -> Response:
+        user = authenticate(username=request.data.get("username"), password=request.data.get("password"))
+        if not user:
+            return Response({"error": "Invalid credentials"}, status=401)
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({"token": token.key})
+```
+
+```python
+# config/urls.py
+from django.contrib import admin
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from apps.items.views import ItemViewSet
+from apps.users.views import LoginView, RegisterView
+
+router = DefaultRouter()
+router.register("items", ItemViewSet, basename="item")
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("api/auth/register/", RegisterView.as_view()),
+    path("api/auth/login/", LoginView.as_view()),
+    path("api/", include(router.urls)),
+    path("api/", include("apps.ws.urls")),  # WebSocket HTTP endpoints (if any)
+]
+```
+
+## WebSocket consumer
+
+```python
+# apps/ws/consumers.py
+import json
+
+from channels.generic.websocket import AsyncWebsocketConsumer
+
+
+class NotificationConsumer(AsyncWebsocketConsumer):
+    async def connect(self) -> None:
+        user = self.scope["user"]
+        if not user.is_authenticated:
+            await self.close()
+            return
+        self.group_name = f"user_{user.pk}"
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, code: int) -> None:
+        await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    # Called by group_send from elsewhere in the app
+    async def send_notification(self, event: dict) -> None:
+        await self.send(text_data=json.dumps(event["message"]))
+```
+
+```python
+# config/asgi.py
+import os
+
+from channels.auth import AuthMiddlewareStack
+from channels.routing import ProtocolTypeRouter, URLRouter
+from django.core.asgi import get_asgi_application
+
+from apps.ws.routing import websocket_urlpatterns
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+
+application = ProtocolTypeRouter(
+    {
+        "http": get_asgi_application(),
+        "websocket": AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+    }
+)
+```
+
+```python
+# apps/ws/routing.py
+from django.urls import re_path
+
+from . import consumers
+
+websocket_urlpatterns = [
+    re_path(r"^ws/notifications/$", consumers.NotificationConsumer.as_asgi()),
+]
+```
+
+## README
+
+### What this includes
+
+- **Django REST Framework** — serializers, viewsets, and the browsable API
+- **Token authentication** — `rest_framework.authtoken` with register and login endpoints
+- **Object-level permissions** — `IsOwnerOrReadOnly` custom permission class
+- **`django-filter`** — query-param filtering, search, and ordering on all list endpoints
+- **Pagination** — `PageNumberPagination` with configurable page size
+- **Custom `@action`** — `/api/items/mine/` example for extra endpoints on a viewset
+- **Django Channels** — async WebSocket consumers over Redis channel layer
+- **PostgreSQL** — configured as the default database backend
+
+### Prerequisites
+
+- Python 3.11+
+- PostgreSQL running locally or remotely
+- Redis (required by Django Channels `channels_redis` layer)
+- pip / pip-tools / uv
+
+### Create this template
+
+```bash
+# 1. Create and enter the project directory
+mkdir django-rest-api && cd django-rest-api
+
+# 2. Create and activate a virtual environment
+python -m venv .venv && source .venv/bin/activate
+
+# 3. Install dependencies
+pip install django djangorestframework django-filter \
+    channels channels-redis psycopg2-binary daphne
+
+# 4. Save requirements
+pip freeze > requirements.txt
+
+# 5. Start a new Django project
+django-admin startproject config .
+
+# 6. Create the apps
+python manage.py startapp items  # then move to apps/items
+python manage.py startapp users  # then move to apps/users
+python manage.py startapp ws     # then move to apps/ws
+
+# 7. Update config/settings.py (INSTALLED_APPS, REST_FRAMEWORK, DATABASES, CHANNEL_LAYERS)
+
+# 8. Apply migrations
+python manage.py migrate
+
+# 9. Create a superuser
+python manage.py createsuperuser
+
+# 10. Run the development server (via Daphne for ASGI + Channels)
+daphne config.asgi:application
+# or for HTTP-only development
+python manage.py runserver
+```
+
+### Project structure
+
+```
+django-rest-api/
+├── apps/
+│   ├── items/                # Items resource
+│   │   ├── filters.py        # django-filter FilterSet
+│   │   ├── models.py         # Item ORM model
+│   │   ├── serializers.py    # DRF serializer
+│   │   ├── views.py          # ModelViewSet + custom actions
+│   │   └── migrations/
+│   ├── users/                # Auth endpoints
+│   │   └── views.py          # RegisterView, LoginView
+│   └── ws/                   # WebSocket layer
+│       ├── consumers.py      # AsyncWebsocketConsumer
+│       └── routing.py        # WebSocket URL patterns
+├── config/
+│   ├── asgi.py               # ASGI entry point with Channels routing
+│   ├── settings.py
+│   ├── urls.py               # HTTP URL conf + DRF router
+│   └── wsgi.py
+├── manage.py
+└── requirements.txt
+```
+
+### First things to customize
+
+- `config/settings.py` — Set `DATABASES` credentials, `SECRET_KEY`, and `ALLOWED_HOSTS` for your environment
+- `apps/items/models.py` — Replace `Item` with your own domain models and run `makemigrations`
+- `apps/items/serializers.py` — Adjust exposed fields and add custom `validate_*` methods
+- `apps/ws/consumers.py` — Extend `NotificationConsumer` or add new consumers for your real-time events
+- `config/settings.py` `CHANNEL_LAYERS` — Point `hosts` at your Redis instance URL in production
