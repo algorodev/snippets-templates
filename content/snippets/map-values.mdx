@@ -1,0 +1,51 @@
+---
+title: Map Object Values
+description: Creates a new object by applying a transform function to each value of the source object, preserving its keys. The return type reflects the mapped value type.
+category: snippets
+language: typescript
+tags: [object, utils, transform, functional]
+---
+
+Applies a mapper function to every value in an object and returns a new object with the same keys, analogous to `Array.prototype.map` but for plain objects.
+
+## Usage
+
+```typescript
+function mapValues<T extends object, V>(
+  obj: T,
+  fn: (value: T[keyof T], key: keyof T) => V
+): Record<keyof T, V> {
+  return Object.fromEntries(
+    (Object.entries(obj) as [keyof T, T[keyof T]][]).map(([key, value]) => [
+      key,
+      fn(value, key),
+    ])
+  ) as Record<keyof T, V>
+}
+
+export default mapValues
+```
+
+## Examples
+
+```typescript
+const prices = { apple: 1.5, banana: 0.75, cherry: 3.0 }
+
+// Apply a discount
+const discounted = mapValues(prices, (price) => +(price * 0.9).toFixed(2))
+// { apple: 1.35, banana: 0.68, cherry: 2.7 }
+
+// Stringify all values
+const labels = mapValues(prices, (price) => `$${price.toFixed(2)}`)
+// { apple: '$1.50', banana: '$0.75', cherry: '$3.00' }
+
+// Use the key inside the mapper
+const tagged = mapValues(prices, (price, key) => `${String(key)}: ${price}`)
+// { apple: 'apple: 1.5', banana: 'banana: 0.75', cherry: 'cherry: 3' }
+```
+
+## Notes
+
+- Keys are preserved as-is; only values are transformed.
+- The mapper receives both the current value and its key, matching the signature of `Array.prototype.map`'s callback.
+- Only own enumerable string-keyed properties are iterated (`Object.entries` behaviour).
