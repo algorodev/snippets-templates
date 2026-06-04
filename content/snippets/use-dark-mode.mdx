@@ -1,0 +1,109 @@
+---
+title: useDarkMode Hook
+description: Persists a dark mode preference in localStorage and syncs with the prefers-color-scheme media query. Returns the current mode and a toggle function.
+category: snippets
+language: typescript
+tags: [react, hooks, dark-mode, theme]
+---
+
+Reads the user's OS-level colour preference on first render, then lets the user override it — persisting the choice in `localStorage` so it survives page reloads.
+
+## Usage
+
+```typescript
+import { useEffect, useState, useCallback } from 'react'
+
+type Theme = 'dark' | 'light'
+
+function getSystemTheme(): Theme {
+  if (typeof window === 'undefined') return 'light'
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function getInitialTheme(storageKey: string): Theme {
+  if (typeof window === 'undefined') return 'light'
+  const stored = localStorage.getItem(storageKey)
+  if (stored === 'dark' || stored === 'light') return stored
+  return getSystemTheme()
+}
+
+interface UseDarkModeReturn {
+  isDark: boolean
+  theme: Theme
+  toggle: () => void
+  setTheme: (theme: Theme) => void
+}
+
+function useDarkMode(storageKey = 'theme'): UseDarkModeReturn {
+  const [theme, setThemeState] = useState<Theme>(() => getInitialTheme(storageKey))
+
+  const setTheme = useCallback(
+    (next: Theme) => {
+      setThemeState(next)
+      localStorage.setItem(storageKey, next)
+    },
+    [storageKey],
+  )
+
+  const toggle = useCallback(() => {
+    setTheme(theme === 'dark' ? 'light' : 'dark')
+  }, [theme, setTheme])
+
+  // Apply the class to <html> and keep it in sync
+  useEffect(() => {
+    const root = document.documentElement
+    root.classList.toggle('dark', theme === 'dark')
+  }, [theme])
+
+  // Keep in sync when the OS preference changes and the user has no stored override
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+
+    const handleChange = (e: MediaQueryListEvent) => {
+      const stored = localStorage.getItem(storageKey)
+      if (!stored) {
+        setThemeState(e.matches ? 'dark' : 'light')
+      }
+    }
+
+    mq.addEventListener('change', handleChange)
+    return () => mq.removeEventListener('change', handleChange)
+  }, [storageKey])
+
+  return { isDark: theme === 'dark', theme, toggle, setTheme }
+}
+
+export { useDarkMode }
+export type { Theme, UseDarkModeReturn }
+```
+
+## Examples
+
+```typescript
+// Basic toggle button
+function ThemeToggle() {
+  const { isDark, toggle } = useDarkMode()
+
+  return (
+    <button onClick={toggle} aria-label="Toggle theme">
+      {isDark ? '☀️ Light' : '🌙 Dark'}
+    </button>
+  )
+}
+
+// Explicit setter — e.g. a three-way selector that falls back to system
+function ThemeSelector() {
+  const { theme, setTheme } = useDarkMode()
+
+  return (
+    <select value={theme} onChange={e => setTheme(e.target.value as 'dark' | 'light')}>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  )
+}
+```
+
+## How it works
+
+On mount, the hook checks `localStorage` for a stored preference. If none exists it falls back to the `prefers-color-scheme` media query. The resolved theme is applied as a `dark` class on `<html>`, which pairs naturally with Tailwind's `darkMode: 'class'` strategy or a plain CSS `[class~="dark"]` selector. A `MediaQueryList` listener updates the theme automatically when the OS setting changes, but only if the user has not set an explicit override — their choice always wins.
