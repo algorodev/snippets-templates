@@ -1,0 +1,56 @@
+---
+title: Typed flatMap
+description: Maps each element to an array and flattens the result one level deep, with stronger TypeScript inference than the native Array.prototype.flatMap. Useful for expanding one-to-many relationships.
+category: snippets
+language: typescript
+tags: [array, utils, functional]
+---
+
+Drop-in replacement for `Array.prototype.flatMap` with tighter return-type inference — the result is always `U[]` with no `undefined` leaking through.
+
+## Usage
+
+```typescript
+function flatMap<T, U>(array: T[], fn: (item: T, index: number, arr: T[]) => U[]): U[] {
+  const result: U[] = []
+  for (let i = 0; i < array.length; i++) {
+    const mapped = fn(array[i], i, array)
+    for (let j = 0; j < mapped.length; j++) {
+      result.push(mapped[j])
+    }
+  }
+  return result
+}
+
+export default flatMap
+```
+
+## Examples
+
+```typescript
+// Expand one-to-many relationships
+const orders = [
+  { id: 1, items: ['apple', 'banana'] },
+  { id: 2, items: ['cherry'] },
+  { id: 3, items: ['date', 'elderberry', 'fig'] },
+]
+
+const allItems = flatMap(orders, (order) => order.items)
+// => ['apple', 'banana', 'cherry', 'date', 'elderberry', 'fig']
+
+// Filter and expand in one pass
+const numbers = [1, 2, 3, 4, 5]
+const evenDoubled = flatMap(numbers, (n) => (n % 2 === 0 ? [n, n * 2] : []))
+// => [2, 4, 4, 8]
+
+// Parse comma-separated values from multiple strings
+const csv = ['a,b,c', 'd,e', 'f']
+const tokens = flatMap(csv, (row) => row.split(','))
+// => ['a', 'b', 'c', 'd', 'e', 'f']
+```
+
+## Notes
+
+- The callback must return an array (`U[]`). To skip an element, return `[]`.
+- Only flattens one level deep — nested arrays inside the returned arrays are left as-is.
+- Equivalent to `array.reduce<U[]>((acc, item, i) => acc.concat(fn(item, i, array)), [])` but avoids repeated `concat` allocations for large arrays.
