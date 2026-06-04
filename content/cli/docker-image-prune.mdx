@@ -1,0 +1,100 @@
+---
+title: Docker Image Prune
+description: Remove dangling and untagged images, with an interactive prompt before bulk-deleting images older than a given number of days.
+category: cli
+language: bash
+tags: [docker, images, cleanup, devops]
+---
+
+Build caches and stale images can quietly consume tens of gigabytes. This script removes dangling images immediately and gives you an interactive confirmation before wiping images that haven't been used in a specified number of days.
+
+## Usage
+
+```bash
+# Remove only dangling (untagged, unreferenced) images
+docker image prune -f
+
+# Remove all images older than 30 days (built-in filter)
+docker image prune -a --filter "until=720h" -f
+```
+
+## Shell function version
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+docker-image-prune() {
+  local days="${1:-30}"
+  local hours=$(( days * 24 ))
+
+  echo "=== Dangling images ==="
+  local dangling
+  dangling=$(docker images -f "dangling=true" -q)
+
+  if [ -n "$dangling" ]; then
+    echo "$dangling" | xargs docker rmi
+    echo "Removed dangling images."
+  else
+    echo "  None found."
+  fi
+
+  echo ""
+  echo "=== Images older than ${days} days ==="
+  local old_images
+  old_images=$(docker images --filter "before=$(docker images --format '{{.ID}}' | head -1)" \
+    --format "{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}" \
+    --filter "until=${hours}h" 2>/dev/null)
+
+  # Use docker image ls with until filter for accurate listing
+  old_images=$(docker image ls --filter "until=${hours}h" \
+    --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}")
+
+  if [ -z "$(docker image ls --filter "until=${hours}h" -q)" ]; then
+    echo "  No images older than ${days} days."
+    return 0
+  fi
+
+  echo "$old_images"
+  echo ""
+  printf "Delete all images older than %d days? [y/N] " "$days"
+  read -r reply
+
+  if [[ "$reply" =~ ^[Yy]$ ]]; then
+    docker image prune -a --filter "until=${hours}h" -f
+    echo "Done."
+  else
+    echo "Aborted."
+  fi
+}
+```
+
+## Options
+
+| Argument | Default | Meaning |
+|----------|---------|---------|
+| `$1` (days) | `30` | Age threshold in days; images created before this are candidates for deletion |
+
+## Examples
+
+```bash
+# Default: prompt before removing images older than 30 days
+docker-image-prune
+
+# Images older than 7 days
+docker-image-prune 7
+
+# Images older than 90 days
+docker-image-prune 90
+```
+
+## How it works
+
+1. **Dangling images** — images with no tag and no container referencing them — are removed immediately without prompting. They are never useful after a rebuild.
+2. **Aged images** are listed with their tag, ID, and creation age so you can review them before confirming deletion.
+3. The `until=<hours>h` filter passed to `docker image prune -a` is the safest way to scope bulk deletions; it uses Docker's own filtering rather than shell-side date arithmetic.
+
+## Notes
+
+- `docker image prune -a` removes all images not referenced by a running or stopped container. Combine with the `until` filter (as shown) to avoid accidentally deleting images you still need.
+- Images pulled but never run (e.g. base images cached for CI) will appear in the aged list. Keep them if your build pipeline depends on the local cache.
+- To reclaim space used by the build cache as well, run `docker builder prune -f` separately.
