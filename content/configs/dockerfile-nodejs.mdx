@@ -1,0 +1,112 @@
+---
+title: Dockerfile for Node.js
+description: A multi-stage Dockerfile for Node.js applications with a lean production image using node:alpine. Separates dependency installation from the build step for optimal layer caching.
+category: configs
+language: dockerfile
+tags: [docker, nodejs, container, multi-stage]
+---
+
+A three-stage Dockerfile that installs dependencies, builds the application, and assembles a minimal production image. Only the compiled output and production `node_modules` land in the final image, keeping it small and free of dev tooling.
+
+## Usage
+
+```dockerfile
+# ─── Stage 1: Install dependencies ──────────────────────────────────────────
+FROM node:22-alpine AS deps
+
+# Install libc compatibility for native addons (e.g. sharp, bcrypt)
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+# Copy lockfile + manifests first so this layer is only invalidated when
+# dependencies actually change, not on every source edit.
+COPY package.json package-lock.json ./
+
+RUN npm ci --ignore-scripts
+
+# ─── Stage 2: Build ──────────────────────────────────────────────────────────
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Bring in installed node_modules from the deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy the rest of the source
+COPY . .
+
+# Set build-time env vars if needed (e.g. for Next.js public vars)
+# ARG NEXT_PUBLIC_API_URL
+# ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+RUN npm run build
+
+# ─── Stage 3: Production image ───────────────────────────────────────────────
+FROM node:22-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Create a non-root user to run the process
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser  --system --uid 1001 appuser
+
+# Copy only what is needed to run the app
+COPY --from=builder --chown=appuser:nodejs /app/dist       ./dist
+COPY --from=builder --chown=appuser:nodejs /app/package.json ./package.json
+
+# Install only production dependencies in the final image
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+USER appuser
+
+EXPOSE 3000
+
+CMD ["node", "dist/index.js"]
+```
+
+## Options
+
+### Targeting a different Node.js version
+
+Replace `node:22-alpine` with any tag from [Docker Hub](https://hub.docker.com/_/node):
+
+```dockerfile
+FROM node:20-alpine AS deps   # LTS 20
+FROM node:lts-alpine  AS deps # Always latest LTS (less reproducible)
+```
+
+### Switching from `dist/index.js` to a framework entry point
+
+**Next.js standalone output:**
+
+```dockerfile
+COPY --from=builder --chown=appuser:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=appuser:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=appuser:nodejs /app/public         ./public
+
+CMD ["node", "server.js"]
+```
+
+**Express / Fastify (no build step):**
+
+Drop the builder stage entirely and copy source directly into the runner stage, then run `node src/index.js`.
+
+### Using `yarn` or `pnpm`
+
+Replace `npm ci` with the equivalent lockfile-aware install:
+
+```dockerfile
+# pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN pnpm install --frozen-lockfile
+```
+
+## Notes
+
+- `--ignore-scripts` in the `deps` stage prevents postinstall scripts from running during layer caching. Re-enable it in the `builder` stage if your build depends on them.
+- `npm cache clean --force` in the runner stage removes the npm cache directory, which is not needed at runtime and can add several MB to the image.
+- `libc6-compat` is only required for packages with native bindings compiled against glibc. Remove it if your dependency tree is pure JavaScript.
+- For secrets at build time (API keys, tokens), use Docker BuildKit secrets (`--mount=type=secret`) instead of `ARG` to avoid baking them into image layers.
