@@ -1,0 +1,100 @@
+---
+title: .dockerignore for Node.js
+description: A comprehensive .dockerignore file for Node.js projects that excludes node_modules, test files, and local config from the Docker build context. Reduces image build time and size.
+category: configs
+language: yaml
+tags: [docker, nodejs, dockerignore]
+---
+
+A thorough `.dockerignore` for Node.js projects. Keeping irrelevant files out of the build context speeds up `docker build` (less data sent to the daemon) and prevents secrets, test artifacts, and local tooling configs from accidentally ending up in the image.
+
+## Usage
+
+```
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules
+.pnp
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# ── Build output ──────────────────────────────────────────────────────────────
+dist
+build
+out
+.next
+.nuxt
+.svelte-kit
+.turbo
+.cache
+*.tsbuildinfo
+
+# ── Test & coverage ───────────────────────────────────────────────────────────
+coverage
+.nyc_output
+__tests__
+__mocks__
+*.test.ts
+*.test.tsx
+*.test.js
+*.test.jsx
+*.spec.ts
+*.spec.tsx
+*.spec.js
+*.spec.jsx
+vitest.config.*
+jest.config.*
+playwright.config.*
+
+# ── Linting & formatting ──────────────────────────────────────────────────────
+.eslintcache
+.stylelintcache
+.prettiercache
+
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example      # Allow the example file — it should contain no real secrets
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── Editor & OS ───────────────────────────────────────────────────────────────
+.idea
+.vscode
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── CI / tooling ──────────────────────────────────────────────────────────────
+.github
+.husky
+.lefthook
+.changeset
+.releaserc*
+renovate.json
+
+# ── Docs & misc ───────────────────────────────────────────────────────────────
+*.md
+docs
+LICENSE
+CHANGELOG*
+```
+
+## How it works
+
+Docker reads `.dockerignore` before evaluating any `COPY` or `ADD` instruction. Patterns follow the same syntax as `.gitignore`: a leading `!` negates a rule, so `.env.*` combined with `!.env.example` excludes all `.env` variants but keeps the example file.
+
+Because `node_modules` is excluded, the `COPY . .` in your Dockerfile won't bundle your host's `node_modules` into the image — the Dockerfile should run `npm ci` (or the equivalent) instead, installing a clean set of packages inside the container.
+
+## Notes
+
+- Adjust framework-specific output directories (`dist`, `.next`, `.nuxt`, etc.) to match your project.
+- If your repo has multiple packages (monorepo), you may need to keep certain `node_modules` or `dist` folders — use negation patterns (e.g. `!packages/shared/dist`) carefully.
+- Run `docker build --no-cache .` after updating `.dockerignore` to verify the context size reduction in the build output: `Sending build context to Docker daemon X MB`.
+- Check what's currently included with: `docker build --dry-run .` (Docker Engine 23+) or by inspecting the build context size in the regular build output.
