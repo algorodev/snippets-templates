@@ -1,0 +1,118 @@
+---
+title: useMediaQuery Hook
+description: Returns a boolean that reflects whether a CSS media query currently matches, updating reactively as the viewport changes. SSR-safe with a configurable default value.
+category: snippets
+language: typescript
+tags: [react, hooks, responsive, css]
+---
+
+Subscribes to a `MediaQueryList` and returns `true` whenever the query matches, keeping the value in sync as the viewport or environment changes. Accepts a `defaultValue` so server-rendered HTML stays stable until the client hydrates.
+
+## Usage
+
+```typescript
+import { useState, useEffect } from 'react'
+
+function useMediaQuery(query: string, defaultValue = false): boolean {
+  const [matches, setMatches] = useState<boolean>(() => {
+    // During SSR (or in environments without matchMedia) return the default
+    if (typeof window === 'undefined') return defaultValue
+    return window.matchMedia(query).matches
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const mediaQueryList = window.matchMedia(query)
+
+    // Sync immediately in case the query changed between render and effect
+    setMatches(mediaQueryList.matches)
+
+    const listener = (event: MediaQueryListEvent) => {
+      setMatches(event.matches)
+    }
+
+    // Use the modern addEventListener API with a fallback for older browsers
+    if (mediaQueryList.addEventListener) {
+      mediaQueryList.addEventListener('change', listener)
+    } else {
+      mediaQueryList.addListener(listener) // Safari < 14
+    }
+
+    return () => {
+      if (mediaQueryList.removeEventListener) {
+        mediaQueryList.removeEventListener('change', listener)
+      } else {
+        mediaQueryList.removeListener(listener)
+      }
+    }
+  }, [query])
+
+  return matches
+}
+
+export default useMediaQuery
+```
+
+## Examples
+
+```typescript
+import useMediaQuery from './useMediaQuery'
+
+function ResponsiveNav() {
+  const isMobile = useMediaQuery('(max-width: 767px)')
+  const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+
+  return (
+    <nav>
+      {isMobile ? (
+        <HamburgerMenu animated={!prefersReducedMotion} />
+      ) : (
+        <DesktopNav />
+      )}
+    </nav>
+  )
+}
+```
+
+```typescript
+// Convenience wrappers for common breakpoints
+function useIsMobile()  { return useMediaQuery('(max-width: 767px)') }
+function useIsTablet()  { return useMediaQuery('(min-width: 768px) and (max-width: 1023px)') }
+function useIsDesktop() { return useMediaQuery('(min-width: 1024px)') }
+function useIsDark()    { return useMediaQuery('(prefers-color-scheme: dark)') }
+```
+
+```typescript
+// Pass a server-side default to avoid hydration mismatches
+// when you know the initial render should assume a certain state
+function Layout({ children }: { children: React.ReactNode }) {
+  // Default to false (mobile-first) during SSR; corrects itself after hydration
+  const isWide = useMediaQuery('(min-width: 1024px)', false)
+
+  return (
+    <div className={isWide ? 'layout-wide' : 'layout-narrow'}>
+      {children}
+    </div>
+  )
+}
+```
+
+## Options
+
+| Parameter      | Type    | Default | Description                                                                 |
+|----------------|---------|---------|-----------------------------------------------------------------------------|
+| `query`        | string  | —       | Any valid CSS media query string, e.g. `'(max-width: 768px)'`.             |
+| `defaultValue` | boolean | `false` | Value returned before the browser evaluates the query (SSR / first render). |
+
+## How it works
+
+The initial state is derived lazily: if `window` is available (client-side), `window.matchMedia(query).matches` is read synchronously so there is no flash on the first render. On the server, where `window` is undefined, `defaultValue` is used instead.
+
+The effect re-runs whenever `query` changes. It re-checks `mediaQueryList.matches` immediately to cover any state drift between the render and the effect, then subscribes to the `change` event for future updates. Both the modern `addEventListener` API and the legacy `addListener` API (Safari < 14) are supported, with cleanup on unmount.
+
+## Notes
+
+- To avoid a hydration mismatch when rendering on the server, set `defaultValue` to whatever the server assumes (typically `false` for mobile-first layouts).
+- The `query` string is passed directly to `window.matchMedia`, so all standard media features work: `prefers-color-scheme`, `prefers-reduced-motion`, `orientation`, resolution descriptors, and more.
+- Changing `query` at runtime (e.g. a dynamic query built from props) is fully supported — the effect tears down the old listener and registers a new one.
