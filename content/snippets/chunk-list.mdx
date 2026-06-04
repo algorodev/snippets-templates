@@ -1,0 +1,77 @@
+---
+title: Chunk List (Python)
+description: Splits a list into consecutive sub-lists of a given size using a generator, avoiding copying the entire list at once. The last chunk may be smaller than the requested size.
+category: snippets
+language: python
+tags: [array, utils, list, split]
+---
+
+Yields consecutive slices of a list without materialising all chunks in memory at once. The last chunk contains whatever elements remain and may be smaller than the requested size.
+
+## Usage
+
+```python
+from typing import Generator, TypeVar
+
+T = TypeVar("T")
+
+
+def chunk_list(lst: list[T], size: int) -> Generator[list[T], None, None]:
+    """Split *lst* into consecutive sub-lists of length *size*.
+
+    Args:
+        lst: The list to split.
+        size: Maximum number of elements per chunk. Must be a positive integer.
+
+    Yields:
+        Successive sub-lists of at most *size* elements.
+
+    Raises:
+        ValueError: If *size* is not a positive integer.
+    """
+    if size <= 0:
+        raise ValueError(f"chunk_list: size must be a positive integer, got {size!r}")
+
+    for i in range(0, len(lst), size):
+        yield lst[i : i + size]
+```
+
+## Examples
+
+```python
+data = [1, 2, 3, 4, 5, 6, 7]
+
+list(chunk_list(data, 3))
+# [[1, 2, 3], [4, 5, 6], [7]]
+
+list(chunk_list(data, 2))
+# [[1, 2], [3, 4], [5, 6], [7]]
+
+# Chunk size larger than the list — one chunk returned
+list(chunk_list([1, 2, 3], 10))
+# [[1, 2, 3]]
+
+# Chunk size of 1 — each element becomes its own sub-list
+list(chunk_list(["a", "b", "c"], 1))
+# [["a"], ["b"], ["c"]]
+
+# Empty list yields nothing
+list(chunk_list([], 5))
+# []
+
+# Useful for batching API calls
+import time
+
+records = list(range(250))
+for batch in chunk_list(records, 50):
+    # process_batch(batch)
+    print(f"Processing {len(batch)} records")
+    time.sleep(0.1)
+```
+
+## Notes
+
+- Because the function is a generator, chunks are produced lazily. Wrapping in `list()` materialises all of them when needed.
+- The original list is not mutated; Python list slicing produces new list objects.
+- For iterables other than lists (e.g. generators, tuples), convert to a list first or use `itertools.islice`-based chunking instead.
+- Passing a non-integer size (e.g. `2.5`) will silently produce incorrect results from `range` — apply `int()` on the caller side if needed.
