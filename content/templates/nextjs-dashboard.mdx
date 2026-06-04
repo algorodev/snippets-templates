@@ -1,0 +1,360 @@
+---
+title: Next.js Admin Dashboard
+description: An admin dashboard template with data tables, charts, authentication, and role-based access control using Next.js App Router. Includes shadcn/ui components and a PostgreSQL-backed API.
+category: templates
+language: TypeScript
+tags: [next.js, dashboard, shadcn-ui, app-router, prisma]
+repo: https://github.com/vercel/nextjs-postgres-auth-starter
+---
+
+A full-featured admin dashboard built on Next.js App Router with shadcn/ui components, Prisma + PostgreSQL for data persistence, and session-based authentication with role-based access control (RBAC).
+
+## Usage
+
+```typescript
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sessions  Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+```
+
+```typescript
+// lib/auth.ts
+import { cookies } from 'next/headers'
+import { cache } from 'react'
+import { prisma } from '@/lib/prisma'
+
+export interface Session {
+  userId: string
+  role: 'USER' | 'ADMIN'
+}
+
+export const getSession = cache(async (): Promise<Session | null> => {
+  const cookieStore = await cookies()
+  const sessionId = cookieStore.get('session_id')?.value
+  if (!sessionId) return null
+
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    include: { user: { select: { id: true, role: true } } },
+  })
+
+  if (!session || session.expiresAt < new Date()) return null
+  return { userId: session.user.id, role: session.user.role }
+})
+
+export async function requireAdmin() {
+  const session = await getSession()
+  if (!session || session.role !== 'ADMIN') {
+    throw new Error('Unauthorized')
+  }
+  return session
+}
+```
+
+```typescript
+// middleware.ts
+import { NextRequest, NextResponse } from 'next/server'
+
+const PROTECTED_PREFIXES = ['/dashboard', '/admin']
+
+export function middleware(req: NextRequest) {
+  const sessionId = req.cookies.get('session_id')?.value
+  const isProtected = PROTECTED_PREFIXES.some((p) =>
+    req.nextUrl.pathname.startsWith(p),
+  )
+
+  if (isProtected && !sessionId) {
+    const loginUrl = new URL('/login', req.url)
+    loginUrl.searchParams.set('redirect', req.nextUrl.pathname)
+    return NextResponse.redirect(loginUrl)
+  }
+
+  return NextResponse.next()
+}
+
+export const config = {
+  matcher: ['/dashboard/:path*', '/admin/:path*'],
+}
+```
+
+```typescript
+// app/actions/auth.ts
+'use server'
+
+import { redirect } from 'next/navigation'
+import { cookies } from 'next/headers'
+import bcrypt from 'bcryptjs'
+import { prisma } from '@/lib/prisma'
+
+export async function login(formData: FormData) {
+  const email = formData.get('email') as string
+  const password = formData.get('password') as string
+
+  const user = await prisma.user.findUnique({ where: { email } })
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return { error: 'Invalid email or password' }
+  }
+
+  const session = await prisma.session.create({
+    data: {
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7), // 7 days
+    },
+  })
+
+  const cookieStore = await cookies()
+  cookieStore.set('session_id', session.id, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    expires: session.expiresAt,
+  })
+
+  redirect('/dashboard')
+}
+
+export async function logout() {
+  const cookieStore = await cookies()
+  const sessionId = cookieStore.get('session_id')?.value
+  if (sessionId) {
+    await prisma.session.delete({ where: { id: sessionId } }).catch(() => {})
+    cookieStore.delete('session_id')
+  }
+  redirect('/login')
+}
+```
+
+```typescript
+// app/dashboard/users/page.tsx  (admin-only)
+import { requireAdmin } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+import { UsersTable } from '@/components/users-table'
+
+export default async function UsersPage() {
+  await requireAdmin()
+
+  const users = await prisma.user.findMany({
+    select: { id: true, name: true, email: true, role: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  return (
+    <div className="flex flex-col gap-6">
+      <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
+      <UsersTable data={users} />
+    </div>
+  )
+}
+```
+
+```typescript
+// components/users-table.tsx
+'use client'
+
+import {
+  ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
+
+interface User {
+  id: string
+  name: string | null
+  email: string
+  role: 'USER' | 'ADMIN'
+  createdAt: Date
+}
+
+const columns: ColumnDef<User>[] = [
+  { accessorKey: 'name', header: 'Name' },
+  { accessorKey: 'email', header: 'Email' },
+  {
+    accessorKey: 'role',
+    header: 'Role',
+    cell: ({ row }) => (
+      <Badge variant={row.original.role === 'ADMIN' ? 'default' : 'secondary'}>
+        {row.original.role}
+      </Badge>
+    ),
+  },
+  {
+    accessorKey: 'createdAt',
+    header: 'Joined',
+    cell: ({ row }) =>
+      new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(
+        row.original.createdAt,
+      ),
+  },
+]
+
+export function UsersTable({ data }: { data: User[] }) {
+  const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() })
+
+  return (
+    <div className="rounded-md border">
+      <Table>
+        <TableHeader>
+          {table.getHeaderGroups().map((hg) => (
+            <TableRow key={hg.id}>
+              {hg.headers.map((h) => (
+                <TableHead key={h.id}>
+                  {flexRender(h.column.columnDef.header, h.getContext())}
+                </TableHead>
+              ))}
+            </TableRow>
+          ))}
+        </TableHeader>
+        <TableBody>
+          {table.getRowModel().rows.map((row) => (
+            <TableRow key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <TableCell key={cell.id}>
+                  {flexRender(cell.column.columnDef.def, cell.getContext())}
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+```
+
+## Options
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `NEXTAUTH_SECRET` / `SESSION_SECRET` | Secret used to sign session tokens |
+| `NEXT_PUBLIC_APP_URL` | Public base URL for redirects |
+
+## Notes
+
+The `requireAdmin()` helper throws synchronously, so Next.js converts it to a 500 unless you wrap the page in an `error.tsx` boundary. For finer-grained RBAC, store permissions as a string array on the `User` model and check membership in `requireAdmin`. Replace `bcryptjs` with `argon2` for stronger password hashing in production.
+
+## README
+
+### What this includes
+- Next.js App Router with nested route groups: `(auth)` and `(dashboard)`
+- Prisma ORM with PostgreSQL, `User`, `Session`, and `Role` models
+- Session-based authentication with httpOnly cookies (no third-party auth library required)
+- Role-based access control (`USER` / `ADMIN`) enforced in middleware and Server Components
+- shadcn/ui component library (Button, Table, Badge, Card, Dialog, etc.)
+- `@tanstack/react-table` for sortable, filterable data tables
+- Recharts for analytics charts in the dashboard overview
+- `bcryptjs` for password hashing
+
+### Prerequisites
+- Node.js 20.9+
+- PostgreSQL database (local via Docker, or hosted on Neon / Supabase / Railway)
+
+### Create this template
+
+```bash
+npx create-next-app@latest my-dashboard --typescript --tailwind --eslint --app --yes
+cd my-dashboard
+npm install prisma @prisma/client bcryptjs
+npm install -D @types/bcryptjs
+npm install @tanstack/react-table recharts
+npx prisma init
+```
+
+Initialize shadcn/ui:
+
+```bash
+npx shadcn@latest init
+# Choose: Default style, Slate base color, CSS variables yes
+npx shadcn@latest add button table badge card dialog input label
+```
+
+Set up the database:
+
+```bash
+# Add DATABASE_URL to .env
+npx prisma db push        # push schema to DB
+npx prisma generate       # generate Prisma client
+npx prisma db seed        # seed an admin user (add prisma/seed.ts first)
+npm run dev
+```
+
+### Project structure
+
+```
+my-dashboard/
+├── app/
+│   ├── (auth)/
+│   │   ├── login/page.tsx            # Login form
+│   │   └── layout.tsx                # Centered card layout
+│   ├── (dashboard)/
+│   │   ├── layout.tsx                # Sidebar + topbar shell
+│   │   ├── dashboard/page.tsx        # Overview with KPI cards + chart
+│   │   ├── users/page.tsx            # Admin-only users table
+│   │   └── settings/page.tsx         # Profile / password settings
+│   └── api/
+│       └── (unused — use Server Actions)
+├── actions/
+│   ├── auth.ts                       # login, logout server actions
+│   └── users.ts                      # createUser, updateRole, deleteUser
+├── components/
+│   ├── ui/                           # shadcn/ui generated components
+│   ├── sidebar.tsx                   # Collapsible nav with role-aware links
+│   ├── users-table.tsx               # TanStack Table data grid
+│   └── overview-chart.tsx            # Recharts bar chart
+├── lib/
+│   ├── auth.ts                       # getSession, requireAdmin helpers
+│   ├── prisma.ts                     # Prisma client singleton
+│   └── utils.ts                      # cn() and other utilities
+├── middleware.ts                     # Route protection
+├── prisma/
+│   ├── schema.prisma                 # DB schema
+│   └── seed.ts                       # Seed script (admin user)
+└── .env                              # DATABASE_URL
+```
+
+### First things to customize
+- `prisma/schema.prisma` — add your domain-specific models (orders, products, etc.)
+- `prisma/seed.ts` — set the initial admin email and password
+- `app/(dashboard)/layout.tsx` — update the sidebar navigation links and app name
+- `components/overview-chart.tsx` — wire chart data to your actual metrics query
+- `middleware.ts` — extend `PROTECTED_PREFIXES` if you add new route groups
