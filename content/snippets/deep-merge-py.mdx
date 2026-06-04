@@ -1,0 +1,109 @@
+---
+title: Deep Merge Dicts (Python)
+description: Recursively merges two or more dictionaries, with later dicts overriding earlier ones for scalar values. Returns a new dict without mutating any of the inputs.
+category: snippets
+language: python
+tags: [object, utils, dict, merge]
+---
+
+A drop-in replacement for the `{**a, **b}` spread pattern that recurses into nested dicts instead of replacing them wholesale, useful for layering config files or partial overrides.
+
+## Usage
+
+```python
+from typing import Any
+
+
+def deep_merge(*dicts: dict[str, Any]) -> dict[str, Any]:
+    """
+    Recursively merge two or more dicts.
+
+    - Later dicts take precedence over earlier ones.
+    - When the same key maps to a dict in *all* sources, the dicts are
+      merged recursively rather than the later one replacing the earlier one.
+    - All other value types (including lists) are replaced, not combined.
+    - No input dict is mutated; a new dict is always returned.
+
+    Parameters
+    ----------
+    *dicts:
+        Any number of dicts to merge, in left-to-right order.
+
+    Returns
+    -------
+    dict
+        A new dict containing the merged result.
+
+    Raises
+    ------
+    TypeError
+        When any positional argument is not a dict.
+    """
+    for i, d in enumerate(dicts):
+        if not isinstance(d, dict):
+            raise TypeError(
+                f"Argument at position {i} must be a dict, got {type(d).__name__!r}"
+            )
+
+    if not dicts:
+        return {}
+
+    result: dict[str, Any] = {}
+
+    for d in dicts:
+        for key, value in d.items():
+            if (
+                key in result
+                and isinstance(result[key], dict)
+                and isinstance(value, dict)
+            ):
+                result[key] = deep_merge(result[key], value)
+            else:
+                # Shallow-copy top-level dicts so the result is never an alias
+                result[key] = dict(value) if isinstance(value, dict) else value
+
+    return result
+```
+
+## Examples
+
+```python
+defaults = {
+    "server": {"host": "localhost", "port": 8080, "tls": False},
+    "logging": {"level": "INFO", "format": "text"},
+    "retries": 3,
+}
+
+overrides = {
+    "server": {"port": 443, "tls": True},
+    "logging": {"level": "DEBUG"},
+}
+
+config = deep_merge(defaults, overrides)
+# {
+#   "server": {"host": "localhost", "port": 443, "tls": True},
+#   "logging": {"level": "DEBUG", "format": "text"},
+#   "retries": 3,
+# }
+
+# Multiple sources — rightmost wins for scalars
+a = {"x": 1, "y": {"a": 1, "b": 2}}
+b = {"y": {"b": 99}}
+c = {"y": {"c": 3}, "z": 0}
+
+result = deep_merge(a, b, c)
+# {"x": 1, "y": {"a": 1, "b": 99, "c": 3}, "z": 0}
+
+# Inputs are not modified
+print(a)  # {"x": 1, "y": {"a": 1, "b": 2}}
+```
+
+## Notes
+
+- **Lists are replaced, not concatenated.** If you need list merging, post-process the result or extend the function with a custom list strategy.
+- **Only `dict` instances are merged recursively.** Subclasses (e.g. `collections.OrderedDict`) are treated as plain dicts for the merge but the returned value is always a plain `dict`.
+- **Depth is unbounded.** The recursion follows nested dicts as deep as they go. Python's default recursion limit (~1000) is the practical ceiling.
+
+## How it works
+
+The function iterates through the input dicts in order and builds `result` key by key. Whenever both `result[key]` and the incoming `value` are dicts, it recurses instead of assigning. For everything else, the incoming value overwrites the existing one. Because each nested dict is recursed into rather than swapped out, earlier keys that the later dict does not mention are preserved.
