@@ -1,0 +1,57 @@
+---
+title: Strip HTML Tags
+description: Removes all HTML tags from a string, returning plain text content. Optionally preserves whitespace that was introduced by block-level elements.
+category: snippets
+language: typescript
+tags: [string, utils, html, sanitize]
+---
+
+Strips every HTML tag from a string using a regex, with an optional mode that replaces block-level elements with newlines so the plain-text output retains paragraph breaks.
+
+## Usage
+
+```typescript
+function stripHtml(html: string, preserveBlockSpacing: boolean = false): string {
+  if (preserveBlockSpacing) {
+    // Replace block-level elements with a newline before stripping all tags
+    html = html.replace(
+      /<\/?(address|article|aside|blockquote|dd|details|dialog|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hgroup|hr|li|main|nav|ol|p|pre|section|summary|table|ul)[^>]*>/gi,
+      '\n'
+    )
+  }
+
+  // Strip all remaining tags
+  const plain = html.replace(/<[^>]*>/g, '')
+
+  // Decode the five standard HTML entities
+  return plain
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(preserveBlockSpacing ? /\n{3,}/g : /^\s+|\s+$/g, preserveBlockSpacing ? '\n\n' : '')
+    .trim()
+}
+
+export default stripHtml
+```
+
+## Examples
+
+```typescript
+stripHtml('<p>Hello, <strong>world</strong>!</p>')
+// => "Hello, world!"
+
+stripHtml('<p>First paragraph.</p><p>Second paragraph.</p>', true)
+// => "First paragraph.\n\nSecond paragraph."
+
+stripHtml('<a href="/about">About <em>us</em></a>')
+// => "About us"
+```
+
+## Notes
+
+- This function is intended for display purposes, not security sanitisation. If you need to render user-supplied HTML safely in the DOM, use a dedicated library like DOMPurify instead.
+- The entity decoding step only covers the five characters that `escapeHtml` encodes (`&`, `<`, `>`, `"`, `'`). Full entity decoding requires a more complete map or a DOM-based approach (`textarea.innerHTML`).
+- In a browser environment you can achieve the same result with `document.createElement('div')`, but this function works in both Node and browser contexts without any DOM dependency.
