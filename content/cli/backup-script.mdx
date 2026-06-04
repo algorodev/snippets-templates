@@ -1,0 +1,197 @@
+---
+title: Backup Script
+description: Rsync-based incremental backup with timestamped snapshots, exclusion patterns for node_modules and build artefacts, and a retention policy.
+category: cli
+language: bash
+tags: [system, backup, rsync, automation]
+---
+
+A lightweight backup script built on `rsync --link-dest` to create space-efficient timestamped snapshots. Each snapshot looks like a full copy but shares unchanged files with previous snapshots via hard links, so only modified or new files consume additional disk space.
+
+## Usage
+
+```bash
+# Make the script executable once
+chmod +x backup.sh
+
+# Run a backup (source → destination)
+./backup.sh /home/alice /mnt/backups
+
+# Override keep count (default: 30 snapshots)
+BACKUP_KEEP=14 ./backup.sh /var/www /mnt/backups
+
+# Dry-run: show what would be transferred without writing anything
+DRY_RUN=true ./backup.sh /home/alice /mnt/backups
+```
+
+## Shell script
+
+```bash
+#!/usr/bin/env bash
+# backup.sh — incremental rsync snapshots with retention policy
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Configuration (override via environment variables)
+# ---------------------------------------------------------------------------
+BACKUP_KEEP="${BACKUP_KEEP:-30}"          # Number of snapshots to retain
+DRY_RUN="${DRY_RUN:-false}"              # Set to "true" for a rehearsal run
+LOG_FILE="${LOG_FILE:-}"                  # Optional: path to a log file
+
+# Patterns to exclude from every backup
+EXCLUDES=(
+  "node_modules/"
+  ".git/"
+  ".next/"
+  "dist/"
+  "build/"
+  ".cache/"
+  "__pycache__/"
+  "*.pyc"
+  ".DS_Store"
+  "Thumbs.db"
+  "*.log"
+  "*.tmp"
+  ".env.local"
+  ".env.*.local"
+)
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+usage() {
+  echo "Usage: $0 <source> <destination>"
+  echo ""
+  echo "Environment variables:"
+  echo "  BACKUP_KEEP=<n>      Number of snapshots to keep (default: 30)"
+  echo "  DRY_RUN=true         Rehearsal mode — no files are written"
+  echo "  LOG_FILE=<path>      Append rsync output to a log file"
+  exit 1
+}
+
+[[ $# -ne 2 ]] && usage
+
+SOURCE="${1%/}/"          # Ensure trailing slash (rsync copies contents)
+DEST="${2%/}"             # No trailing slash on destination root
+
+if [[ ! -d "$SOURCE" ]]; then
+  echo "Error: source '$SOURCE' does not exist or is not a directory."
+  exit 1
+fi
+
+mkdir -p "$DEST"
+
+# ---------------------------------------------------------------------------
+# Snapshot paths
+# ---------------------------------------------------------------------------
+TIMESTAMP=$(date '+%Y-%m-%dT%H-%M-%S')
+SNAPSHOT_DIR="$DEST/snapshot-$TIMESTAMP"
+LATEST_LINK="$DEST/latest"
+
+# ---------------------------------------------------------------------------
+# Build rsync command
+# ---------------------------------------------------------------------------
+RSYNC_OPTS=(
+  --archive           # -a: recursive, preserve permissions/times/symlinks
+  --hard-links        # Preserve existing hard links in source
+  --human-readable
+  --itemize-changes   # Show what changed
+  --stats
+  --delete            # Remove files from dest that are gone in source
+)
+
+# Add exclusions
+for pattern in "${EXCLUDES[@]}"; do
+  RSYNC_OPTS+=(--exclude="$pattern")
+done
+
+# Link unchanged files against the previous snapshot to save space
+if [[ -L "$LATEST_LINK" && -d "$LATEST_LINK" ]]; then
+  RSYNC_OPTS+=(--link-dest="$LATEST_LINK")
+fi
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  RSYNC_OPTS+=(--dry-run)
+  echo "[DRY RUN] No files will be written."
+fi
+
+# ---------------------------------------------------------------------------
+# Run backup
+# ---------------------------------------------------------------------------
+echo "==> Backup started at $(date)"
+echo "    Source : $SOURCE"
+echo "    Dest   : $SNAPSHOT_DIR"
+echo "    Keep   : $BACKUP_KEEP snapshots"
+echo ""
+
+if [[ -n "$LOG_FILE" ]]; then
+  rsync "${RSYNC_OPTS[@]}" "$SOURCE" "$SNAPSHOT_DIR" 2>&1 | tee -a "$LOG_FILE"
+else
+  rsync "${RSYNC_OPTS[@]}" "$SOURCE" "$SNAPSHOT_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# Update 'latest' symlink
+# ---------------------------------------------------------------------------
+if [[ "$DRY_RUN" != "true" ]]; then
+  ln -snf "$SNAPSHOT_DIR" "$LATEST_LINK"
+  echo ""
+  echo "==> Snapshot created: $SNAPSHOT_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# Retention policy — remove oldest snapshots beyond BACKUP_KEEP
+# ---------------------------------------------------------------------------
+if [[ "$DRY_RUN" != "true" ]]; then
+  mapfile -t snapshots < <(
+    find "$DEST" -maxdepth 1 -type d -name 'snapshot-*' | sort
+  )
+
+  excess=$(( ${#snapshots[@]} - BACKUP_KEEP ))
+  if (( excess > 0 )); then
+    echo ""
+    echo "==> Pruning $excess old snapshot(s)..."
+    for (( i=0; i<excess; i++ )); do
+      echo "    Removing: ${snapshots[$i]}"
+      rm -rf "${snapshots[$i]}"
+    done
+  fi
+fi
+
+echo ""
+echo "==> Backup complete at $(date)"
+```
+
+## Options
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BACKUP_KEEP` | `30` | How many timestamped snapshots to retain |
+| `DRY_RUN` | `false` | When `true`, rsync runs with `--dry-run` — nothing is written |
+| `LOG_FILE` | (none) | Path to append rsync output; stdout is always shown |
+
+## Examples
+
+```bash
+# Cron job: nightly backup of home directory, keep 60 days
+0 2 * * * BACKUP_KEEP=60 /opt/scripts/backup.sh /home/alice /mnt/backups >> /var/log/backup.log 2>&1
+
+# Backup a web root to a remote host over SSH
+./backup.sh /var/www/ user@nas:/volume1/backups/www
+
+# Keep only the last 7 snapshots (weekly rotation)
+BACKUP_KEEP=7 ./backup.sh /etc /mnt/backups/etc
+```
+
+## How it works
+
+`rsync --link-dest` compares each file in the new snapshot against the `latest` symlink. Identical files are hard-linked rather than copied, so a snapshot that changes only a handful of files consumes only the space for those changed files plus a directory tree of hard links — typically a few kilobytes of overhead.
+
+The retention sweep uses `find` to list snapshots alphabetically (ISO timestamps sort correctly), then `rm -rf` removes the oldest ones once the count exceeds `BACKUP_KEEP`.
+
+## Notes
+
+- The script requires `rsync` 2.6.4+ for `--link-dest` support. macOS ships a compatible version; most Linux distros do too.
+- For remote destinations (`user@host:/path`) ensure passwordless SSH is configured (key-based auth). `rsync` over SSH uses the same `--link-dest` logic transparently.
+- `.env.local` and `.env.*.local` are excluded by default. Review the `EXCLUDES` array and add any secrets files specific to your project before running.
+- On macOS, `mapfile` requires bash 4+. Install it via Homebrew (`brew install bash`) and set the shebang to `/opt/homebrew/bin/bash` if needed.
