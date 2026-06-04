@@ -1,0 +1,190 @@
+---
+title: Database Migration Shortcut
+description: Unified aliases to run up, down, and status commands for popular migration tools like Flyway, Liquibase, Knex, and Prisma.
+category: cli
+language: bash
+tags: [database, migrations, devops, productivity]
+---
+
+A single `db` dispatcher that routes `up`, `down`, and `status` sub-commands to whichever migration tool the current project uses, auto-detected from the project root. No more looking up each tool's exact syntax.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# Detect the migration tool used by the project in the current directory.
+_db_detect_tool() {
+  if [ -f "flyway.conf" ] || [ -f "flyway.toml" ] || [ -d "db/migration" ]; then
+    echo "flyway"
+  elif [ -f "liquibase.properties" ] || [ -f "liquibase.yml" ] || [ -f "changelog.xml" ]; then
+    echo "liquibase"
+  elif [ -f "knexfile.js" ] || [ -f "knexfile.ts" ] || [ -f "knexfile.cjs" ]; then
+    echo "knex"
+  elif [ -f "prisma/schema.prisma" ]; then
+    echo "prisma"
+  elif [ -f "migrate.toml" ] || [ -f ".golang-migrate" ]; then
+    echo "golang-migrate"
+  else
+    echo "unknown"
+  fi
+}
+
+# Unified database migration dispatcher.
+# Usage: db <up|down|status|create> [args...]
+#
+# Supported tools: flyway, liquibase, knex, prisma, golang-migrate
+db() {
+  local cmd="${1:-help}"
+  shift || true
+
+  local tool
+  tool=$(_db_detect_tool)
+
+  if [ "$tool" = "unknown" ] && [ "$cmd" != "help" ]; then
+    echo "No recognized migration tool found in: $(pwd)"
+    echo "Supported: flyway.conf, liquibase.properties, knexfile.js/ts, prisma/schema.prisma"
+    return 1
+  fi
+
+  case "$cmd" in
+    up|migrate)
+      case "$tool" in
+        flyway)          flyway migrate "$@" ;;
+        liquibase)       liquibase update "$@" ;;
+        knex)            npx knex migrate:latest "$@" ;;
+        prisma)          npx prisma migrate deploy "$@" ;;
+        golang-migrate)  migrate -path ./db/migrations -database "$DATABASE_URL" up "$@" ;;
+      esac
+      ;;
+
+    down|rollback)
+      local steps="${1:-1}"
+      case "$tool" in
+        flyway)          flyway undo "$@" ;;
+        liquibase)       liquibase rollback-count "${steps}" "$@" ;;
+        knex)            npx knex migrate:rollback "$@" ;;
+        prisma)
+          echo "Prisma does not support automatic rollback. Use 'db reset' or revert your migration files manually."
+          return 1
+          ;;
+        golang-migrate)  migrate -path ./db/migrations -database "$DATABASE_URL" down "${steps}" "$@" ;;
+      esac
+      ;;
+
+    status|info)
+      case "$tool" in
+        flyway)          flyway info "$@" ;;
+        liquibase)       liquibase status "$@" ;;
+        knex)            npx knex migrate:status "$@" ;;
+        prisma)          npx prisma migrate status "$@" ;;
+        golang-migrate)  migrate -path ./db/migrations -database "$DATABASE_URL" version "$@" ;;
+      esac
+      ;;
+
+    create|new)
+      local name="$1"
+      if [ -z "$name" ]; then
+        echo "Usage: db create <migration-name>"
+        return 1
+      fi
+      case "$tool" in
+        flyway)
+          local version
+          version=$(date +%Y%m%d%H%M%S)
+          local file="db/migration/V${version}__${name}.sql"
+          mkdir -p db/migration
+          touch "$file"
+          echo "Created: $file"
+          ;;
+        liquibase)
+          echo "Liquibase: create changeset manually in your changelog file."
+          ;;
+        knex)            npx knex migrate:make "$name" "$@" ;;
+        prisma)          npx prisma migrate dev --name "$name" "$@" ;;
+        golang-migrate)
+          local ts
+          ts=$(date +%Y%m%d%H%M%S)
+          local base="db/migrations/${ts}_${name}"
+          mkdir -p db/migrations
+          touch "${base}.up.sql" "${base}.down.sql"
+          echo "Created: ${base}.up.sql and ${base}.down.sql"
+          ;;
+      esac
+      ;;
+
+    reset)
+      case "$tool" in
+        prisma)  npx prisma migrate reset "$@" ;;
+        knex)    npx knex migrate:rollback --all "$@" && npx knex migrate:latest "$@" ;;
+        *)       echo "'db reset' is only supported for prisma and knex."; return 1 ;;
+      esac
+      ;;
+
+    tool)
+      echo "Detected tool: $tool (in $(pwd))"
+      ;;
+
+    help|*)
+      echo "Usage: db <command> [args]"
+      echo ""
+      echo "Commands:"
+      echo "  up / migrate          Run all pending migrations"
+      echo "  down / rollback [n]   Roll back the last n migrations (default: 1)"
+      echo "  status / info         Show applied and pending migrations"
+      echo "  create <name>         Scaffold a new migration file"
+      echo "  reset                 Roll back all and re-apply (prisma / knex)"
+      echo "  tool                  Print which migration tool was detected"
+      echo ""
+      echo "Detected tool: $(_db_detect_tool)"
+      ;;
+  esac
+}
+```
+
+## Options
+
+The sub-commands map to each tool as follows:
+
+| `db` command | Flyway | Liquibase | Knex | Prisma | golang-migrate |
+|---|---|---|---|---|---|
+| `up` | `migrate` | `update` | `migrate:latest` | `migrate deploy` | `up` |
+| `down [n]` | `undo` | `rollback-count n` | `rollback` | _(not supported)_ | `down n` |
+| `status` | `info` | `status` | `migrate:status` | `migrate status` | `version` |
+| `create <name>` | creates SQL file | _(manual)_ | `migrate:make` | `migrate dev` | creates up/down SQL files |
+| `reset` | — | — | rollback all + latest | `migrate reset` | — |
+
+## Examples
+
+```bash
+# In a Prisma project
+db up             # npx prisma migrate deploy
+db status         # npx prisma migrate status
+db create add_indexes   # npx prisma migrate dev --name add_indexes
+
+# In a Knex project
+db up             # npx knex migrate:latest
+db down           # npx knex migrate:rollback (last 1)
+db create add_user_table
+
+# In a Flyway project
+db up             # flyway migrate
+db status         # flyway info
+db create add_sessions   # creates db/migration/V<ts>__add_sessions.sql
+
+# Check which tool was detected
+db tool
+
+# golang-migrate (requires DATABASE_URL env var)
+export DATABASE_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+db up
+db down 3
+```
+
+## Notes
+
+Tool detection is based on config files found in the current working directory. Run `db` from the project root, or `cd` there first.
+
+For `golang-migrate`, export `DATABASE_URL` before calling `db up` or `db down`. The variable name follows the standard convention and is passed directly to the `-database` flag.
+
+Prisma does not support automated rollback — running `db down` in a Prisma project prints an explanation and exits cleanly rather than attempting an unsupported operation.
