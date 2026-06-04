@@ -1,0 +1,151 @@
+---
+title: ESLint Flat Config for Node.js
+description: A modern ESLint flat config tailored for Node.js projects, covering CommonJS and ESM modules. Includes recommended rules with Node.js-specific globals and import resolution.
+category: configs
+language: javascript
+tags: [eslint, nodejs, linting, flat-config]
+---
+
+Drop-in ESLint v9 flat config for Node.js projects. Works with both CommonJS (`require`/`module.exports`) and ESM (`import`/`export`) codebases, and picks up the correct globals automatically based on your `package.json` `"type"` field.
+
+## Usage
+
+```javascript
+// eslint.config.js
+import js from '@eslint/js'
+import globals from 'globals'
+import importPlugin from 'eslint-plugin-import'
+import nodePlugin from 'eslint-plugin-n'
+
+/** @type {import('eslint').Linter.Config[]} */
+export default [
+  {
+    ignores: ['dist/**', 'coverage/**', 'node_modules/**'],
+  },
+
+  // ── Core recommended rules ──────────────────────────────────────
+  js.configs.recommended,
+
+  // ── Node.js plugin (replaces deprecated eslint-plugin-node) ─────
+  nodePlugin.configs['flat/recommended'],
+
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: 'module', // override per-glob below for CJS files
+      globals: {
+        ...globals.node,
+        ...globals.nodeBuiltin,
+      },
+    },
+    plugins: {
+      import: importPlugin,
+    },
+    settings: {
+      'import/resolver': {
+        node: {
+          extensions: ['.js', '.mjs', '.cjs', '.json'],
+        },
+      },
+    },
+    rules: {
+      // Imports
+      'import/no-unresolved': 'error',
+      'import/no-extraneous-dependencies': ['error', { devDependencies: ['**/*.test.js', '**/*.spec.js', 'scripts/**'] }],
+      'import/order': ['warn', {
+        groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
+        'newlines-between': 'always',
+        alphabetize: { order: 'asc', caseInsensitive: true },
+      }],
+
+      // Node-specific
+      'n/no-missing-import': 'error',
+      'n/no-unpublished-import': 'warn',
+      'n/prefer-node-protocol': 'error',    // enforce  node:fs  over  fs
+      'n/no-process-exit': 'warn',
+
+      // General quality
+      'no-console': 'off',                  // console.log is fine in CLI/server code
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
+      'no-var': 'error',
+      'prefer-const': 'error',
+      'object-shorthand': 'warn',
+      'eqeqeq': ['error', 'always', { null: 'ignore' }],
+    },
+  },
+
+  // ── CommonJS overrides (.cjs files or projects without "type": "module") ──
+  {
+    files: ['**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: {
+        ...globals.node,
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        module: 'readonly',
+        require: 'readonly',
+        exports: 'writable',
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-var-requires': 'off',
+      'n/no-missing-require': 'error',
+    },
+  },
+
+  // ── Test files ───────────────────────────────────────────────────
+  {
+    files: ['**/*.test.{js,mjs,cjs}', '**/*.spec.{js,mjs,cjs}', 'test/**', '__tests__/**'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      'no-unused-expressions': 'off',
+      'import/no-extraneous-dependencies': 'off',
+    },
+  },
+]
+```
+
+**Install dependencies:**
+
+```bash
+npm install -D eslint @eslint/js globals eslint-plugin-n eslint-plugin-import
+```
+
+## Options
+
+**For CommonJS-only projects** (no `"type": "module"` in `package.json`), change the top-level `sourceType` to `'commonjs'` and remove the `.cjs` override block.
+
+**For TypeScript**, add `typescript-eslint` and merge in `tseslint.configs.recommendedTypeChecked`:
+
+```bash
+npm install -D typescript-eslint
+```
+
+```javascript
+import tseslint from 'typescript-eslint'
+
+export default tseslint.config(
+  // ...above config objects...
+  ...tseslint.configs.recommendedTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        project: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  }
+)
+```
+
+## Notes
+
+- `eslint-plugin-n` is the maintained fork of `eslint-plugin-node`. The `flat/recommended` preset enables rules appropriate for the Node.js version in your `engines` field.
+- `n/prefer-node-protocol` enforces the `node:` prefix (e.g. `node:fs` instead of `fs`), which is the modern convention and removes ambiguity with npm packages of the same name.
+- The `import/order` rule enforces a consistent import grouping: Node built-ins first, then third-party packages, then local modules.
