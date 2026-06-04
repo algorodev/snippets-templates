@@ -1,0 +1,59 @@
+---
+title: Promise Timeout
+description: Wraps a promise with a timeout, rejecting with a TimeoutError if it does not settle within the given milliseconds. Cleans up the timer on both resolution and rejection.
+category: snippets
+language: typescript
+tags: [async, utils, timeout, promise]
+---
+
+Races any promise against a timer, throwing a `TimeoutError` if the operation takes too long. The timer is always cleared so there are no dangling handles after the promise settles.
+
+## Usage
+
+```typescript
+class TimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Operation timed out after ${ms}ms`)
+    this.name = 'TimeoutError'
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TimeoutError(ms)), ms)
+  })
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+export { withTimeout, TimeoutError }
+```
+
+## Examples
+
+```typescript
+// Fetch with a 5-second deadline
+const data = await withTimeout(fetch('/api/data').then(r => r.json()), 5_000)
+
+// Wrap any async operation
+async function slowOperation() {
+  await new Promise(resolve => setTimeout(resolve, 10_000))
+  return 'done'
+}
+
+try {
+  const result = await withTimeout(slowOperation(), 3_000)
+} catch (err) {
+  if (err instanceof TimeoutError) {
+    console.error('Gave up waiting:', err.message)
+  }
+}
+```
+
+## Notes
+
+- Uses `Promise.race` so the winning branch resolves or rejects the outer promise immediately.
+- `finally` ensures `clearTimeout` runs regardless of which branch wins, preventing the Node.js process from staying alive due to a lingering timer.
+- The `TimeoutError` subclass lets callers distinguish timeouts from other failures with `instanceof`.
