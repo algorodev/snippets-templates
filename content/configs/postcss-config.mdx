@@ -1,0 +1,104 @@
+---
+title: PostCSS Config
+description: A PostCSS configuration with Tailwind CSS, autoprefixer, and cssnano for production optimizations. Supports nested CSS syntax via the postcss-nesting plugin.
+category: configs
+language: javascript
+tags: [postcss, css, tailwind, build-tool]
+---
+
+A production-ready PostCSS pipeline that handles vendor prefixing, nested CSS syntax, and minification. Works with any bundler that supports PostCSS — Vite, webpack, Parcel, or the PostCSS CLI.
+
+## Usage
+
+```js
+// postcss.config.mjs
+import { env } from "node:process";
+
+const isProduction = env.NODE_ENV === "production";
+
+/** @type {import("postcss-load-config").Config} */
+const config = {
+  plugins: {
+    // Tailwind CSS v4 via PostCSS
+    "@tailwindcss/postcss": {},
+
+    // Unwrap nested CSS rules (CSS Nesting spec)
+    // Remove if your target browsers support native CSS nesting
+    "postcss-nesting": {},
+
+    // Autoprefixer — adds vendor prefixes based on browserslist
+    autoprefixer: {},
+
+    // Minify CSS in production only
+    ...(isProduction && {
+      cssnano: {
+        preset: [
+          "default",
+          {
+            discardComments: { removeAll: true },
+            normalizeWhitespace: true,
+            colormin: true,
+            minifySelectors: true,
+          },
+        ],
+      },
+    }),
+  },
+};
+
+export default config;
+```
+
+**Install:**
+
+```bash
+npm install -D postcss @tailwindcss/postcss autoprefixer postcss-nesting cssnano
+```
+
+**Add a `.browserslistrc` to control autoprefixer targets:**
+
+```
+# .browserslistrc
+[production]
+> 0.5%
+last 2 versions
+not dead
+not IE 11
+
+[development]
+last 1 chrome version
+last 1 firefox version
+last 1 safari version
+```
+
+## Options
+
+### cssnano presets
+
+| Preset | Description |
+|--------|-------------|
+| `default` | Safe, loss-less optimisations — suitable for most projects |
+| `advanced` | Aggressive optimisations including deduplication; requires manual testing |
+
+### postcss-nesting
+
+By default this plugin follows the CSS Nesting spec. To use Sass-style nesting (where `&` is implied), pass:
+
+```js
+"postcss-nesting": { noIsPseudoSelector: true }
+```
+
+### Tailwind CSS v3 (legacy)
+
+If you are still on Tailwind v3, replace `@tailwindcss/postcss` with `tailwindcss`:
+
+```js
+"tailwindcss": {},
+```
+
+## Notes
+
+- `cssnano` is guarded by `NODE_ENV === "production"` so development builds stay fast and source-mappable.
+- `postcss-nesting` is only needed if you target browsers that do not yet support [native CSS nesting](https://caniuse.com/css-nesting) (Chrome 112+, Firefox 117+, Safari 16.5+). Remove the plugin once your browserslist no longer includes older versions.
+- If you use Vite, prefer the `@tailwindcss/vite` plugin over the PostCSS plugin — it integrates more tightly with Vite's pipeline and enables HMR for theme changes.
+- When using Next.js, place this file at the project root; Next.js picks it up automatically without any additional configuration.
