@@ -1,0 +1,57 @@
+---
+title: Zip Arrays
+description: Combines multiple arrays element-by-element into an array of tuples, stopping at the length of the shortest array. Provides a typed generic signature for up to four input arrays.
+category: snippets
+language: typescript
+tags: [array, utils, combine]
+---
+
+Pairs up elements from multiple arrays by index, producing an array of tuples. Stops at the length of the shortest input array so no element is left without a partner. Overloaded signatures give full tuple types for up to four arrays.
+
+## Usage
+
+```typescript
+function zip<A, B>(a: A[], b: B[]): [A, B][]
+function zip<A, B, C>(a: A[], b: B[], c: C[]): [A, B, C][]
+function zip<A, B, C, D>(a: A[], b: B[], c: C[], d: D[]): [A, B, C, D][]
+function zip(...arrays: unknown[][]): unknown[][] {
+  const length = Math.min(...arrays.map((a) => a.length))
+  return Array.from({ length }, (_, i) => arrays.map((a) => a[i]))
+}
+
+export default zip
+```
+
+## Examples
+
+```typescript
+// Two arrays
+zip([1, 2, 3], ['a', 'b', 'c'])
+// [[1, 'a'], [2, 'b'], [3, 'c']]
+
+// Stops at the shortest array
+zip([1, 2, 3, 4], ['x', 'y'])
+// [[1, 'x'], [2, 'y']]
+
+// Three arrays
+zip([1, 2, 3], ['a', 'b', 'c'], [true, false, true])
+// [[1, 'a', true], [2, 'b', false], [3, 'c', true]]
+
+// Pairing keys with values
+const keys = ['id', 'name', 'role'] as const
+const values = [42, 'Alice', 'admin']
+const entries = zip(keys, values)
+// [['id', 42], ['name', 'Alice'], ['role', 'admin']]
+Object.fromEntries(entries)
+// { id: 42, name: 'Alice', role: 'admin' }
+```
+
+## How it works
+
+`Math.min` over the array lengths determines how many tuples to produce. `Array.from` with an index factory then maps each position `i` to a new tuple by picking `arrays[n][i]` for every input array. The overloaded signatures at the top of the file give the TypeScript compiler enough information to infer precise tuple element types — e.g. `[number, string, boolean]` rather than `(number | string | boolean)[]` — while the single runtime implementation handles any number of arrays.
+
+## Notes
+
+- Only the overloads up to four arrays are typed precisely. For more than four arrays the function still works at runtime, but TypeScript will fall back to `unknown[][]`.
+- To keep all elements (padding missing positions with `undefined`), replace `Math.min` with `Math.max` and add a bounds check: `a[i] ?? undefined`.
+- The inverse operation — splitting a tuple array back into separate arrays — is `unzip`: `const [as, bs] = pairs.reduce(([a, b], [x, y]) => [[...a, x], [...b, y]], [[], []] as [A[], B[]])`.
