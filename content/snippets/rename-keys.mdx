@@ -1,0 +1,57 @@
+---
+title: Rename Object Keys
+description: Renames keys of an object according to a mapping, leaving unmapped keys untouched. Returns a new object without mutating the original.
+category: snippets
+language: typescript
+tags: [object, utils, keys, transform]
+---
+
+Applies a key-rename map to an object, carrying over any key not present in the map unchanged. Handy when normalising API responses or adapting data shapes between layers.
+
+## Usage
+
+```typescript
+function renameKeys<T extends Record<string, unknown>>(
+  obj: T,
+  keyMap: Partial<Record<keyof T, string>>
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(obj).map(([key, value]) => [
+      (keyMap as Record<string, string>)[key] ?? key,
+      value,
+    ])
+  )
+}
+
+export default renameKeys
+```
+
+## Examples
+
+```typescript
+// Normalise a snake_case API response to camelCase
+const apiResponse = {
+  user_id: 42,
+  first_name: 'Bob',
+  last_name: 'Smith',
+  created_at: '2024-01-15',
+}
+
+const normalised = renameKeys(apiResponse, {
+  user_id: 'userId',
+  first_name: 'firstName',
+  last_name: 'lastName',
+  created_at: 'createdAt',
+})
+// { userId: 42, firstName: 'Bob', lastName: 'Smith', createdAt: '2024-01-15' }
+
+// Rename only a subset — other keys are kept as-is
+const partial = renameKeys(apiResponse, { user_id: 'id' })
+// { id: 42, first_name: 'Bob', last_name: 'Smith', created_at: '2024-01-15' }
+```
+
+## Notes
+
+- The original object is never modified.
+- If two source keys would map to the same target key, the last one processed wins (standard `Object.fromEntries` behaviour).
+- Values (including nested objects) are copied by reference — this is a shallow operation.
