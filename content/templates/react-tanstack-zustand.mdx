@@ -1,0 +1,213 @@
+---
+title: React TanStack + Zustand App
+description: A client-side React app template using TanStack Router for type-safe routing, TanStack Query for server state, and Zustand for client state. A modern alternative to the traditional Redux-based stack.
+category: templates
+language: TypeScript
+tags: [react, tanstack-router, tanstack-query, zustand, vite]
+---
+
+A modern React client-side app template that replaces React Router + Redux with TanStack Router's fully type-safe routing, TanStack Query's powerful data-fetching layer, and Zustand's minimal client state management.
+
+## Usage
+
+```typescript
+// src/main.tsx
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { RouterProvider, createRouter } from '@tanstack/react-router'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { routeTree } from './routeTree.gen'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60,
+      retry: 1,
+    },
+  },
+})
+
+const router = createRouter({
+  routeTree,
+  context: { queryClient },
+})
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router
+  }
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  </StrictMode>
+)
+```
+
+```typescript
+// src/routes/__root.tsx
+import { createRootRouteWithContext, Outlet } from '@tanstack/react-router'
+import { TanStackRouterDevtools } from '@tanstack/router-devtools'
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import type { QueryClient } from '@tanstack/react-query'
+
+interface RouterContext {
+  queryClient: QueryClient
+}
+
+export const Route = createRootRouteWithContext<RouterContext>()({
+  component: () => (
+    <>
+      <Outlet />
+      <TanStackRouterDevtools />
+      <ReactQueryDevtools />
+    </>
+  ),
+})
+```
+
+```typescript
+// src/routes/posts/index.tsx
+import { createFileRoute } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
+import { postsQueryOptions } from '../../lib/queries/posts'
+
+export const Route = createFileRoute('/posts/')({
+  loader: ({ context: { queryClient } }) =>
+    queryClient.ensureQueryData(postsQueryOptions()),
+  component: PostsPage,
+})
+
+function PostsPage() {
+  const { data: posts } = useQuery(postsQueryOptions())
+
+  return (
+    <ul>
+      {posts?.map((post) => (
+        <li key={post.id}>{post.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+```typescript
+// src/lib/queries/posts.ts
+import { queryOptions } from '@tanstack/react-query'
+
+export interface Post {
+  id: number
+  title: string
+  body: string
+  userId: number
+}
+
+async function fetchPosts(): Promise<Post[]> {
+  const res = await fetch('https://jsonplaceholder.typicode.com/posts')
+  if (!res.ok) throw new Error('Failed to fetch posts')
+  return res.json()
+}
+
+export const postsQueryOptions = () =>
+  queryOptions({
+    queryKey: ['posts'],
+    queryFn: fetchPosts,
+  })
+```
+
+```typescript
+// src/store/ui.ts
+import { create } from 'zustand'
+import { devtools, persist } from 'zustand/middleware'
+
+interface UIState {
+  sidebarOpen: boolean
+  theme: 'light' | 'dark'
+  toggleSidebar: () => void
+  setTheme: (theme: 'light' | 'dark') => void
+}
+
+export const useUIStore = create<UIState>()(
+  devtools(
+    persist(
+      (set) => ({
+        sidebarOpen: true,
+        theme: 'light',
+        toggleSidebar: () =>
+          set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+        setTheme: (theme) => set({ theme }),
+      }),
+      { name: 'ui-store' }
+    )
+  )
+)
+```
+
+## README
+
+### What this includes
+- TanStack Router v1 with file-based routing and full TypeScript inference
+- TanStack Query v5 for server state with loader-based prefetching
+- Zustand v5 with devtools and persist middleware for client state
+- Vite for fast dev server and optimised production builds
+- Router and Query devtools enabled in development
+- Query options pattern for co-locating query definitions with data types
+
+### Prerequisites
+- Node.js 20+
+- npm, pnpm, or yarn
+
+### Create this template
+
+```bash
+npm create vite@latest my-app -- --template react-ts
+cd my-app
+npm install @tanstack/react-router @tanstack/router-devtools
+npm install @tanstack/react-query @tanstack/react-query-devtools
+npm install zustand
+npm install --save-dev @tanstack/router-plugin
+```
+
+```bash
+# vite.config.ts — add the TanStack Router plugin for file-based routing
+# Add this to the plugins array:
+# import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
+# plugins: [TanStackRouterVite(), react()]
+
+mkdir -p src/routes src/store src/lib/queries
+touch src/routes/__root.tsx
+touch src/routes/index.tsx
+npm run dev  # generates src/routeTree.gen.ts automatically
+```
+
+### Project structure
+
+```
+src/
+  routes/
+    __root.tsx         # root layout, devtools
+    index.tsx          # / home route
+    posts/
+      index.tsx        # /posts list
+      $postId.tsx      # /posts/:postId detail
+  store/
+    ui.ts              # sidebar, theme, other UI state
+    auth.ts            # user session client state
+  lib/
+    queries/
+      posts.ts         # queryOptions + types
+    api.ts             # base fetch client
+  main.tsx
+  routeTree.gen.ts     # auto-generated, do not edit
+vite.config.ts
+```
+
+### First things to customize
+- Replace the placeholder API in `src/lib/queries/posts.ts` with your own endpoints
+- Add an auth store in `src/store/auth.ts` and protect routes via `beforeLoad` in `__root.tsx`
+- Configure `defaultOptions` in the `QueryClient` (stale time, retry logic) for your API's behaviour
+- Add route-level error boundaries using `errorComponent` on each `createFileRoute`
+- Swap `localStorage` persistence in Zustand for `sessionStorage` if user data should not persist across tabs
