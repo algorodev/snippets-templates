@@ -1,0 +1,96 @@
+---
+title: Flatten Nested Object
+description: Flattens a deeply nested object into a single-level object with dot-notation keys. Optionally accepts a custom delimiter and a maximum depth.
+category: snippets
+language: typescript
+tags: [object, utils, flatten, deep]
+---
+
+Recursively walks a nested object and produces a flat key-value map where each key encodes the full path to the original value using a configurable delimiter.
+
+## Usage
+
+```typescript
+type FlatObject = Record<string, unknown>
+
+function flattenObj(
+  obj: Record<string, unknown>,
+  delimiter: string = '.',
+  maxDepth: number = Infinity,
+  _prefix: string = '',
+  _depth: number = 0
+): FlatObject {
+  return Object.entries(obj).reduce<FlatObject>((acc, [key, value]) => {
+    const flatKey = _prefix ? `${_prefix}${delimiter}${key}` : key
+
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      _depth < maxDepth
+    ) {
+      Object.assign(
+        acc,
+        flattenObj(
+          value as Record<string, unknown>,
+          delimiter,
+          maxDepth,
+          flatKey,
+          _depth + 1
+        )
+      )
+    } else {
+      acc[flatKey] = value
+    }
+
+    return acc
+  }, {})
+}
+
+export default flattenObj
+```
+
+## Options
+
+| Parameter   | Type     | Default    | Description                                          |
+|-------------|----------|------------|------------------------------------------------------|
+| `obj`       | `object` | —          | The nested object to flatten.                        |
+| `delimiter` | `string` | `'.'`      | Separator inserted between path segments.            |
+| `maxDepth`  | `number` | `Infinity` | Stop recursing beyond this depth (0 = top level only). |
+
+## Examples
+
+```typescript
+const nested = {
+  user: {
+    name: 'Alice',
+    address: {
+      city: 'London',
+      zip: 'EC1A 1BB',
+    },
+  },
+  active: true,
+}
+
+flattenObj(nested)
+// {
+//   'user.name': 'Alice',
+//   'user.address.city': 'London',
+//   'user.address.zip': 'EC1A 1BB',
+//   active: true,
+// }
+
+// Custom delimiter
+flattenObj(nested, '/')
+// { 'user/name': 'Alice', 'user/address/city': 'London', ... }
+
+// Limit depth to 1
+flattenObj(nested, '.', 1)
+// { 'user.name': 'Alice', 'user.address': { city: 'London', zip: 'EC1A 1BB' }, active: true }
+```
+
+## Notes
+
+- Arrays are treated as leaf values and are not recursed into.
+- `null` is treated as a leaf value even though `typeof null === 'object'`.
+- The leading underscore parameters (`_prefix`, `_depth`) are internal and should not be passed by callers.
