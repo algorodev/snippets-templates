@@ -1,0 +1,354 @@
+---
+title: HTMX App
+description: A hypermedia-driven web application template using HTMX with a Go or Node.js backend serving HTML fragments. Demonstrates AJAX, WebSocket, and server-sent event patterns without writing JavaScript.
+category: templates
+language: Go
+tags: [htmx, hypermedia, go, html, minimal-js]
+repo: https://github.com/bigskysoftware/htmx
+---
+
+A hypermedia-first web app where the server owns all state and returns HTML fragments — no JSON API, no client-side router, no frontend build tool. HTMX attributes on HTML elements declare the interactivity; Go's `html/template` renders everything server-side.
+
+## Usage
+
+```bash
+# Install Go dependencies
+go mod tidy
+
+# Run the development server
+go run ./cmd/server
+
+# Open the app
+open http://localhost:3000
+```
+
+## How it works
+
+```go
+// cmd/server/main.go
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/yourname/htmx-app/internal/handlers"
+)
+
+func main() {
+	mux := http.NewServeMux()
+
+	// Serve static assets
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+
+	// Pages
+	mux.HandleFunc("GET /", handlers.Index)
+
+	// HTMX endpoints — return HTML fragments, not JSON
+	mux.HandleFunc("GET /todos", handlers.ListTodos)
+	mux.HandleFunc("POST /todos", handlers.CreateTodo)
+	mux.HandleFunc("DELETE /todos/{id}", handlers.DeleteTodo)
+	mux.HandleFunc("PUT /todos/{id}/toggle", handlers.ToggleTodo)
+
+	// Server-sent events
+	mux.HandleFunc("GET /events", handlers.SSE)
+
+	log.Println("listening on :3000")
+	log.Fatal(http.ListenAndServe(":3000", mux))
+}
+```
+
+```go
+// internal/store/todo.go
+package store
+
+import (
+	"fmt"
+	"sync"
+)
+
+type Todo struct {
+	ID   string
+	Text string
+	Done bool
+}
+
+type TodoStore struct {
+	mu    sync.Mutex
+	todos []Todo
+	seq   int
+}
+
+func NewTodoStore() *TodoStore { return &TodoStore{} }
+
+func (s *TodoStore) All() []Todo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Todo, len(s.todos))
+	copy(out, s.todos)
+	return out
+}
+
+func (s *TodoStore) Add(text string) Todo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq++
+	t := Todo{ID: fmt.Sprintf("%d", s.seq), Text: text}
+	s.todos = append(s.todos, t)
+	return t
+}
+
+func (s *TodoStore) Delete(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.todos[:0]
+	for _, t := range s.todos {
+		if t.ID != id {
+			filtered = append(filtered, t)
+		}
+	}
+	s.todos = filtered
+}
+
+func (s *TodoStore) Toggle(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.todos {
+		if s.todos[i].ID == id {
+			s.todos[i].Done = !s.todos[i].Done
+			return
+		}
+	}
+}
+```
+
+```go
+// internal/handlers/todos.go
+package handlers
+
+import (
+	"html/template"
+	"net/http"
+
+	"github.com/yourname/htmx-app/internal/store"
+)
+
+var db = store.NewTodoStore()
+
+var todoItemTmpl = template.Must(template.New("item").Parse(`
+<li id="todo-{{.ID}}" class="flex items-center gap-3 py-2">
+  <input type="checkbox" {{if .Done}}checked{{end}}
+    hx-put="/todos/{{.ID}}/toggle"
+    hx-target="#todo-{{.ID}}"
+    hx-swap="outerHTML"
+  />
+  <span class="{{if .Done}}line-through text-gray-400{{end}} flex-1">{{.Text}}</span>
+  <button
+    hx-delete="/todos/{{.ID}}"
+    hx-target="#todo-{{.ID}}"
+    hx-swap="outerHTML swap:300ms"
+    class="text-red-400 hover:text-red-600 text-sm"
+  >Remove</button>
+</li>
+`))
+
+func ListTodos(w http.ResponseWriter, r *http.Request) {
+	todos := db.All()
+	w.Header().Set("Content-Type", "text/html")
+	for _, t := range todos {
+		todoItemTmpl.Execute(w, t)
+	}
+}
+
+func CreateTodo(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	text := r.FormValue("text")
+	if text == "" {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		return
+	}
+	t := db.Add(text)
+	w.Header().Set("Content-Type", "text/html")
+	todoItemTmpl.Execute(w, t)
+}
+
+func DeleteTodo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	db.Delete(id)
+	// Return empty 200 — HTMX replaces the element with nothing
+}
+
+func ToggleTodo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	db.Toggle(id)
+	todos := db.All()
+	for _, t := range todos {
+		if t.ID == id {
+			w.Header().Set("Content-Type", "text/html")
+			todoItemTmpl.Execute(w, t)
+			return
+		}
+	}
+}
+```
+
+```go
+// internal/handlers/sse.go — server-sent events for live updates
+package handlers
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+)
+
+func SSE(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case t := <-ticker.C:
+			fmt.Fprintf(w, "event: tick\ndata: <span id='clock'>%s</span>\n\n", t.Format("15:04:05"))
+			flusher.Flush()
+		}
+	}
+}
+```
+
+```html
+<!-- templates/index.html — full page with HTMX wired up -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HTMX App</title>
+  <script src="/static/htmx.min.js"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="max-w-lg mx-auto p-8">
+  <h1 class="text-2xl font-bold mb-6">Todos</h1>
+
+  <!-- Add todo form — posts, swaps the new item into the list -->
+  <form
+    hx-post="/todos"
+    hx-target="#todo-list"
+    hx-swap="beforeend"
+    hx-on::after-request="this.reset()"
+    class="flex gap-2 mb-4"
+  >
+    <input
+      name="text"
+      type="text"
+      placeholder="What needs doing?"
+      required
+      class="border rounded px-3 py-2 flex-1"
+    />
+    <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded">Add</button>
+  </form>
+
+  <!-- Todo list — initially populated from the server -->
+  <ul
+    id="todo-list"
+    hx-get="/todos"
+    hx-trigger="load"
+    class="divide-y"
+  ></ul>
+
+  <!-- Live clock via SSE -->
+  <div
+    hx-ext="sse"
+    sse-connect="/events"
+    sse-swap="tick"
+    class="mt-8 text-gray-400 text-sm"
+  >
+    <span id="clock">connecting...</span>
+  </div>
+</body>
+</html>
+```
+
+## README
+
+### What this includes
+
+- **HTMX 2.x** — declarative AJAX, CSS transitions, WebSocket, and SSE via HTML attributes
+- **Go standard library** — `net/http` with the new `http.ServeMux` pattern matching (Go 1.22+)
+- **`html/template`** — server-side HTML rendering with auto-escaping
+- **In-memory todo store** — thread-safe store demonstrating the CRUD pattern; swap for a database
+- **Server-sent events** — live push from server to client without JavaScript
+- **Static file serving** — `htmx.min.js` and CSS served from `static/`
+- **Zero client-side JavaScript written** — all interactivity comes from HTMX attributes
+
+### Prerequisites
+
+- Go 1.22+ (`brew install go` or https://go.dev/dl/)
+- Download `htmx.min.js` from https://unpkg.com/htmx.org/dist/htmx.min.js into `static/`
+
+### Create this template
+
+```bash
+# 1. Create the project directory
+mkdir htmx-app && cd htmx-app
+
+# 2. Initialise the Go module
+go mod init github.com/yourname/htmx-app
+
+# 3. Create the directory layout
+mkdir -p cmd/server internal/handlers internal/store templates static
+
+# 4. Download HTMX
+curl -Lo static/htmx.min.js https://unpkg.com/htmx.org/dist/htmx.min.js
+
+# 5. (Optional) add the SSE extension
+curl -Lo static/htmx-sse.js https://unpkg.com/htmx-ext-sse/sse.js
+
+# 6. Create all source files (see How it works above)
+
+# 7. Run
+go run ./cmd/server
+```
+
+### Project structure
+
+```
+htmx-app/
+├── cmd/
+│   └── server/
+│       └── main.go          # HTTP server and route registration
+├── internal/
+│   ├── handlers/
+│   │   ├── index.go         # Full-page handler
+│   │   ├── todos.go         # HTMX fragment handlers
+│   │   └── sse.go           # Server-sent events stream
+│   └── store/
+│       └── todo.go          # In-memory thread-safe store
+├── templates/
+│   └── index.html           # HTML page with HTMX attributes
+├── static/
+│   ├── htmx.min.js          # HTMX library (no npm needed)
+│   ├── htmx-sse.js          # SSE extension (optional)
+│   └── styles.css           # Tailwind CDN or hand-written CSS
+└── go.mod
+```
+
+### First things to customize
+
+- `internal/store/todo.go` — Replace the in-memory store with a real database (pgx, sqlx, GORM)
+- `templates/index.html` — Update the page title, layout, and navigation
+- `internal/handlers/todos.go` — Add more resource handlers following the same fragment pattern
+- `main.go` — Add middleware (logging, auth, CORS) wrapping the mux
+- `static/styles.css` — Swap in Tailwind CSS CDN or compile your own stylesheet
