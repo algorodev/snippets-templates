@@ -1,0 +1,130 @@
+---
+title: Port Killer
+description: Find and kill whatever process is listening on a given port number, with a confirmation prompt before sending SIGKILL.
+category: cli
+language: bash
+tags: [node, ports, processes, debugging]
+---
+
+Add this function to your `~/.zshrc` or `~/.bashrc` to free up a port in one step. It looks up the PID, shows you the process name, asks for confirmation, then sends `SIGKILL`.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+killport() {
+  local port="$1"
+
+  if [[ -z "$port" ]]; then
+    echo "Usage: killport <port>"
+    return 1
+  fi
+
+  # Find PID(s) listening on the port (works on macOS and Linux)
+  local pids
+  if [[ "$(uname)" == "Darwin" ]]; then
+    pids=$(lsof -ti tcp:"$port")
+  else
+    pids=$(ss -ltnp "sport = :$port" | awk 'NR>1 {match($6, /pid=([0-9]+)/, a); if (a[1]) print a[1]}')
+  fi
+
+  if [[ -z "$pids" ]]; then
+    echo "No process found on port $port"
+    return 0
+  fi
+
+  for pid in $pids; do
+    local name
+    name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+    echo "Port $port is held by: $name (PID $pid)"
+    read "confirm?Kill it? [y/N] "
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+      kill -9 "$pid" && echo "Killed PID $pid" || echo "Failed to kill PID $pid"
+    else
+      echo "Skipped."
+    fi
+  done
+}
+```
+
+After adding the function, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+Then use it:
+
+```bash
+killport 3000
+# Port 3000 is held by: node (PID 87342)
+# Kill it? [y/N] y
+# Killed PID 87342
+```
+
+## Examples
+
+```bash
+killport 3000   # Next.js / React dev server
+killport 8080   # Generic HTTP server
+killport 5432   # PostgreSQL
+killport 6379   # Redis
+killport 4200   # Angular dev server
+```
+
+## Options
+
+To skip the confirmation prompt entirely (use with care), add a `-f` / `--force` flag:
+
+```bash
+killport() {
+  local force=0 port=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--force) force=1; shift ;;
+      *) port="$1"; shift ;;
+    esac
+  done
+
+  if [[ -z "$port" ]]; then
+    echo "Usage: killport [-f] <port>"
+    return 1
+  fi
+
+  local pids
+  if [[ "$(uname)" == "Darwin" ]]; then
+    pids=$(lsof -ti tcp:"$port")
+  else
+    pids=$(ss -ltnp "sport = :$port" | awk 'NR>1 {match($6, /pid=([0-9]+)/, a); if (a[1]) print a[1]}')
+  fi
+
+  if [[ -z "$pids" ]]; then
+    echo "No process found on port $port"
+    return 0
+  fi
+
+  for pid in $pids; do
+    local name
+    name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+    if [[ $force -eq 1 ]]; then
+      kill -9 "$pid" && echo "Killed $name (PID $pid) on port $port"
+    else
+      echo "Port $port is held by: $name (PID $pid)"
+      read "confirm?Kill it? [y/N] "
+      [[ "$confirm" =~ ^[Yy]$ ]] && kill -9 "$pid" && echo "Killed PID $pid" || echo "Skipped."
+    fi
+  done
+}
+```
+
+```bash
+killport -f 3000   # no prompt
+```
+
+## Notes
+
+- `lsof -ti` is macOS-native. On Linux, `ss` (from `iproute2`) is preferred over `lsof`.
+- Multiple PIDs can share a port in some scenarios (e.g., cluster workers); the loop handles all of them.
+- `SIGKILL` (`-9`) is used intentionally — `SIGTERM` is often ignored by dev servers.
