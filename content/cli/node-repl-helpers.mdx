@@ -1,0 +1,110 @@
+---
+title: Node REPL Helpers
+description: Launch a Node REPL with your project's dependencies already required, or open a TypeScript REPL via ts-node with tsconfig applied.
+category: cli
+language: bash
+tags: [node, repl, typescript, debugging]
+---
+
+Add these shell functions to your `~/.zshrc` or `~/.bashrc` to drop into a fully loaded REPL from any project directory. Useful for exploring an API, testing a utility function, or inspecting database results without writing a throwaway script.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+# Node REPL with project dependencies pre-required
+# Usage: nrepl [module1] [module2] ...
+# Example: nrepl lodash axios
+nrepl() {
+  local requires=""
+  for mod in "$@"; do
+    requires="${requires}const ${mod//-/_} = require('${mod}'); "
+  done
+
+  if [[ -n "$requires" ]]; then
+    node -e "${requires} const repl = require('repl'); repl.start('> ');"
+  else
+    # Auto-require everything listed in package.json dependencies
+    local deps
+    deps=$(node -e "
+      try {
+        const pkg = require('./package.json');
+        const all = { ...pkg.dependencies, ...pkg.devDependencies };
+        const lines = Object.keys(all)
+          .filter(d => !d.startsWith('@types/') && !/^[0-9]/.test(d))
+          .map(d => {
+            const safe = d.replace(/[-@/]/g, '_').replace(/^_/, '');
+            try { require.resolve(d); return \`const \${safe} = require('\${d}');\`; }
+            catch { return null; }
+          })
+          .filter(Boolean);
+        process.stdout.write(lines.join(' '));
+      } catch(e) {}
+    " 2>/dev/null)
+    node -e "${deps} const repl = require('repl'); repl.start('> ');"
+  fi
+}
+
+# TypeScript REPL via ts-node with project tsconfig
+# Requires: npm install -g ts-node  OR  npx ts-node
+tsrepl() {
+  local tsconfig=""
+  if [[ -f "tsconfig.json" ]]; then
+    tsconfig="--project tsconfig.json"
+  fi
+
+  if command -v ts-node &>/dev/null; then
+    ts-node $tsconfig
+  else
+    npx --yes ts-node $tsconfig
+  fi
+}
+
+# ESM-aware REPL for projects using "type": "module"
+# Requires Node 20+
+esrepl() {
+  node --experimental-repl-await --input-type=module \
+    -e 'import repl from "repl"; repl.start({ useGlobal: true });'
+}
+```
+
+After adding the functions, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# Drop into Node REPL with specific modules loaded
+nrepl lodash dayjs
+# > _.chunk([1,2,3,4], 2)
+# [ [ 1, 2 ], [ 3, 4 ] ]
+# > dayjs().format('YYYY-MM-DD')
+# '2026-06-03'
+
+# Auto-load everything in the nearest package.json
+nrepl
+# > axios.get('https://httpbin.org/get').then(r => console.log(r.status))
+
+# TypeScript REPL
+tsrepl
+# > import { readFileSync } from 'fs'
+# > const data: string = readFileSync('./README.md', 'utf8')
+```
+
+## How it works
+
+- `nrepl` with explicit args requires each module and starts the built-in `repl` module.
+- `nrepl` with no args reads `package.json` from the current directory, attempts `require.resolve` for each dependency to skip missing packages, and loads the rest.
+- `tsrepl` delegates to `ts-node` which transpiles TypeScript on the fly and applies your project's `tsconfig.json` so path aliases and strict settings are respected.
+- `esrepl` uses Node's native `--input-type=module` flag and `--experimental-repl-await` to enable top-level `await` in an ESM context.
+
+## Notes
+
+- Module names with hyphens (`lodash-es`) are assigned to camelCase variables (`lodash_es`).
+- Scoped packages (`@org/pkg`) have `@` and `/` stripped when naming the variable.
+- For large projects, auto-loading all deps may be slow. Pass explicit module names instead.
+- `ts-node` must be installed locally (`npm install --save-dev ts-node typescript`) or globally for `tsrepl` to work offline.
