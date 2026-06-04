@@ -1,0 +1,141 @@
+---
+title: UUID Generator
+description: Generate one or more UUIDs (v4 by default, v1 or v5 on request) from the command line and copy the result to the clipboard.
+category: cli
+language: bash
+tags: [misc, uuid, utilities, productivity]
+---
+
+Add this function to your `~/.zshrc` or `~/.bashrc` to generate UUIDs from the terminal and automatically copy them to the clipboard. Supports v1, v4, and v5 variants, and can output multiple UUIDs at once.
+
+## Usage
+
+```bash
+# ── ~/.zshrc / ~/.bashrc ──────────────────────────────────────────
+
+uuid() {
+  local version=4
+  local count=1
+  local namespace=""
+  local name_arg=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -v|--version) version="$2"; shift 2 ;;
+      -n|--count)   count="$2";   shift 2 ;;
+      --namespace)  namespace="$2"; shift 2 ;;
+      --name)       name_arg="$2";  shift 2 ;;
+      -h|--help)
+        echo "Usage: uuid [-v 1|4|5] [-n count] [--namespace <ns>] [--name <name>]"
+        return 0 ;;
+      *) shift ;;
+    esac
+  done
+
+  local results=()
+
+  for (( i=0; i<count; i++ )); do
+    local id
+    case "$version" in
+      1)
+        # v1: time-based — requires uuidgen (macOS/Linux) or the uuid CLI
+        if command -v uuidgen &>/dev/null; then
+          # macOS uuidgen always produces v4; fall back to python for v1
+          id=$(python3 -c "import uuid; print(uuid.uuid1())" 2>/dev/null) || \
+          id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+        else
+          id=$(python3 -c "import uuid; print(uuid.uuid1())")
+        fi
+        ;;
+      4)
+        if command -v uuidgen &>/dev/null; then
+          id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+        else
+          id=$(python3 -c "import uuid; print(uuid.uuid4())")
+        fi
+        ;;
+      5)
+        if [[ -z "$namespace" || -z "$name_arg" ]]; then
+          echo "v5 requires --namespace and --name"
+          echo "  Namespaces: dns, url, oid, x500"
+          return 1
+        fi
+        id=$(python3 -c "
+import uuid
+ns_map = {
+  'dns':  uuid.NAMESPACE_DNS,
+  'url':  uuid.NAMESPACE_URL,
+  'oid':  uuid.NAMESPACE_OID,
+  'x500': uuid.NAMESPACE_X500,
+}
+ns = ns_map.get('$namespace')
+if ns is None:
+    ns = uuid.UUID('$namespace')
+print(uuid.uuid5(ns, '$name_arg'))
+")
+        ;;
+      *)
+        echo "Unknown version: $version. Use 1, 4, or 5."
+        return 1
+        ;;
+    esac
+
+    results+=("$id")
+    echo "$id"
+  done
+
+  # Copy to clipboard
+  local joined
+  joined=$(printf '%s\n' "${results[@]}")
+  if [[ "$(uname)" == "Darwin" ]]; then
+    printf '%s' "$joined" | pbcopy && echo "(copied to clipboard)"
+  elif command -v xclip &>/dev/null; then
+    printf '%s' "$joined" | xclip -selection clipboard && echo "(copied to clipboard)"
+  elif command -v xsel &>/dev/null; then
+    printf '%s' "$joined" | xsel --clipboard --input && echo "(copied to clipboard)"
+  fi
+}
+```
+
+After adding the function, reload your shell:
+
+```bash
+source ~/.zshrc   # or source ~/.bashrc
+```
+
+## Examples
+
+```bash
+# Generate a single v4 UUID (default)
+uuid
+# 3b4e6f2a-9c1d-4a8e-b7f3-2e5d0a1c9b4f
+# (copied to clipboard)
+
+# Generate 5 v4 UUIDs at once
+uuid -n 5
+
+# Generate a v1 (time-based) UUID
+uuid -v 1
+
+# Generate a deterministic v5 UUID from a DNS name
+uuid -v 5 --namespace dns --name example.com
+
+# Generate 3 UUIDs and copy all to clipboard (newline-separated)
+uuid -n 3
+```
+
+## Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `-v`, `--version` | `4` | UUID version: `1`, `4`, or `5` |
+| `-n`, `--count` | `1` | Number of UUIDs to generate |
+| `--namespace` | — | Namespace for v5: `dns`, `url`, `oid`, `x500`, or a raw UUID |
+| `--name` | — | Name string for v5 UUID |
+
+## Notes
+
+- On macOS, `uuidgen` only produces v4-compatible output. For v1 and v5, the function falls back to Python 3 (available by default on macOS 12+).
+- On Linux, install `uuid-runtime` (`apt install uuid-runtime`) for `uuidgen`, or rely on the Python 3 fallback.
+- When generating multiple UUIDs, all are copied to the clipboard as newline-separated values.
+- v5 UUIDs are deterministic: the same namespace + name always produces the same UUID, making them useful for generating stable IDs for known entities.
