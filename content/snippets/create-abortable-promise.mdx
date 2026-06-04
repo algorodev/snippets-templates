@@ -1,0 +1,85 @@
+---
+title: Create Abortable Promise
+description: Wraps any promise with AbortController support, rejecting with an AbortError when the signal fires. Ensures the underlying operation is cancelled without leaving dangling handlers.
+category: snippets
+language: typescript
+tags: [async, utils, abort, promise]
+---
+
+Adds cancellation support to any promise using the standard `AbortSignal` API, so long-running operations can be cleanly cancelled without leaving orphaned event listeners.
+
+## Usage
+
+```typescript
+function createAbortablePromise<T>(
+  promise: Promise<T>,
+  signal: AbortSignal
+): Promise<T> {
+  // Already aborted before we even start
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    function onAbort() {
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+
+    promise.then(
+      value => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      reason => {
+        signal.removeEventListener('abort', onAbort)
+        reject(reason)
+      }
+    )
+  })
+}
+
+export { createAbortablePromise }
+```
+
+## Examples
+
+```typescript
+// Cancel a slow fetch after 2 seconds
+const controller = new AbortController()
+setTimeout(() => controller.abort(), 2_000)
+
+try {
+  const data = await createAbortablePromise(
+    fetch('/api/large-export').then(r => r.json()),
+    controller.signal
+  )
+  console.log(data)
+} catch (err) {
+  if (err instanceof DOMException && err.name === 'AbortError') {
+    console.warn('Request was cancelled')
+  } else {
+    throw err
+  }
+}
+
+// Use inside a React effect for cleanup
+useEffect(() => {
+  const controller = new AbortController()
+
+  createAbortablePromise(loadUserData(userId), controller.signal)
+    .then(setUser)
+    .catch(err => {
+      if (err.name !== 'AbortError') setError(err)
+    })
+
+  return () => controller.abort()
+}, [userId])
+```
+
+## Notes
+
+- The `{ once: true }` option on `addEventListener` guarantees the abort handler removes itself automatically, so you never accumulate stale listeners even if `removeEventListener` is somehow skipped.
+- Checking `signal.aborted` at the top handles the edge case where the signal was already aborted before `createAbortablePromise` was called.
+- The underlying `promise` still runs to completion — `AbortController` does not and cannot stop work that has already started. For true cancellation, pass the `signal` directly to APIs (like `fetch`) that natively support it.
