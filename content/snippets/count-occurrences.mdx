@@ -1,0 +1,68 @@
+---
+title: Count String Occurrences
+description: Counts how many times a substring or pattern appears in a string. Supports both literal substring matching and regular-expression patterns.
+category: snippets
+language: typescript
+tags: [string, utils, search, analysis]
+---
+
+Returns the number of times a given substring or regex pattern appears within a string. The regex path always uses the global flag to count every match, not just the first.
+
+## Usage
+
+```typescript
+function countOccurrences(str: string, search: string | RegExp): number {
+  if (str.length === 0) return 0
+
+  if (typeof search === 'string') {
+    if (search.length === 0) return 0
+
+    let count = 0
+    let index = 0
+
+    while ((index = str.indexOf(search, index)) !== -1) {
+      count++
+      index += search.length // advance past the current match (non-overlapping)
+    }
+
+    return count
+  }
+
+  // RegExp path — clone with the global flag to avoid mutating the caller's regex
+  // and to ensure exec() iterates all matches rather than returning only the first.
+  const globalRegex = search.global
+    ? search
+    : new RegExp(search.source, search.flags + 'g')
+
+  return (str.match(globalRegex) ?? []).length
+}
+
+export default countOccurrences
+```
+
+## Examples
+
+```typescript
+countOccurrences('banana', 'an')          // => 2
+countOccurrences('aaa', 'aa')             // => 1  (non-overlapping)
+countOccurrences('hello world', 'o')      // => 2
+countOccurrences('', 'x')                 // => 0
+
+// RegExp patterns
+countOccurrences('foo123bar456', /\d+/)   // => 2
+countOccurrences('AbcABC', /abc/i)        // => 2
+countOccurrences('one TWO three', /\b\w{3}\b/g) // => 3
+```
+
+## Options
+
+| Parameter | Type                | Description                                                      |
+|-----------|---------------------|------------------------------------------------------------------|
+| `str`     | `string`            | The string to search within.                                     |
+| `search`  | `string \| RegExp`  | The literal substring or regex pattern to count occurrences of. |
+
+## Notes
+
+- Substring matching is **non-overlapping**: `countOccurrences('aaa', 'aa')` returns `1`, not `2`. If you need overlapping counts, use the regex path with a lookahead: `/(?=aa)/g`.
+- When passing a `RegExp` without the `g` flag, the function silently adds it internally. The original regex object is never mutated.
+- An empty search string returns `0` rather than `str.length + 1` (the behaviour of `'x'.split('').length`), which is almost always the more useful result.
