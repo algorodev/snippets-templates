@@ -1,0 +1,210 @@
+---
+title: AWS S3 Sync Helper
+description: Sync a local directory to an S3 bucket with profile switching, dry-run support, and cache-control headers for static site deploys.
+category: cli
+language: bash
+tags: [cloud, aws, s3, devops]
+---
+
+A wrapper around `aws s3 sync` that handles the flags you set on every deploy: AWS profile selection, dry-run previews, and per-file-type cache-control headers for static sites.
+
+## Usage
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+# Sync a local directory to an S3 bucket.
+# Usage: s3sync <local-dir> <s3://bucket[/prefix]> [--profile <name>] [--dry-run] [--public] [--delete] [--region <region>]
+#
+# Cache-control headers applied automatically for static site assets:
+#   HTML files      → no-cache (always revalidated)
+#   JS/CSS          → max-age=31536000, immutable  (1 year)
+#   Images/fonts    → max-age=2592000              (30 days)
+#   Everything else → max-age=3600                 (1 hour)
+s3sync() {
+  local src=""
+  local dest=""
+  local profile="${AWS_PROFILE:-default}"
+  local region="${AWS_DEFAULT_REGION:-}"
+  local dry_run=false
+  local public=false
+  local delete=false
+
+  # First two positional args
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Usage: s3sync <local-dir> <s3://bucket[/prefix]> [--profile name] [--dry-run] [--public] [--delete] [--region region]"
+    return 1
+  fi
+  src="$1"; dest="$2"
+  shift 2
+
+  # Parse flags
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --profile)   profile="$2";  shift 2 ;;
+      --region)    region="$2";   shift 2 ;;
+      --dry-run)   dry_run=true;  shift ;;
+      --public)    public=true;   shift ;;
+      --delete)    delete=true;   shift ;;
+      *) echo "Unknown option: $1"; return 1 ;;
+    esac
+  done
+
+  if [ ! -d "$src" ]; then
+    echo "Error: source directory does not exist: $src"
+    return 1
+  fi
+
+  echo "Source:  $src"
+  echo "Dest:    $dest"
+  echo "Profile: $profile"
+  [ -n "$region" ] && echo "Region:  $region"
+  $dry_run  && echo "Mode:    DRY RUN (no changes will be made)"
+  $delete   && echo "Delete:  enabled (files removed from S3 if not in source)"
+  $public   && echo "ACL:     public-read"
+  echo "---"
+
+  # Build shared base args
+  local base_args=(--profile "$profile")
+  [ -n "$region" ] && base_args+=(--region "$region")
+  $dry_run  && base_args+=(--dryrun)
+  $delete   && base_args+=(--delete)
+  $public   && base_args+=(--acl public-read)
+
+  # --- Pass 1: HTML files — no-cache ---
+  echo "[1/4] Syncing HTML (no-cache)..."
+  aws s3 sync "$src" "$dest" \
+    "${base_args[@]}" \
+    --exclude "*" \
+    --include "*.html" \
+    --cache-control "no-cache, no-store, must-revalidate" \
+    --content-type "text/html; charset=utf-8"
+
+  # --- Pass 2: JS and CSS — long-lived immutable ---
+  echo "[2/4] Syncing JS/CSS (max-age=31536000, immutable)..."
+  aws s3 sync "$src" "$dest" \
+    "${base_args[@]}" \
+    --exclude "*" \
+    --include "*.js" \
+    --include "*.css" \
+    --include "*.mjs" \
+    --cache-control "public, max-age=31536000, immutable"
+
+  # --- Pass 3: Images and fonts — 30 days ---
+  echo "[3/4] Syncing images/fonts (max-age=2592000)..."
+  aws s3 sync "$src" "$dest" \
+    "${base_args[@]}" \
+    --exclude "*" \
+    --include "*.png" --include "*.jpg" --include "*.jpeg" \
+    --include "*.gif" --include "*.webp" --include "*.avif" \
+    --include "*.svg" --include "*.ico" \
+    --include "*.woff" --include "*.woff2" --include "*.ttf" --include "*.eot" \
+    --cache-control "public, max-age=2592000"
+
+  # --- Pass 4: Everything else — 1 hour ---
+  echo "[4/4] Syncing remaining files (max-age=3600)..."
+  aws s3 sync "$src" "$dest" \
+    "${base_args[@]}" \
+    --exclude "*.html" \
+    --exclude "*.js" --exclude "*.css" --exclude "*.mjs" \
+    --exclude "*.png" --exclude "*.jpg" --exclude "*.jpeg" \
+    --exclude "*.gif" --exclude "*.webp" --exclude "*.avif" \
+    --exclude "*.svg" --exclude "*.ico" \
+    --exclude "*.woff" --exclude "*.woff2" --exclude "*.ttf" --exclude "*.eot" \
+    --cache-control "public, max-age=3600"
+
+  if $dry_run; then
+    echo "---"
+    echo "Dry run complete. Re-run without --dry-run to apply changes."
+  else
+    echo "---"
+    echo "Sync complete: $src → $dest"
+  fi
+}
+
+# Invalidate a CloudFront distribution after a deploy.
+# Usage: cf_invalidate <distribution-id> [path] [--profile <name>]
+cf_invalidate() {
+  local dist_id="$1"
+  local path="${2:-/*}"
+  local profile="${AWS_PROFILE:-default}"
+
+  if [ -z "$dist_id" ]; then
+    echo "Usage: cf_invalidate <distribution-id> [path] [--profile name]"
+    return 1
+  fi
+  shift 2 2>/dev/null || shift 1 2>/dev/null || true
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --profile) profile="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  echo "Invalidating CloudFront distribution: $dist_id"
+  echo "Path: $path"
+
+  aws cloudfront create-invalidation \
+    --profile "$profile" \
+    --distribution-id "$dist_id" \
+    --paths "$path"
+}
+```
+
+## Options
+
+### `s3sync`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--profile` | `$AWS_PROFILE` or `default` | AWS CLI named profile to use |
+| `--region` | `$AWS_DEFAULT_REGION` | Override the AWS region |
+| `--dry-run` | off | Preview changes without uploading anything |
+| `--public` | off | Set `public-read` ACL on synced objects |
+| `--delete` | off | Remove objects in S3 that no longer exist locally |
+
+### `cf_invalidate`
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `<distribution-id>` | required | CloudFront distribution ID (`E1XXXXXX`) |
+| `[path]` | `/*` | Path pattern to invalidate |
+| `--profile` | `$AWS_PROFILE` or `default` | AWS CLI named profile |
+
+## Examples
+
+```bash
+# Preview what would be uploaded (safe first run)
+s3sync ./dist s3://my-site-bucket --dry-run
+
+# Full deploy with stale file removal
+s3sync ./dist s3://my-site-bucket --delete
+
+# Deploy using a specific AWS profile
+s3sync ./out s3://staging-bucket --profile staging --delete
+
+# Deploy to a sub-path in the bucket
+s3sync ./docs/_build s3://my-site-bucket/docs --delete
+
+# Deploy to a public bucket (static hosting with no bucket policy)
+s3sync ./dist s3://my-site-bucket --public --delete
+
+# Invalidate the whole CloudFront distribution after deploy
+cf_invalidate E1A2B3C4D5E6F7
+
+# Invalidate only the HTML files
+cf_invalidate E1A2B3C4D5E6F7 "/*.html" --profile prod
+
+# Full deploy + invalidation in one go
+s3sync ./dist s3://my-site-bucket --profile prod --delete && \
+  cf_invalidate E1A2B3C4D5E6F7 --profile prod
+```
+
+## How it works
+
+The sync runs in four sequential passes, each targeting a specific file type with its own `Cache-Control` header via `--exclude`/`--include` patterns. This avoids a limitation of the AWS CLI — the `aws s3 sync` command applies a single `--cache-control` value to all matched files, so multi-pass syncs are the standard approach for per-type headers.
+
+Pass order matters: HTML files are synced first with `no-cache` so browsers always revalidate the entry point, while JS/CSS assets hashed by the build tool get a one-year immutable header so they are never re-fetched after the initial load.
+
+The `--delete` flag is safe to use together with the multi-pass approach because each pass scopes deletions to the files it actually manages — any file not matched by a pass is left untouched.
