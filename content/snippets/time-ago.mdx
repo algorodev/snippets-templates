@@ -1,0 +1,103 @@
+---
+title: Time Ago (Relative Time)
+description: Converts a past date or timestamp into a human-readable relative string such as '3 minutes ago' or '2 days ago'. Handles future dates with a 'in X' prefix.
+category: snippets
+language: typescript
+tags: [date, utils, formatting, relative]
+---
+
+Turns any `Date` or timestamp into a relative string like `"5 minutes ago"` or `"in 2 days"`. Zero-dependency and works in any JavaScript runtime.
+
+## Usage
+
+```typescript
+type DateInput = Date | number
+
+/**
+ * Returns a human-readable relative time string.
+ *
+ * Past dates:   "just now", "3 minutes ago", "2 days ago", "1 year ago"
+ * Future dates: "in 5 minutes", "in 3 months"
+ */
+function timeAgo(input: DateInput): string {
+  const date = typeof input === 'number' ? new Date(input) : input
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const absDiff = Math.abs(diffMs)
+  const isFuture = diffMs < 0
+
+  const seconds = Math.floor(absDiff / 1000)
+  const minutes = Math.floor(absDiff / 1000 / 60)
+  const hours = Math.floor(absDiff / 1000 / 60 / 60)
+  const days = Math.floor(absDiff / 1000 / 60 / 60 / 24)
+  const weeks = Math.floor(days / 7)
+  const months = Math.floor(days / 30)
+  const years = Math.floor(days / 365)
+
+  let value: string
+
+  if (seconds < 10) {
+    return 'just now'
+  } else if (seconds < 60) {
+    value = `${seconds} second${seconds !== 1 ? 's' : ''}`
+  } else if (minutes < 60) {
+    value = `${minutes} minute${minutes !== 1 ? 's' : ''}`
+  } else if (hours < 24) {
+    value = `${hours} hour${hours !== 1 ? 's' : ''}`
+  } else if (days < 7) {
+    value = `${days} day${days !== 1 ? 's' : ''}`
+  } else if (weeks < 5) {
+    value = `${weeks} week${weeks !== 1 ? 's' : ''}`
+  } else if (months < 12) {
+    value = `${months} month${months !== 1 ? 's' : ''}`
+  } else {
+    value = `${years} year${years !== 1 ? 's' : ''}`
+  }
+
+  return isFuture ? `in ${value}` : `${value} ago`
+}
+
+export default timeAgo
+```
+
+## Examples
+
+```typescript
+const now = Date.now()
+
+timeAgo(now - 5_000)
+// => 'just now'  (< 10 seconds)
+
+timeAgo(now - 45_000)
+// => '45 seconds ago'
+
+timeAgo(now - 3 * 60 * 1000)
+// => '3 minutes ago'
+
+timeAgo(now - 2 * 60 * 60 * 1000)
+// => '2 hours ago'
+
+timeAgo(now - 5 * 24 * 60 * 60 * 1000)
+// => '5 days ago'
+
+timeAgo(now - 14 * 24 * 60 * 60 * 1000)
+// => '2 weeks ago'
+
+timeAgo(now - 400 * 24 * 60 * 60 * 1000)
+// => '1 year ago'
+
+// Future dates
+timeAgo(now + 10 * 60 * 1000)
+// => 'in 10 minutes'
+
+// Also accepts a Date object
+timeAgo(new Date('2023-01-01'))
+// => '2 years ago'  (relative to current date)
+```
+
+## Notes
+
+- Thresholds use `Math.floor`, so "1 hour ago" appears once 60 full minutes have passed.
+- Month and year calculations use approximate values (30 days/month, 365 days/year). For calendar-accurate differences, pair this with `Intl.RelativeTimeFormat` or `date-fns/formatDistanceToNow`.
+- `"just now"` is returned for differences under 10 seconds in either direction — tweak the threshold to suit your UI.
+- For a native browser alternative, `Intl.RelativeTimeFormat` provides locale-aware output but requires you to compute the unit and value yourself.
