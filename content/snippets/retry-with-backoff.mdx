@@ -1,0 +1,103 @@
+---
+title: Retry With Exponential Backoff
+description: Retries a failing async operation with configurable exponential backoff and jitter. Supports a maximum retry count and an optional should-retry predicate.
+category: snippets
+language: typescript
+tags: [async, utils, retry, resilience]
+---
+
+Automatically re-runs a flaky async operation using exponential backoff with full jitter, reducing thundering-herd pressure on overloaded services.
+
+## Usage
+
+```typescript
+interface RetryOptions {
+  /** Maximum number of retry attempts (default: 3) */
+  maxRetries?: number
+  /** Base delay in milliseconds before the first retry (default: 200) */
+  baseDelayMs?: number
+  /** Maximum delay cap in milliseconds (default: 10_000) */
+  maxDelayMs?: number
+  /** Return false to stop retrying for a specific error (default: always retry) */
+  shouldRetry?: (error: unknown, attempt: number) => boolean
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
+  const {
+    maxRetries = 3,
+    baseDelayMs = 200,
+    maxDelayMs = 10_000,
+    shouldRetry = () => true,
+  } = options
+
+  let lastError: unknown
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastError = err
+
+      const isLastAttempt = attempt === maxRetries
+      if (isLastAttempt || !shouldRetry(err, attempt)) {
+        throw err
+      }
+
+      // Exponential backoff with full jitter
+      const exponential = baseDelayMs * 2 ** attempt
+      const capped = Math.min(exponential, maxDelayMs)
+      const jittered = Math.random() * capped
+
+      await sleep(jittered)
+    }
+  }
+
+  throw lastError
+}
+
+export { retryWithBackoff }
+export type { RetryOptions }
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `maxRetries` | `number` | `3` | Total retries before giving up |
+| `baseDelayMs` | `number` | `200` | Starting delay for backoff calculation |
+| `maxDelayMs` | `number` | `10000` | Upper bound on any single delay |
+| `shouldRetry` | `function` | `() => true` | Predicate to skip retries for non-transient errors |
+
+## Examples
+
+```typescript
+// Basic usage — retries up to 3 times
+const user = await retryWithBackoff(() =>
+  fetch('/api/user/42').then(r => r.json())
+)
+
+// Only retry on network or 5xx errors, not 4xx
+const result = await retryWithBackoff(
+  () => apiClient.get('/resource'),
+  {
+    maxRetries: 5,
+    baseDelayMs: 100,
+    shouldRetry: (err, attempt) => {
+      if (err instanceof Response && err.status < 500) return false
+      console.warn(`Attempt ${attempt + 1} failed, retrying...`)
+      return true
+    },
+  }
+)
+```
+
+## How it works
+
+Each failed attempt waits for `random() * min(baseDelay * 2^attempt, maxDelay)` milliseconds before trying again. Multiplying by a random value between 0 and 1 (full jitter) spreads retries across time rather than having all clients back off to the exact same moment.
