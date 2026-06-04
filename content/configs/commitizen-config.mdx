@@ -1,0 +1,104 @@
+---
+title: Commitizen Config
+description: A Commitizen configuration using the cz-conventional-changelog adapter for interactive conventional commit prompts. Integrates with commitlint for end-to-end commit message enforcement.
+category: configs
+language: json
+tags: [commitizen, conventional-commits, git, dx]
+---
+
+Commitizen replaces `git commit` with an interactive CLI prompt that guides developers through every field of a Conventional Commit message. The generated message is always spec-compliant, so commitlint never blocks it.
+
+## Usage
+
+```json
+// package.json
+{
+  "scripts": {
+    "commit": "cz"
+  },
+  "config": {
+    "commitizen": {
+      "path": "cz-conventional-changelog"
+    }
+  }
+}
+```
+
+**Install dependencies:**
+
+```bash
+npm install -D commitizen cz-conventional-changelog
+```
+
+**Make `git cz` available globally** (optional but recommended):
+
+```bash
+npm install -g commitizen
+```
+
+**Run the interactive prompt:**
+
+```bash
+# Via npm script (no global install needed)
+npm run commit
+
+# Via global CLI
+git cz
+```
+
+## How it works
+
+Running `npm run commit` launches the `cz-conventional-changelog` adapter, which prompts for:
+
+1. **Type** — `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
+2. **Scope** — optional component or area affected (e.g. `auth`, `api`)
+3. **Short description** — imperative, present-tense subject line
+4. **Longer description** — optional multi-line body
+5. **Breaking changes** — flags the commit with `BREAKING CHANGE:` footer if answered
+6. **Issues closed** — appends `Closes #<n>` footers automatically
+
+The assembled message is passed to `git commit -m` internally, triggering the Husky `commit-msg` hook and commitlint as normal.
+
+## Options
+
+To customise the list of types, scopes, or prompt text, swap `cz-conventional-changelog` for `cz-customizable` and add a `.cz-config.js` file:
+
+```bash
+npm install -D cz-customizable
+```
+
+```json
+// package.json
+{
+  "config": {
+    "commitizen": {
+      "path": "cz-customizable"
+    }
+  }
+}
+```
+
+```javascript
+// .cz-config.js
+module.exports = {
+  types: [
+    { value: 'feat',     name: 'feat:     A new feature' },
+    { value: 'fix',      name: 'fix:      A bug fix' },
+    { value: 'docs',     name: 'docs:     Documentation only' },
+    { value: 'refactor', name: 'refactor: Code change, no fix or feature' },
+    { value: 'perf',     name: 'perf:     Performance improvement' },
+    { value: 'test',     name: 'test:     Adding or fixing tests' },
+    { value: 'chore',    name: 'chore:    Build process or tooling' },
+  ],
+  scopes: ['auth', 'api', 'ui', 'db', 'infra'],
+  allowCustomScopes: true,
+  allowBreakingChanges: ['feat', 'fix'],
+}
+```
+
+## Notes
+
+- Commitizen does not replace commitlint — it prevents bad messages at the authoring step while commitlint remains the hard enforcement gate. Both tools should be present.
+- `npm run commit` is preferred over a global `git cz` in team projects because it avoids requiring each developer to install `commitizen` globally.
+- In CI, commits are made programmatically (e.g. by release tools like `semantic-release`), so Commitizen only affects local developer workflow.
+- Pair with `semantic-release` or `release-please` to drive automated versioning and changelogs entirely from Conventional Commit history.
