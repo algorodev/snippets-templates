@@ -1,0 +1,150 @@
+---
+title: Jest Config for TypeScript
+description: A Jest configuration for TypeScript projects using ts-jest for transformation. Covers module name mapping, code coverage thresholds, and setup files.
+category: configs
+language: javascript
+tags: [jest, testing, typescript, unit-test]
+---
+
+Full Jest setup for TypeScript projects using ts-jest — includes path alias mapping, coverage thresholds, and a global setup file for custom matchers and global mocks.
+
+## Usage
+
+```javascript
+// jest.config.js
+/** @type {import('jest').Config} */
+const config = {
+  preset: 'ts-jest',
+  testEnvironment: 'node', // or 'jsdom' for browser/React projects
+
+  // Where to find tests
+  roots: ['<rootDir>/src'],
+  testMatch: ['**/__tests__/**/*.ts?(x)', '**/*.{spec,test}.ts?(x)'],
+
+  // Transform TypeScript files with ts-jest
+  transform: {
+    '^.+\\.tsx?$': [
+      'ts-jest',
+      {
+        tsconfig: 'tsconfig.json',
+        // Set to true to skip type checking (faster, good for large projects)
+        isolatedModules: false,
+      },
+    ],
+  },
+
+  // Map path aliases to match tsconfig.json "paths"
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+    '^@components/(.*)$': '<rootDir>/src/components/$1',
+    '^@utils/(.*)$': '<rootDir>/src/utils/$1',
+    // Mock static assets so imports don't break
+    '\\.(jpg|jpeg|png|gif|svg|webp)$': '<rootDir>/src/__mocks__/fileMock.js',
+    '\\.(css|scss|sass|less)$': '<rootDir>/src/__mocks__/styleMock.js',
+  },
+
+  // File extensions Jest will resolve
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
+
+  // Run before each test suite (after the test framework is installed)
+  setupFilesAfterEnv: ['<rootDir>/src/test/setup.ts'],
+
+  // Coverage configuration
+  collectCoverage: false, // enable with --coverage flag
+  collectCoverageFrom: [
+    'src/**/*.{ts,tsx}',
+    '!src/**/*.{spec,test}.{ts,tsx}',
+    '!src/**/*.d.ts',
+    '!src/test/**',
+    '!src/index.ts',
+  ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'lcov', 'html'],
+  coverageThreshold: {
+    global: {
+      statements: 80,
+      branches: 75,
+      functions: 80,
+      lines: 80,
+    },
+  },
+
+  // Ignore paths during test discovery
+  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/build/'],
+
+  // Clear mocks between tests
+  clearMocks: true,
+  restoreMocks: true,
+
+  // Timeout per test in milliseconds
+  testTimeout: 5000,
+}
+
+module.exports = config
+```
+
+**Setup file (`src/test/setup.ts`):**
+
+```typescript
+import '@testing-library/jest-dom'
+
+// Example: global fetch mock
+global.fetch = jest.fn()
+
+beforeEach(() => {
+  jest.clearAllMocks()
+})
+```
+
+**Asset mock files:**
+
+```javascript
+// src/__mocks__/fileMock.js
+module.exports = 'test-file-stub'
+```
+
+```javascript
+// src/__mocks__/styleMock.js
+module.exports = {}
+```
+
+**Install:**
+
+```bash
+npm install -D jest ts-jest @types/jest
+# For jsdom environment (React, DOM tests):
+npm install -D jest-environment-jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event
+```
+
+**Add scripts to `package.json`:**
+
+```json
+{
+  "scripts": {
+    "test": "jest --watch",
+    "test:run": "jest",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --ci --coverage --runInBand"
+  }
+}
+```
+
+## Options
+
+| Field | Value | Effect |
+|-------|-------|--------|
+| `preset` | `"ts-jest"` | Applies ts-jest defaults for TypeScript transform and extensions |
+| `testEnvironment` | `"node"` \| `"jsdom"` | Runtime environment for tests |
+| `isolatedModules` | `true` | Transpile-only mode in ts-jest — faster but skips type checking |
+| `clearMocks` | `true` | Clears mock call history between tests without resetting implementation |
+| `restoreMocks` | `true` | Restores all `jest.spyOn` mocks after each test |
+| `coverageThreshold` | object | Fails the run if coverage drops below these values |
+| `--runInBand` | flag | Runs tests serially — recommended for CI to avoid memory issues |
+
+## Notes
+
+- `isolatedModules: true` makes ts-jest skip full type checking and just transpile. This is significantly faster for large projects; run `tsc --noEmit` separately in CI for type safety.
+- `moduleNameMapper` entries must exactly mirror `compilerOptions.paths` in `tsconfig.json`, otherwise TypeScript resolves imports that Jest cannot.
+- Use `testEnvironment: "jsdom"` for any code that touches the DOM, `document`, or `window`. Install `jest-environment-jsdom` separately — it is no longer bundled with Jest 27+.
+- `--ci` flag disables interactive mode and treats new snapshots as failures, making it safe for automated pipelines.
+- For projects with many test files, enable `--maxWorkers=50%` in CI to balance parallelism against memory usage.
