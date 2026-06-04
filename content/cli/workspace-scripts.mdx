@@ -1,0 +1,163 @@
+---
+title: Monorepo Workspace Scripts
+description: Run npm/pnpm/yarn workspace scripts across all packages or a filtered subset from the repo root with a single command.
+category: cli
+language: bash
+tags: [node, monorepo, workspaces, automation]
+---
+
+A shell function (plus a thin wrapper script) that detects your workspace package manager and runs a given `package.json` script across every package — or a filtered subset — without leaving the repo root.
+
+## Usage
+
+```bash
+#!/usr/bin/env bash
+# ws-run.sh — run a script across workspace packages
+# Usage: ./ws-run.sh <script> [--filter <glob>] [-- <extra args>]
+#
+# Examples:
+#   ./ws-run.sh build
+#   ./ws-run.sh test --filter "packages/*"
+#   ./ws-run.sh lint --filter "@acme/ui"
+#   ./ws-run.sh typecheck -- --noEmit
+set -euo pipefail
+
+SCRIPT="${1:?Usage: ws-run.sh <script> [--filter <glob>] [-- <extra args>]}"
+shift
+FILTER=""
+EXTRA_ARGS=()
+
+# Parse optional --filter and passthrough args after --
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --filter)
+      FILTER="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      EXTRA_ARGS=("$@")
+      break
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Detect package manager from root lockfile
+detect_pm() {
+  if [ -f "bun.lockb" ] || [ -f "bun.lock" ]; then echo "bun"
+  elif [ -f "pnpm-lock.yaml" ]; then echo "pnpm"
+  elif [ -f "yarn.lock" ]; then echo "yarn"
+  elif [ -f "package-lock.json" ]; then echo "npm"
+  else echo "npm"
+  fi
+}
+
+PM=$(detect_pm)
+echo "Package manager: $PM"
+echo "Script         : $SCRIPT"
+[ -n "$FILTER" ] && echo "Filter         : $FILTER"
+echo ""
+
+run_npm() {
+  # npm workspaces: --workspaces flag; --workspace for a specific package
+  if [ -n "$FILTER" ]; then
+    npm run "$SCRIPT" --workspace="$FILTER" "${EXTRA_ARGS[@]:+--}" "${EXTRA_ARGS[@]}"
+  else
+    npm run "$SCRIPT" --workspaces --if-present "${EXTRA_ARGS[@]:+--}" "${EXTRA_ARGS[@]}"
+  fi
+}
+
+run_pnpm() {
+  local filter_args=()
+  [ -n "$FILTER" ] && filter_args=(--filter "$FILTER")
+  pnpm "${filter_args[@]}" run "$SCRIPT" --if-present "${EXTRA_ARGS[@]}"
+}
+
+run_yarn() {
+  # Yarn Berry (v2+) workspaces foreach
+  if yarn --version 2>/dev/null | grep -q '^[1]\.'; then
+    # Yarn Classic
+    if [ -n "$FILTER" ]; then
+      yarn workspace "$FILTER" run "$SCRIPT" "${EXTRA_ARGS[@]}"
+    else
+      yarn workspaces run "$SCRIPT" "${EXTRA_ARGS[@]}"
+    fi
+  else
+    # Yarn Berry
+    local filter_args=()
+    [ -n "$FILTER" ] && filter_args=(--include "$FILTER")
+    yarn workspaces foreach "${filter_args[@]}" --parallel --interlaced run "$SCRIPT" "${EXTRA_ARGS[@]}"
+  fi
+}
+
+run_bun() {
+  # Bun workspace support (v1.1+)
+  if [ -n "$FILTER" ]; then
+    bun run --filter "$FILTER" "$SCRIPT" "${EXTRA_ARGS[@]}"
+  else
+    bun run --filter '*' "$SCRIPT" "${EXTRA_ARGS[@]}"
+  fi
+}
+
+case "$PM" in
+  npm)  run_npm  ;;
+  pnpm) run_pnpm ;;
+  yarn) run_yarn ;;
+  bun)  run_bun  ;;
+esac
+```
+
+## Examples
+
+```bash
+chmod +x ws-run.sh
+
+# Build every package
+./ws-run.sh build
+
+# Run tests only in packages under packages/
+./ws-run.sh test --filter "packages/*"
+
+# Typecheck a single named package
+./ws-run.sh typecheck --filter "@acme/ui"
+
+# Pass extra flags to the underlying script
+./ws-run.sh test -- --coverage --ci
+
+# Lint only server-side packages
+./ws-run.sh lint --filter "apps/api"
+```
+
+## Shell function variant
+
+Add this to `~/.zshrc` or `~/.bashrc` to use `wsr` from any monorepo root:
+
+```bash
+wsr() {
+  local script="${1:?Usage: wsr <script> [--filter <glob>]}"
+  shift
+  bash "$(git rev-parse --show-toplevel)/ws-run.sh" "$script" "$@"
+}
+```
+
+## How it works
+
+The script detects the package manager from root lockfiles, then calls the appropriate native workspace command:
+
+| Manager | All packages | Filtered |
+|---------|-------------|----------|
+| npm     | `npm run <script> --workspaces --if-present` | `--workspace=<filter>` |
+| pnpm    | `pnpm run <script> --if-present` | `--filter <filter>` |
+| yarn v1 | `yarn workspaces run <script>` | `yarn workspace <name> run <script>` |
+| yarn v2+ | `yarn workspaces foreach run <script>` | `--include <filter>` |
+| bun     | `bun run --filter '*' <script>` | `--filter <filter>` |
+
+## Notes
+
+- Scripts that don't exist in a package are silently skipped when `--if-present` is supported (npm, pnpm). For yarn classic, missing scripts will error — wrap the `scripts` entry with a no-op if needed.
+- pnpm filters support glob patterns and `^` / `...` dependency-aware selectors (e.g. `--filter "...{packages/shared}"` runs dependents of `shared`).
+- For CI pipelines, pnpm's `--parallel` flag and yarn berry's `--parallel --interlaced` run packages concurrently and interleave output readably.
