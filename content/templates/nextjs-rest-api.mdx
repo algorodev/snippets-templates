@@ -1,0 +1,376 @@
+---
+title: Next.js REST API (Route Handlers)
+description: A RESTful API template built exclusively with Next.js Route Handlers, featuring Zod validation, JWT authentication, and Prisma ORM. Ideal for full-stack apps that need a structured API layer.
+category: templates
+language: TypeScript
+tags: [next.js, rest-api, route-handlers, zod, prisma]
+---
+
+A structured REST API using only Next.js Route Handlers — no Express, no separate server. Every endpoint gets Zod-validated request bodies, JWT-based auth middleware, typed responses, and Prisma-backed persistence.
+
+## Usage
+
+```typescript
+// lib/api.ts — shared request helpers and response factories
+import { NextRequest, NextResponse } from "next/server";
+import { ZodSchema, ZodError } from "zod";
+
+export type ApiHandler = (
+  req: NextRequest,
+  ctx: { params: Record<string, string> }
+) => Promise<NextResponse>;
+
+/** Parse and validate a JSON body against a Zod schema. */
+export async function parseBody<T>(
+  req: NextRequest,
+  schema: ZodSchema<T>
+): Promise<{ data: T; error: null } | { data: null; error: NextResponse }> {
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return {
+      data: null,
+      error: NextResponse.json({ error: "Invalid JSON" }, { status: 400 }),
+    };
+  }
+
+  const result = schema.safeParse(raw);
+  if (!result.success) {
+    return {
+      data: null,
+      error: NextResponse.json(
+        { error: "Validation failed", issues: result.error.issues },
+        { status: 422 }
+      ),
+    };
+  }
+
+  return { data: result.data, error: null };
+}
+
+/** Typed success response. */
+export function ok<T>(data: T, status = 200) {
+  return NextResponse.json(data, { status });
+}
+
+/** Typed error response. */
+export function err(message: string, status = 400) {
+  return NextResponse.json({ error: message }, { status });
+}
+```
+
+```typescript
+// lib/auth-middleware.ts — JWT verification
+import { NextRequest, NextResponse } from "next/server";
+import { jwtVerify } from "jose";
+
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET!);
+
+export interface AuthPayload {
+  sub: string;   // user ID
+  email: string;
+  role: string;
+  iat: number;
+  exp: number;
+}
+
+export type AuthedHandler = (
+  req: NextRequest,
+  ctx: { params: Record<string, string>; user: AuthPayload }
+) => Promise<NextResponse>;
+
+/** Wraps a Route Handler and injects a verified user payload. */
+export function withAuth(handler: AuthedHandler) {
+  return async (
+    req: NextRequest,
+    ctx: { params: Record<string, string> }
+  ): Promise<NextResponse> => {
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return NextResponse.json({ error: "Missing token" }, { status: 401 });
+    }
+
+    const token = authHeader.slice(7);
+    try {
+      const { payload } = await jwtVerify(token, JWT_SECRET);
+      return handler(req, { ...ctx, user: payload as AuthPayload });
+    } catch {
+      return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
+    }
+  };
+}
+```
+
+```typescript
+// app/api/auth/login/route.ts — issue a JWT
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import { SignJWT } from "jose";
+import bcrypt from "bcryptjs";
+import { prisma } from "@/lib/prisma";
+import { parseBody, ok, err } from "@/lib/api";
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET!);
+
+export async function POST(req: NextRequest) {
+  const { data, error } = await parseBody(req, loginSchema);
+  if (error) return error;
+
+  const user = await prisma.user.findUnique({ where: { email: data.email } });
+  if (!user || !(await bcrypt.compare(data.password, user.passwordHash))) {
+    return err("Invalid email or password", 401);
+  }
+
+  const token = await new SignJWT({ sub: user.id, email: user.email, role: user.role })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(JWT_SECRET);
+
+  return ok({ token, expiresIn: "7d" });
+}
+```
+
+```typescript
+// app/api/posts/route.ts — list and create posts
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import { withAuth } from "@/lib/auth-middleware";
+import { parseBody, ok, err } from "@/lib/api";
+import { prisma } from "@/lib/prisma";
+
+const createPostSchema = z.object({
+  title: z.string().min(1).max(255),
+  body: z.string().min(1),
+  published: z.boolean().default(false),
+});
+
+// GET /api/posts — public list with pagination
+export async function GET(req: NextRequest) {
+  const { searchParams } = req.nextUrl;
+  const page = Math.max(1, Number(searchParams.get("page") ?? 1));
+  const limit = Math.min(100, Number(searchParams.get("limit") ?? 20));
+  const skip = (page - 1) * limit;
+
+  const [posts, total] = await prisma.$transaction([
+    prisma.post.findMany({
+      where: { published: true },
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+      select: { id: true, title: true, createdAt: true, author: { select: { id: true, name: true } } },
+    }),
+    prisma.post.count({ where: { published: true } }),
+  ]);
+
+  return ok({ data: posts, meta: { page, limit, total, pages: Math.ceil(total / limit) } });
+}
+
+// POST /api/posts — create (auth required)
+export const POST = withAuth(async (req, { user }) => {
+  const { data, error } = await parseBody(req, createPostSchema);
+  if (error) return error;
+
+  const post = await prisma.post.create({
+    data: { ...data, authorId: user.sub },
+  });
+
+  return ok(post, 201);
+});
+```
+
+```typescript
+// app/api/posts/[id]/route.ts — get, update, delete a single post
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import { withAuth } from "@/lib/auth-middleware";
+import { parseBody, ok, err } from "@/lib/api";
+import { prisma } from "@/lib/prisma";
+
+type Ctx = { params: { id: string } };
+
+// GET /api/posts/:id — public
+export async function GET(_req: NextRequest, { params }: Ctx) {
+  const post = await prisma.post.findUnique({
+    where: { id: params.id },
+    include: { author: { select: { id: true, name: true } } },
+  });
+  if (!post) return err("Not found", 404);
+  return ok(post);
+}
+
+const updatePostSchema = z.object({
+  title: z.string().min(1).max(255).optional(),
+  body: z.string().min(1).optional(),
+  published: z.boolean().optional(),
+});
+
+// PATCH /api/posts/:id — update (owner only)
+export const PATCH = withAuth(async (req, { params, user }: any) => {
+  const post = await prisma.post.findUnique({ where: { id: params.id } });
+  if (!post) return err("Not found", 404);
+  if (post.authorId !== user.sub && user.role !== "ADMIN") {
+    return err("Forbidden", 403);
+  }
+
+  const { data, error } = await parseBody(req, updatePostSchema);
+  if (error) return error;
+
+  const updated = await prisma.post.update({ where: { id: params.id }, data });
+  return ok(updated);
+});
+
+// DELETE /api/posts/:id — delete (owner or admin)
+export const DELETE = withAuth(async (_req, { params, user }: any) => {
+  const post = await prisma.post.findUnique({ where: { id: params.id } });
+  if (!post) return err("Not found", 404);
+  if (post.authorId !== user.sub && user.role !== "ADMIN") {
+    return err("Forbidden", 403);
+  }
+
+  await prisma.post.delete({ where: { id: params.id } });
+  return ok({ deleted: true });
+});
+```
+
+```typescript
+// app/api/users/me/route.ts — get current user profile
+import { withAuth } from "@/lib/auth-middleware";
+import { ok, err } from "@/lib/api";
+import { prisma } from "@/lib/prisma";
+
+export const GET = withAuth(async (_req, { user }) => {
+  const profile = await prisma.user.findUnique({
+    where: { id: user.sub },
+    select: { id: true, name: true, email: true, role: true, createdAt: true },
+  });
+  if (!profile) return err("User not found", 404);
+  return ok(profile);
+});
+```
+
+## Options
+
+**Rate limiting per IP (using `@upstash/ratelimit`):**
+
+```typescript
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
+
+const ratelimit = new Ratelimit({
+  redis: Redis.fromEnv(),
+  limiter: Ratelimit.slidingWindow(60, "1 m"),
+});
+
+export function withRateLimit(handler: ApiHandler): ApiHandler {
+  return async (req, ctx) => {
+    const ip = req.headers.get("x-forwarded-for") ?? "anonymous";
+    const { success } = await ratelimit.limit(ip);
+    if (!success) {
+      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
+    return handler(req, ctx);
+  };
+}
+```
+
+**Composing multiple middlewares:**
+
+```typescript
+export const POST = withRateLimit(withAuth(async (req, { user }) => {
+  // handler body
+}));
+```
+
+## Notes
+
+- `jose` is used for JWT operations instead of `jsonwebtoken` because it works in the Edge runtime without native Node.js modules.
+- All Route Handlers that mutate data (`POST`, `PATCH`, `DELETE`) are wrapped with `withAuth`. Read-only `GET` endpoints can be left public or wrapped depending on your needs.
+- `parseBody` returns a discriminated union — check `error` first, then use `data`. TypeScript narrows the type correctly.
+- For file uploads, replace `req.json()` in `parseBody` with `req.formData()` and validate with `z.instanceof(File)`.
+
+## README
+
+### What this includes
+
+- Route Handler wrappers: `parseBody` (Zod validation), `ok` / `err` (typed response factories)
+- JWT authentication via `jose` (`withAuth` higher-order function)
+- Full CRUD endpoints: `GET /api/posts`, `POST /api/posts`, `GET /api/posts/:id`, `PATCH /api/posts/:id`, `DELETE /api/posts/:id`
+- Auth endpoint: `POST /api/auth/login` issues a signed 7-day JWT
+- Current user endpoint: `GET /api/users/me`
+- Prisma ORM with typed queries
+- Role-based authorization (`OWNER` vs `ADMIN` checks)
+- Pagination with `page` + `limit` query params
+- Rate limiting recipe using Upstash Redis
+
+### Prerequisites
+
+- Node.js 18+
+- A PostgreSQL database
+- Optionally: an Upstash Redis instance for rate limiting
+
+### Create this template
+
+```bash
+npx create-next-app@latest my-api --typescript --eslint --app --no-tailwind --no-src-dir
+cd my-api
+
+# ORM + validation + JWT + password hashing
+npm install prisma @prisma/client zod jose bcryptjs
+npm install -D @types/bcryptjs
+npx prisma init --datasource-provider postgresql
+
+# Add User and Post models to prisma/schema.prisma, then:
+npx prisma db push
+
+# Create lib and API route directories
+mkdir -p lib "app/api/auth/login" "app/api/posts/[id]" "app/api/users/me"
+
+touch lib/api.ts lib/auth-middleware.ts lib/prisma.ts
+touch "app/api/auth/login/route.ts"
+touch "app/api/posts/route.ts"
+touch "app/api/posts/[id]/route.ts"
+touch "app/api/users/me/route.ts"
+
+# Set env vars
+echo 'DATABASE_URL=postgresql://...' >> .env.local
+echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env.local
+
+npm run dev
+```
+
+### Project structure
+
+```
+lib/
+  api.ts                        # parseBody, ok, err helpers
+  auth-middleware.ts            # withAuth HOF + AuthPayload type
+  prisma.ts                     # Prisma client singleton
+app/
+  api/
+    auth/
+      login/route.ts            # POST — issue JWT
+    posts/
+      route.ts                  # GET (list) + POST (create)
+      [id]/route.ts             # GET + PATCH + DELETE single post
+    users/
+      me/route.ts               # GET — current user profile
+prisma/
+  schema.prisma                 # User + Post models
+.env.local                      # DATABASE_URL, JWT_SECRET
+```
+
+### First things to customize
+
+- **`prisma/schema.prisma`** — add your own domain models; keep `authorId`/ownership foreign keys for per-resource auth checks
+- **`.env.local`** — replace `DATABASE_URL` and regenerate `JWT_SECRET` with `openssl rand -hex 32`
+- **`lib/auth-middleware.ts`** — extend `AuthPayload` with extra JWT claims (e.g., `tenantId`, `plan`) and re-encode them in the login route
+- **`app/api/auth/login/route.ts`** — adjust `expiresIn` and add a refresh-token flow if needed
+- **`lib/api.ts`** — add a `withRateLimit` wrapper (see Options above) and compose it onto public-facing `POST` handlers
+- Add `app/api/auth/register/route.ts` for user sign-up with `bcrypt.hash` and a Prisma `user.create`
