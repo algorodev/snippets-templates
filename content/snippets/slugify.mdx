@@ -1,0 +1,45 @@
+---
+title: Slugify String
+description: Converts a string into a URL-friendly slug by lowercasing, removing special characters, and replacing spaces with hyphens. Handles Unicode characters and consecutive hyphens gracefully.
+category: snippets
+language: typescript
+tags: [string, utils, url, formatting]
+---
+
+Turns any human-readable string into a clean, URL-safe slug — stripping accents, punctuation, and collapsing repeated hyphens.
+
+## Usage
+
+```typescript
+function slugify(input: string): string {
+  return input
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[\s]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+export default slugify
+```
+
+## Examples
+
+```typescript
+slugify('Hello World')           // 'hello-world'
+slugify('  Café au Lait  ')      // 'cafe-au-lait'
+slugify('C++ is #1!')            // 'c-is-1'
+slugify('multiple---hyphens')    // 'multiple-hyphens'
+slugify('Ångström & Ölüm')       // 'angstrom-olum'
+```
+
+## How it works
+
+1. `normalize('NFD')` decomposes accented characters into base letter + combining mark.
+2. The combining-mark strip removes all diacritics (à → a, ü → u, etc.).
+3. Non-alphanumeric characters (excluding spaces and hyphens) are removed.
+4. Runs of whitespace are collapsed to a single hyphen.
+5. Consecutive hyphens are merged, and leading/trailing hyphens are trimmed.
