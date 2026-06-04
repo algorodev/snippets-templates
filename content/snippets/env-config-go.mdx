@@ -1,0 +1,157 @@
+---
+title: Env Config Loader (Go)
+description: Reads environment variables into a struct using struct tags, supporting required fields, default values, and int/bool/string coercions. No third-party dependencies.
+category: snippets
+language: go
+tags: [utils, config, env, devops]
+---
+
+Populates a config struct from environment variables using `env` struct tags. Supports `required` and `default` options, and coerces string env values to `int`, `bool`, and `string` fields automatically.
+
+## Usage
+
+```go
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"reflect"
+	"strconv"
+	"strings"
+)
+
+// LoadEnv reads environment variables into the struct pointed to by cfg.
+// Struct fields must be tagged with `env:"VAR_NAME"`.
+//
+// Tag options (comma-separated after the name):
+//   - required  — returns an error if the variable is unset or empty
+//   - default=X — falls back to X when the variable is unset
+//
+// Supported field types: string, int, int64, bool.
+func LoadEnv(cfg interface{}) error {
+	rv := reflect.ValueOf(cfg)
+	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
+		return errors.New("LoadEnv: cfg must be a pointer to a struct")
+	}
+	rv = rv.Elem()
+	rt := rv.Type()
+
+	for i := 0; i < rt.NumField(); i++ {
+		field := rt.Field(i)
+		fv := rv.Field(i)
+
+		tag := field.Tag.Get("env")
+		if tag == "" || tag == "-" {
+			continue
+		}
+
+		parts := strings.Split(tag, ",")
+		varName := strings.TrimSpace(parts[0])
+		opts := parts[1:]
+
+		required := false
+		defaultVal := ""
+		hasDefault := false
+
+		for _, opt := range opts {
+			opt = strings.TrimSpace(opt)
+			if opt == "required" {
+				required = true
+			} else if strings.HasPrefix(opt, "default=") {
+				defaultVal = strings.TrimPrefix(opt, "default=")
+				hasDefault = true
+			}
+		}
+
+		raw, ok := os.LookupEnv(varName)
+		if !ok || raw == "" {
+			if required {
+				return fmt.Errorf("LoadEnv: required env var %q is not set", varName)
+			}
+			if hasDefault {
+				raw = defaultVal
+			} else {
+				continue
+			}
+		}
+
+		if err := setField(fv, varName, raw); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func setField(fv reflect.Value, varName, raw string) error {
+	switch fv.Kind() {
+	case reflect.String:
+		fv.SetString(raw)
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return fmt.Errorf("LoadEnv: %q=%q cannot be parsed as int: %w", varName, raw, err)
+		}
+		fv.SetInt(n)
+
+	case reflect.Bool:
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("LoadEnv: %q=%q cannot be parsed as bool: %w", varName, raw, err)
+		}
+		fv.SetBool(b)
+
+	default:
+		return fmt.Errorf("LoadEnv: unsupported field type %s for %q", fv.Kind(), varName)
+	}
+	return nil
+}
+```
+
+## Options
+
+| Tag option | Description |
+|---|---|
+| `required` | Returns an error if the variable is missing or empty |
+| `default=X` | Uses `X` when the variable is unset |
+
+`required` and `default=X` are mutually exclusive — a field with a default is never required.
+
+## Examples
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+)
+
+type Config struct {
+	AppName  string `env:"APP_NAME,default=myapp"`
+	Port     int    `env:"PORT,default=8080"`
+	Debug    bool   `env:"DEBUG,default=false"`
+	DBUrl    string `env:"DATABASE_URL,required"`
+	APIKey   string `env:"API_KEY"`
+}
+
+func main() {
+	var cfg Config
+	if err := LoadEnv(&cfg); err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
+	fmt.Printf("Starting %s on :%d (debug=%v)\n", cfg.AppName, cfg.Port, cfg.Debug)
+	fmt.Printf("Database: %s\n", cfg.DBUrl)
+}
+```
+
+## Notes
+
+- Field types not in `{string, int*, bool}` return an error at load time — add a new `case` to `setField` to extend support.
+- The loader uses `os.LookupEnv` so an explicitly set empty string is treated the same as unset. Adjust the `!ok || raw == ""` guard if you need to distinguish the two.
+- For test isolation, set environment variables with `t.Setenv("KEY", "val")` — Go's testing package restores them automatically after each test.
+```
